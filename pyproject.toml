@@ -23,7 +23,12 @@ packages = [
 "Changelog" = "https://github.com/bluetooth-devices/habluetooth/blob/main/CHANGELOG.md"
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = ">=3.10,<3.13"
+bleak = ">=0.21.1"
+bleak-retry-connector = ">=3.3.0"
+bluetooth-data-tools = ">=1.16.0"
+home-assistant-bluetooth = ">=1.10.4"
+bluetooth-adapters = ">=0.16.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0"
