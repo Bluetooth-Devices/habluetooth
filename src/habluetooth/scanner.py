@@ -124,7 +124,6 @@ class HaScanner(BaseHaScanner):
         "mode",
         "_start_stop_lock",
         "_new_info_callback",
-        "scanning",
         "_background_tasks",
         "scanner",
     )
