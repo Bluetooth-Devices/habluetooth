@@ -1,9 +1,11 @@
 
 
+cdef object NO_RSSI_VALUE
+
 cdef class BaseHaScanner:
 
     cdef public str adapter
-    cdef public bint connectable
+    cdef public object connectable
     cdef public str source
     cdef public object connector
     cdef public unsigned int _connecting
