@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.0 (2023-12-03)
+
+### Feature
+
+- Port local scanner support from ha (#9) ([`1b1d0e4`](https://github.com/Bluetooth-Devices/habluetooth/commit/1b1d0e4bc17a44a1b20382da6ae28ea8e50e80b7))
+
 ## v0.4.0 (2023-12-03)
 
 ### Feature
