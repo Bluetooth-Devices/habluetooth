@@ -4,7 +4,13 @@ from unittest.mock import ANY
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
-from habluetooth import BaseHaRemoteScanner, BaseHaScanner, HaBluetoothConnector
+from habluetooth import (
+    BaseHaRemoteScanner,
+    BaseHaScanner,
+    BluetoothScanningMode,
+    HaBluetoothConnector,
+    HaScanner,
+)
 
 
 class MockBleakClient:
@@ -96,3 +102,13 @@ def test__async_on_advertisement():
         rssi=-21,
         platform_data=(),
     )
+
+
+def test_create_ha_scanner():
+    def callback(data: Any) -> None:
+        pass
+
+    scanner = HaScanner(
+        BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF", callback
+    )
+    assert isinstance(scanner, HaScanner)

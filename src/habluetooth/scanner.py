@@ -121,7 +121,6 @@ class HaScanner(BaseHaScanner):
 
     __slots__ = (
         "mac_address",
-        "connectable",
         "mode",
         "_start_stop_lock",
         "_new_info_callback",
