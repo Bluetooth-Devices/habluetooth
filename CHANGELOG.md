@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.0 (2023-12-03)
+
+### Feature
+
+- Add more typing for incoming bluetooth data (#8) ([`de590e5`](https://github.com/Bluetooth-Devices/habluetooth/commit/de590e5c886801ff4a87f99c118be8855f337bd0))
+
 ## v0.3.0 (2023-12-03)
 
 ### Feature
