@@ -8,8 +8,11 @@ from .const import (
     SCANNER_WATCHDOG_TIMEOUT,
 )
 from .models import HaBluetoothConnector
+from .scanner import BluetoothScanningMode, HaScanner
 
 __all__ = [
+    "BluetoothScanningMode",
+    "HaScanner",
     "BaseHaScanner",
     "BaseHaRemoteScanner",
     "HaBluetoothConnector",
