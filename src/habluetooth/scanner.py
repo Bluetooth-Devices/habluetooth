@@ -119,6 +119,17 @@ class HaScanner(BaseHaScanner):
     over ethernet, usb over ethernet, etc.
     """
 
+    __slots__ = (
+        "mac_address",
+        "connectable",
+        "mode",
+        "_start_stop_lock",
+        "_new_info_callback",
+        "scanning",
+        "_background_tasks",
+        "scanner",
+    )
+
     def __init__(
         self,
         mode: BluetoothScanningMode,
