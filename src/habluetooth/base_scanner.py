@@ -27,6 +27,11 @@ _LOGGER = logging.getLogger(__name__)
 CALLBACK_TYPE = Callable[[], None]
 
 
+_float = float
+_int = int
+_str = str
+
+
 class BaseHaScanner:
     """Base class for high availability BLE scanners."""
 
@@ -265,29 +270,29 @@ class BaseHaRemoteScanner(BaseHaScanner):
 
     def _async_on_advertisement(
         self,
-        address: str,
-        rssi: int,
-        local_name: str | None,
+        address: _str,
+        rssi: _int,
+        local_name: _str | None,
         service_uuids: list[str],
         service_data: dict[str, bytes],
         manufacturer_data: dict[int, bytes],
-        tx_power: int | None,
+        tx_power: _int | None,
         details: dict[Any, Any],
-        advertisement_monotonic_time: float,
+        advertisement_monotonic_time: _float,
     ) -> None:
         """Call the registered callback."""
         self.scanning = not self._connecting
         self._last_detection = advertisement_monotonic_time
-        try:
-            prev_discovery = self._discovered_device_advertisement_datas[address]
-        except KeyError:
+        if (
+            prev_discovery := self._discovered_device_advertisement_datas.get(address)
+        ) is None:
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
             device = BLEDevice(
                 address,
                 local_name,
-                self._details | details,
+                {**self._details, **details},
                 rssi,  # deprecated, will be removed in newer bleak
             )
         else:
@@ -310,12 +315,12 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 service_uuids = prev_service_uuids
 
             if service_data and service_data != prev_service_data:
-                service_data = prev_service_data | service_data
+                service_data = {**prev_service_data, **service_data}
             elif not service_data:
                 service_data = prev_service_data
 
             if manufacturer_data and manufacturer_data != prev_manufacturer_data:
-                manufacturer_data = prev_manufacturer_data | manufacturer_data
+                manufacturer_data = {**prev_manufacturer_data, **manufacturer_data}
             elif not manufacturer_data:
                 manufacturer_data = prev_manufacturer_data
             #
@@ -328,7 +333,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             #
             device = prev_device
             device.name = local_name
-            device.details = self._details | details
+            device.details = {**self._details, **details}
             # pylint: disable-next=protected-access
             device._rssi = rssi  # deprecated, will be removed in newer bleak
 
