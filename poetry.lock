@@ -286,6 +286,27 @@ usb-devices = ">=0.4.1"
 docs = ["Sphinx (>=5,<7)", "myst-parser (>=0.18,<2.1)", "sphinx-rtd-theme (>=1.0,<2.0)"]
 
 [[package]]
+name = "bluetooth-auto-recovery"
+version = "1.2.3"
+description = "Recover bluetooth adapters that are in an stuck state"
+optional = false
+python-versions = ">=3.9,<4.0"
+files = [
+    {file = "bluetooth_auto_recovery-1.2.3-py3-none-any.whl", hash = "sha256:a131166f2486e484b5257371cd416f2bf1c6b32a897db0ad29fe11c1eb2a40f5"},
+    {file = "bluetooth_auto_recovery-1.2.3.tar.gz", hash = "sha256:1040aa81e31398dba971028c8663ba2555b28e4396efe56dee2f199977c3057b"},
+]
+
+[package.dependencies]
+async-timeout = {version = ">=3.0.0", markers = "python_version < \"3.11\""}
+bluetooth-adapters = ">=0.16.0"
+btsocket = ">=0.2.0"
+PyRIC = ">=0.1.6.3"
+usb-devices = ">=0.4.1"
+
+[package.extras]
+docs = ["Sphinx (>=5.0,<6.0)", "myst-parser (>=0.18,<0.19)", "sphinx-rtd-theme (>=1.0,<2.0)"]
+
+[[package]]
 name = "bluetooth-data-tools"
 version = "1.16.0"
 description = "Tools for converting bluetooth data and packets"
@@ -326,6 +347,23 @@ cryptography = ">=41.0.3"
 
 [package.extras]
 docs = ["Sphinx (>=5.0,<6.0)", "myst-parser (>=0.18,<0.19)", "sphinx-rtd-theme (>=1.0,<2.0)"]
+
+[[package]]
+name = "btsocket"
+version = "0.2.0"
+description = "Python library for BlueZ Bluetooth Management API"
+optional = false
+python-versions = "*"
+files = [
+    {file = "btsocket-0.2.0-py2.py3-none-any.whl", hash = "sha256:0d33893039284fa3a496dd31cb15227e1cf07f0d42d3843d3284b522cccf575a"},
+    {file = "btsocket-0.2.0.tar.gz", hash = "sha256:6862250b7e0973d2beea9e49d3b5ced324d80e5003a0350856879e537ba777a8"},
+]
+
+[package.extras]
+dev = ["bumpversion", "coverage", "pycodestyle", "pygments", "sphinx", "sphinx-rtd-theme", "twine"]
+docs = ["pygments", "sphinx", "sphinx-rtd-theme"]
+rel = ["bumpversion", "twine"]
+test = ["coverage", "pycodestyle"]
 
 [[package]]
 name = "certifi"
@@ -1231,6 +1269,16 @@ files = [
 pyobjc-core = ">=9.2"
 
 [[package]]
+name = "pyric"
+version = "0.1.6.3"
+description = "Python Wireless Library"
+optional = false
+python-versions = "*"
+files = [
+    {file = "PyRIC-0.1.6.3.tar.gz", hash = "sha256:b539b01cafebd2406c00097f94525ea0f8ecd1dd92f7731f43eac0ef16c2ccc9"},
+]
+
+[[package]]
 name = "pytest"
 version = "7.4.3"
 description = "pytest: simple powerful testing with Python"
@@ -1951,4 +1999,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "d6c3fd1975866c5751ca11937911ca0cf55be99391cb8d7fa360b1fc76c44230"
+content-hash = "c78f3beecb22cbb2ba6c702901b5b36073386a03282e8fdaade921200d9e1742"

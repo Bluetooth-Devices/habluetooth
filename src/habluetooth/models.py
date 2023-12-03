@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 from typing import Final
 
 from bleak import BaseBleakClient
@@ -18,3 +19,10 @@ class HaBluetoothConnector:
     client: type[BaseBleakClient]
     source: str
     can_connect: Callable[[], bool]
+
+
+class BluetoothScanningMode(Enum):
+    """The mode of scanning for bluetooth devices."""
+
+    PASSIVE = "passive"
+    ACTIVE = "active"

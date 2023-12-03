@@ -30,7 +30,7 @@ def build(setup_kwargs: Any) -> None:
         setup_kwargs.update(
             {
                 "ext_modules": cythonize(
-                    ["src/habluetooth/base_scanner.py"],
+                    ["src/habluetooth/base_scanner.py", "src/habluetooth/scanner.py"],
                     compiler_directives={"language_level": "3"},  # Python 3
                 ),
                 "cmdclass": {"build_ext": BuildExt},
