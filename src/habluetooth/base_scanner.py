@@ -283,9 +283,9 @@ class BaseHaRemoteScanner(BaseHaScanner):
         """Call the registered callback."""
         self.scanning = not self._connecting
         self._last_detection = advertisement_monotonic_time
-        try:
-            prev_discovery = self._discovered_device_advertisement_datas[address]
-        except KeyError:
+        if not (
+            prev_discovery := self._discovered_device_advertisement_datas.get(address)
+        ):
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
