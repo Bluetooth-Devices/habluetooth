@@ -5,7 +5,7 @@ import asyncio
 import logging
 import platform
 from collections.abc import Callable
-from typing import Any, Coroutine
+from typing import TYPE_CHECKING, Any, Coroutine
 
 import bleak
 from bleak import BleakError
@@ -119,8 +119,6 @@ class HaScanner(BaseHaScanner):
     over ethernet, usb over ethernet, etc.
     """
 
-    scanner: bleak.BleakScanner
-
     def __init__(
         self,
         mode: BluetoothScanningMode,
@@ -138,6 +136,7 @@ class HaScanner(BaseHaScanner):
         self._new_info_callback = new_info_callback
         self.scanning = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self.scanner: bleak.BleakScanner | None = None
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
@@ -148,6 +147,8 @@ class HaScanner(BaseHaScanner):
     @property
     def discovered_devices(self) -> list[BLEDevice]:
         """Return a list of discovered devices."""
+        if TYPE_CHECKING:
+            assert self.scanner is not None
         return self.scanner.discovered_devices
 
     @property
@@ -155,6 +156,8 @@ class HaScanner(BaseHaScanner):
         self,
     ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
         """Return a list of discovered devices and advertisement data."""
+        if TYPE_CHECKING:
+            assert self.scanner is not None
         return self.scanner.discovered_devices_and_advertisement_data
 
     def async_setup(self) -> CALLBACK_TYPE:
@@ -217,6 +220,8 @@ class HaScanner(BaseHaScanner):
 
     async def _async_start(self) -> None:
         """Start bluetooth scanner under the lock."""
+        if TYPE_CHECKING:
+            assert self.scanner is not None
         for attempt in range(START_ATTEMPTS):
             _LOGGER.debug(
                 "%s: Starting bluetooth discovery attempt: (%s/%s)",
@@ -380,6 +385,8 @@ class HaScanner(BaseHaScanner):
 
     async def _async_stop_scanner(self) -> None:
         """Stop bluetooth discovery under the lock."""
+        if TYPE_CHECKING:
+            assert self.scanner is not None
         self.scanning = False
         _LOGGER.debug("%s: Stopping bluetooth discovery", self.name)
         try:
