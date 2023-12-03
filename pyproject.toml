@@ -33,6 +33,7 @@ bleak-retry-connector = ">=3.3.0"
 bluetooth-data-tools = ">=1.16.0"
 home-assistant-bluetooth = ">=1.10.4"
 bluetooth-adapters = ">=0.16.1"
+bluetooth-auto-recovery = ">=1.2.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0"

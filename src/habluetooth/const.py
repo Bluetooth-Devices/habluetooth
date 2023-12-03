@@ -2,7 +2,13 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Final
+from typing import Callable, Final
+
+CALLBACK_TYPE = Callable[[], None]
+
+SOURCE_LOCAL: Final = "local"
+
+START_TIMEOUT = 15
 
 # The maximum time between advertisements for a device to be considered
 # stale when the advertisement tracker cannot determine the interval.

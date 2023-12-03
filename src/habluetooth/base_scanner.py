@@ -15,6 +15,7 @@ from bluetooth_data_tools import monotonic_time_coarse
 from home_assistant_bluetooth import BluetoothServiceInfoBleak
 
 from .const import (
+    CALLBACK_TYPE,
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
@@ -24,7 +25,6 @@ from .models import HaBluetoothConnector
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 MONOTONIC_TIME: Final = monotonic_time_coarse
 _LOGGER = logging.getLogger(__name__)
-CALLBACK_TYPE = Callable[[], None]
 
 
 _float = float
