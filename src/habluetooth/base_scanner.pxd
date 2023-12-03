@@ -2,6 +2,8 @@
 
 cdef object NO_RSSI_VALUE
 cdef object BluetoothServiceInfoBleak
+cdef object AdvertisementData
+cdef object BLEDevice
 
 cdef class BaseHaScanner:
 
@@ -18,7 +20,7 @@ cdef class BaseHaScanner:
     cdef public object _loop
 
 
-cdef class  BaseHaRemoteScanner(BaseHaScanner):
+cdef class BaseHaRemoteScanner(BaseHaScanner):
 
     cdef public object _new_info_callback
     cdef public dict _discovered_device_advertisement_datas
@@ -31,6 +33,8 @@ cdef class  BaseHaRemoteScanner(BaseHaScanner):
         prev_service_uuids=list,
         prev_service_data=dict,
         prev_manufacturer_data=dict,
+        prev_name=str,
+        prev_discovery=tuple
     )
     cpdef void _async_on_advertisement(
         self,
