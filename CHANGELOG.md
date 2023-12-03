@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.0 (2023-12-03)
+
+### Feature
+
+- Refactor to be able to use __pyx_pyobject_fastcall (#7) ([`e15074b`](https://github.com/Bluetooth-Devices/habluetooth/commit/e15074b172242f44f641e5232ebdf6297537a2b8))
+- Add basic pxd (#6) ([`fd97d07`](https://github.com/Bluetooth-Devices/habluetooth/commit/fd97d07db7c0e8e0e877e1544fd0e392d14448b3))
+
 ## v0.2.0 (2023-12-03)
 
 ### Feature
