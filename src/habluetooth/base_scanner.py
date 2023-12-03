@@ -285,10 +285,10 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
             device = BLEDevice(
-                address=address,
-                name=local_name,
-                details=self._details | details,
-                rssi=rssi,  # deprecated, will be removed in newer bleak
+                address,
+                local_name,
+                self._details | details,
+                rssi,  # deprecated, will be removed in newer bleak
             )
         else:
             # Merge the new data with the old data
@@ -333,13 +333,13 @@ class BaseHaRemoteScanner(BaseHaScanner):
             device._rssi = rssi  # deprecated, will be removed in newer bleak
 
         advertisement_data = AdvertisementData(
-            local_name=None if local_name == "" else local_name,
-            manufacturer_data=manufacturer_data,
-            service_data=service_data,
-            service_uuids=service_uuids,
-            tx_power=NO_RSSI_VALUE if tx_power is None else tx_power,
-            rssi=rssi,
-            platform_data=(),
+            None if local_name == "" else local_name,
+            manufacturer_data,
+            service_data,
+            service_uuids,
+            NO_RSSI_VALUE if tx_power is None else tx_power,
+            rssi,
+            (),
         )
         self._discovered_device_advertisement_datas[address] = (
             device,
@@ -348,17 +348,17 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self._discovered_device_timestamps[address] = advertisement_monotonic_time
         self._new_info_callback(
             BluetoothServiceInfoBleak(
-                name=local_name or address,
-                address=address,
-                rssi=rssi,
-                manufacturer_data=manufacturer_data,
-                service_data=service_data,
-                service_uuids=service_uuids,
-                source=self.source,
-                device=device,
-                advertisement=advertisement_data,
-                connectable=self.connectable,
-                time=advertisement_monotonic_time,
+                local_name or address,
+                address,
+                rssi,
+                manufacturer_data,
+                service_data,
+                service_uuids,
+                self.source,
+                device,
+                advertisement_data,
+                self.connectable,
+                advertisement_monotonic_time,
             )
         )
 
