@@ -18,6 +18,10 @@ packages = [
     { include = "habluetooth", from = "src" },
 ]
 
+[tool.poetry.build]
+generate-setup-file = true
+script = "build_ext.py"
+
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/bluetooth-devices/habluetooth/issues"
 "Changelog" = "https://github.com/bluetooth-devices/habluetooth/blob/main/CHANGELOG.md"
@@ -147,5 +151,5 @@ module = "docs.*"
 ignore_errors = true
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
+requires = ['setuptools>=65.4.1', 'Cython', "poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
