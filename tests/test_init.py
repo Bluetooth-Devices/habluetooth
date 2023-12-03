@@ -80,6 +80,7 @@ def test__async_on_advertisement():
     assert first_device.rssi == ble_device.rssi
     assert "AA:BB:CC:DD:EE:FF" in scanner.discovered_devices_and_advertisement_data
     adv = scanner.discovered_devices_and_advertisement_data["AA:BB:CC:DD:EE:FF"][1]
+    assert set(adv.service_data) == {"service_uuid", "service_uuid2"}
     assert adv == AdvertisementData(
         local_name="name",
         manufacturer_data={
