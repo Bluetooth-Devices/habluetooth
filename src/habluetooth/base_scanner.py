@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from abc import abstractmethod
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Final, final
@@ -142,13 +141,11 @@ class BaseHaScanner:
             self.scanning = not self._connecting
 
     @property
-    @abstractmethod
-    def discovered_devices(self) -> list[BLEDevice]:
+    def discovered_devices(self) -> list[BLEDevice]:  # type: ignore[empty-body]
         """Return a list of discovered devices."""
 
     @property
-    @abstractmethod
-    def discovered_devices_and_advertisement_data(
+    def discovered_devices_and_advertisement_data(  # type: ignore[empty-body]
         self,
     ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
         """Return a list of discovered devices and their advertisement data."""
