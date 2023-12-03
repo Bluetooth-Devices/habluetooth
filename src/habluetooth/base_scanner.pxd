@@ -25,3 +25,21 @@ cdef class  BaseHaRemoteScanner(BaseHaScanner):
     cdef public dict _details
     cdef public object _expire_seconds
     cdef public object _cancel_track
+
+    @cython.locals(
+        prev_service_uuids=list,
+        prev_service_data=dict,
+        prev_manufacturer_data=dict,
+    )
+    cpdef void _async_on_advertisement(
+        self,
+        object address,
+        object rssi,
+        object local_name,
+        list service_uuids,
+        dict service_data,
+        dict manufacturer_data,
+        object tx_power,
+        dict details,
+        object advertisement_monotonic_time
+    )
