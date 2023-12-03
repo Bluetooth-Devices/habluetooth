@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0 (2023-12-03)
+
+### Feature
+
+- Add cython pxd for base_scanner (#5) ([`0195710`](https://github.com/Bluetooth-Devices/habluetooth/commit/0195710bc25c8c3cc68b17a8f31cf281494fdc22))
+
 ## v0.1.0 (2023-12-03)
 
 ### Feature
