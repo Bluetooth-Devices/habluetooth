@@ -1,5 +1,6 @@
 __version__ = "0.5.1"
 
+from .advertisement_tracker import AdvertisementTracker
 from .base_scanner import BaseHaRemoteScanner, BaseHaScanner
 from .const import (
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
@@ -11,6 +12,7 @@ from .models import HaBluetoothConnector
 from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
 
 __all__ = [
+    "AdvertisementTracker",
     "BluetoothScanningMode",
     "ScannerStartError",
     "HaScanner",
