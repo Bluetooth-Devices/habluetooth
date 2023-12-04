@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.1 (2023-12-04)
+
+### Fix
+
+- Add missing cythonize for the adv tracker (#12) ([`8140195`](https://github.com/Bluetooth-Devices/habluetooth/commit/8140195a27ef83ea89ca643a5899d80839e574ae))
+
 ## v0.6.0 (2023-12-04)
 
 ### Feature
