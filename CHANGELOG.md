@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.1 (2023-12-04)
+
+### Fix
+
+- Remove slots to keep hascanner patchable (#10) ([`d068f48`](https://github.com/Bluetooth-Devices/habluetooth/commit/d068f480d292619a1fc49a1256be98bdc6efadd6))
+
 ## v0.5.0 (2023-12-03)
 
 ### Feature
