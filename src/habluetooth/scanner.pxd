@@ -1,3 +1,6 @@
+import cython
+
+
 from .base_scanner cimport BaseHaScanner
 
 
