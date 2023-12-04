@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.0 (2023-12-04)
+
+### Feature
+
+- Port advertisement_tracker (#11) ([`378667b`](https://github.com/Bluetooth-Devices/habluetooth/commit/378667bce851b5076ee79ff223a72501c5575325))
+
 ## v0.5.1 (2023-12-04)
 
 ### Fix
