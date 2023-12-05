@@ -45,3 +45,6 @@ SCANNER_WATCHDOG_TIMEOUT: Final = 90
 # How often to check if the scanner has reached
 # the SCANNER_WATCHDOG_TIMEOUT without seeing anything
 SCANNER_WATCHDOG_INTERVAL: Final = timedelta(seconds=30)
+
+
+UNAVAILABLE_TRACK_SECONDS: Final = 60 * 5
