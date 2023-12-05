@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.7.0 (2023-12-05)
+
+### Feature
+
+- Port bluetooth manager from ha (#13) ([`757640a`](https://github.com/Bluetooth-Devices/habluetooth/commit/757640a7b7f60072588168501148ba750316f170))
+
 ## v0.6.1 (2023-12-04)
 
 ### Fix
