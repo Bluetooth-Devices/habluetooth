@@ -4,15 +4,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 from bleak import BaseBleakClient
-from bluetooth_data_tools import monotonic_time_coarse
 
 if TYPE_CHECKING:
     from .manager import BluetoothManager
-
-MONOTONIC_TIME: Final = monotonic_time_coarse
 
 
 class CentralBluetoothManager:

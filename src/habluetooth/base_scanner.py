@@ -24,7 +24,6 @@ from .const import (
 from .models import HaBluetoothConnector
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
-MONOTONIC_TIME: Final = monotonic_time_coarse
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -91,7 +90,7 @@ class BaseHaScanner:
 
     def _async_setup_scanner_watchdog(self) -> None:
         """If something has restarted or updated, we need to restart the scanner."""
-        self._start_time = self._last_detection = MONOTONIC_TIME()
+        self._start_time = self._last_detection = monotonic_time_coarse()
         if not self._cancel_watchdog:
             self._schedule_watchdog()
 
@@ -113,7 +112,7 @@ class BaseHaScanner:
 
     def _async_watchdog_triggered(self) -> bool:
         """Check if the watchdog has been triggered."""
-        time_since_last_detection = MONOTONIC_TIME() - self._last_detection
+        time_since_last_detection = monotonic_time_coarse() - self._last_detection
         _LOGGER.debug(
             "%s: Scanner watchdog time_since_last_detection: %s",
             self.name,
@@ -175,7 +174,7 @@ class BaseHaScanner:
             "scanning": self.scanning,
             "type": self.__class__.__name__,
             "last_detection": self._last_detection,
-            "monotonic_time": MONOTONIC_TIME(),
+            "monotonic_time": monotonic_time_coarse(),
             "discovered_devices_and_advertisement_data": [
                 {
                     "name": device.name,
@@ -251,7 +250,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
 
     def _async_expire_devices(self) -> None:
         """Expire old devices."""
-        now = MONOTONIC_TIME()
+        now = monotonic_time_coarse()
         expired = [
             address
             for address, timestamp in self._discovered_device_timestamps.items()
@@ -379,7 +378,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
 
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""
-        now = MONOTONIC_TIME()
+        now = monotonic_time_coarse()
         return await super().async_diagnostics() | {
             "connectable": self.connectable,
             "discovered_device_timestamps": self._discovered_device_timestamps,

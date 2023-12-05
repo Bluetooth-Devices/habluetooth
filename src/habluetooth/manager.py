@@ -47,7 +47,6 @@ APPLE_START_BYTES_WANTED: Final = {
     APPLE_DEVICE_ID_START_BYTE,
 }
 
-MONOTONIC_TIME: Final = monotonic_time_coarse
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -267,7 +266,7 @@ class BluetoothManager:
 
     def _async_check_unavailable(self) -> None:
         """Watch for unavailable devices and cleanup state history."""
-        monotonic_now = MONOTONIC_TIME()
+        monotonic_now = monotonic_time_coarse()
         connectable_history = self._connectable_history
         all_history = self._all_history
         tracker = self._advertisement_tracker
