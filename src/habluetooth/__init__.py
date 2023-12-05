@@ -12,8 +12,8 @@ from .const import (
     SCANNER_WATCHDOG_TIMEOUT,
     UNAVAILABLE_TRACK_SECONDS,
 )
-from .manager import BluetoothManager, get_manager, set_manager
-from .models import HaBluetoothConnector
+from .manager import BluetoothManager
+from .models import HaBluetoothConnector, get_manager, set_manager
 from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
 from .wrappers import HaBleakClientWrapper, HaBleakScannerWrapper
 
