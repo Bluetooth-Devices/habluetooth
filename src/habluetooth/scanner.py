@@ -16,7 +16,7 @@ from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 from bleak_retry_connector import restore_discoveries
 from bluetooth_adapters import DEFAULT_ADDRESS
-from bluetooth_data_tools import monotonic_time_coarse as MONOTONIC_TIME
+from bluetooth_data_tools import monotonic_time_coarse
 from dbus_fast import InvalidMessageError
 from home_assistant_bluetooth import BluetoothServiceInfoBleak
 
@@ -186,7 +186,7 @@ class HaScanner(BaseHaScanner):
         Currently this is used to feed the callbacks into the
         central manager.
         """
-        callback_time = MONOTONIC_TIME()
+        callback_time = monotonic_time_coarse()
         if (
             advertisement_data.local_name
             or advertisement_data.manufacturer_data
@@ -347,7 +347,7 @@ class HaScanner(BaseHaScanner):
     async def _async_restart_scanner(self) -> None:
         """Restart the scanner."""
         async with self._start_stop_lock:
-            time_since_last_detection = MONOTONIC_TIME() - self._last_detection
+            time_since_last_detection = monotonic_time_coarse() - self._last_detection
             # Stop the scanner but not the watchdog
             # since we want to try again later if it's still quiet
             await self._async_stop_scanner()

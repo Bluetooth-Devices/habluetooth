@@ -4,12 +4,30 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Final
+from typing import TYPE_CHECKING
 
 from bleak import BaseBleakClient
-from bluetooth_data_tools import monotonic_time_coarse
 
-MONOTONIC_TIME: Final = monotonic_time_coarse
+if TYPE_CHECKING:
+    from .manager import BluetoothManager
+
+
+class CentralBluetoothManager:
+    """Central Bluetooth Manager."""
+
+    manager: BluetoothManager | None = None
+
+
+def get_manager() -> BluetoothManager:
+    """Get the BluetoothManager."""
+    if TYPE_CHECKING:
+        assert CentralBluetoothManager.manager is not None
+    return CentralBluetoothManager.manager
+
+
+def set_manager(manager: BluetoothManager) -> None:
+    """Set the BluetoothManager."""
+    CentralBluetoothManager.manager = manager
 
 
 @dataclass(slots=True)
