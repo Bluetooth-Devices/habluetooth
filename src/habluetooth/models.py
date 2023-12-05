@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Final
 from bleak import BaseBleakClient
 from bluetooth_data_tools import monotonic_time_coarse
 
-from .manager import BluetoothManager
+if TYPE_CHECKING:
+    from .manager import BluetoothManager
 
 MONOTONIC_TIME: Final = monotonic_time_coarse
 
