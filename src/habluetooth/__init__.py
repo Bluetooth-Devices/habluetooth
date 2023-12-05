@@ -15,8 +15,11 @@ from .const import (
 from .manager import BluetoothManager, get_manager, set_manager
 from .models import HaBluetoothConnector
 from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
+from .wrappers import HaBleakClientWrapper, HaBleakScannerWrapper
 
 __all__ = [
+    "HaBleakScannerWrapper",
+    "HaBleakClientWrapper",
     "BluetoothManager",
     "get_manager",
     "set_manager",
