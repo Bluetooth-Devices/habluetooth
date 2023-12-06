@@ -481,7 +481,7 @@ class BluetoothManager:
         # after unavailable callbacks.
         if (
             # Ensure its not a connectable device missing from connectable history
-            not (connectable and old_connectable_service_info is not None)
+            not (connectable and old_connectable_service_info is None)
             # Than check if advertisement data is the same
             and old_service_info is not None
             and not (
