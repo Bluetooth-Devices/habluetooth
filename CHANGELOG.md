@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.0 (2023-12-06)
+
+### Feature
+
+- Auto build the cythonized manager (#15) ([`c3441e5`](https://github.com/Bluetooth-Devices/habluetooth/commit/c3441e5095d62e6e70c2c879c4b5c109a87f463c))
+- Add cython implementation for manager (#14) ([`266a602`](https://github.com/Bluetooth-Devices/habluetooth/commit/266a6022fb433ef9399f72e87b18b86897524784))
+
 ## v0.7.0 (2023-12-05)
 
 ### Feature
