@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.0 (2023-12-06)
+
+### Feature
+
+- Speed up processing incoming service infos (#16) ([`55f6522`](https://github.com/Bluetooth-Devices/habluetooth/commit/55f6522ffc2adaf7e203ff4d2c1b13adc5d8c6a2))
+
 ## v0.8.0 (2023-12-06)
 
 ### Feature
