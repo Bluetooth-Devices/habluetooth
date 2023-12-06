@@ -48,6 +48,7 @@ APPLE_START_BYTES_WANTED: Final = {
     APPLE_DEVICE_ID_START_BYTE,
 }
 
+_str = str
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -331,15 +332,16 @@ class BluetoothManager:
 
     def _prefer_previous_adv_from_different_source(
         self,
+        address: _str,
         old: BluetoothServiceInfoBleak,
         new: BluetoothServiceInfoBleak,
     ) -> bool:
         """Prefer previous advertisement from a different source if it is better."""
         if new.time - old.time > (
             stale_seconds := self._intervals.get(
-                new.address,
+                address,
                 self._fallback_intervals.get(
-                    new.address, FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
+                    address, FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
                 ),
             )
         ):
@@ -370,7 +372,7 @@ class BluetoothManager:
                         " old rssi:%s)"
                     ),
                     new.name,
-                    new.address,
+                    address,
                     self._async_describe_source(old),
                     self._async_describe_source(new),
                     new.rssi,
@@ -391,17 +393,16 @@ class BluetoothManager:
         if (
             (manufacturer_data := service_info.manufacturer_data)
             and APPLE_MFR_ID in manufacturer_data
-            and manufacturer_data[APPLE_MFR_ID][0] not in APPLE_START_BYTES_WANTED
             and len(manufacturer_data) == 1
             and not service_info.service_data
+            and manufacturer_data[APPLE_MFR_ID][0] not in APPLE_START_BYTES_WANTED
         ):
             return
 
-        address = service_info.device.address
-        all_history = self._all_history
-        connectable = service_info.connectable
-        connectable_history = self._connectable_history
-        old_connectable_service_info = connectable and connectable_history.get(address)
+        address = service_info.address
+        old_connectable_service_info = None
+        if connectable := service_info.connectable:
+            old_connectable_service_info = self._connectable_history.get(address)
         source = service_info.source
         # This logic is complex due to the many combinations of scanners
         # that are supported.
@@ -420,19 +421,19 @@ class BluetoothManager:
         #                       connectable scanner
         #
         if (
-            (old_service_info := all_history.get(address))
-            and source != old_service_info.source
-            and (scanner := self._sources.get(old_service_info.source))
+            (old_service_info := self._all_history.get(address))
+            and source != (old_source := old_service_info.source)
+            and (scanner := self._sources.get(old_source))
             and scanner.scanning
             and self._prefer_previous_adv_from_different_source(
-                old_service_info, service_info
+                address, old_service_info, service_info
             )
         ):
             # If we are rejecting the new advertisement and the device is connectable
             # but not in the connectable history or the connectable source is the same
             # as the new source, we need to add it to the connectable history
             if connectable:
-                if old_connectable_service_info and (
+                if old_connectable_service_info is not None and (
                     # If its the same as the preferred source, we are done
                     # as we know we prefer the old advertisement
                     # from the check above
@@ -441,28 +442,29 @@ class BluetoothManager:
                     # source, we need to check it as well to see if we prefer
                     # the old connectable advertisement
                     or (
-                        source != old_connectable_service_info.source
+                        (old_connectable_source := old_connectable_service_info.source)
+                        != source
                         and (
                             connectable_scanner := self._sources.get(
-                                old_connectable_service_info.source
+                                old_connectable_source
                             )
                         )
                         and connectable_scanner.scanning
                         and self._prefer_previous_adv_from_different_source(
-                            old_connectable_service_info, service_info
+                            address, old_connectable_service_info, service_info
                         )
                     )
                 ):
                     return
 
-                connectable_history[address] = service_info
+                self._connectable_history[address] = service_info
 
             return
 
         if connectable:
-            connectable_history[address] = service_info
+            self._connectable_history[address] = service_info
 
-        all_history[address] = service_info
+        self._all_history[address] = service_info
 
         # Track advertisement intervals to determine when we need to
         # switch adapters or mark a device as unavailable
@@ -479,11 +481,11 @@ class BluetoothManager:
         # after unavailable callbacks.
         if (
             # Ensure its not a connectable device missing from connectable history
-            not (connectable and not old_connectable_service_info)
+            not (connectable and old_connectable_service_info is None)
             # Than check if advertisement data is the same
-            and old_service_info
+            and old_service_info is not None
             and not (
-                service_info.manufacturer_data != old_service_info.manufacturer_data
+                manufacturer_data != old_service_info.manufacturer_data
                 or service_info.service_data != old_service_info.service_data
                 or service_info.service_uuids != old_service_info.service_uuids
                 or service_info.name != old_service_info.name
@@ -491,26 +493,26 @@ class BluetoothManager:
         ):
             return
 
-        if not connectable and old_connectable_service_info:
+        if not connectable and old_connectable_service_info is not None:
             # Since we have a connectable path and our BleakClient will
             # route any connection attempts to the connectable path, we
             # mark the service_info as connectable so that the callbacks
             # will be called and the device can be discovered.
             service_info = BluetoothServiceInfoBleak(
                 service_info.name,
-                service_info.address,
+                address,
                 service_info.rssi,
-                service_info.manufacturer_data,
+                manufacturer_data,
                 service_info.service_data,
                 service_info.service_uuids,
-                service_info.source,
+                source,
                 service_info.device,
                 service_info.advertisement,
                 True,
                 service_info.time,
             )
 
-        if (connectable or old_connectable_service_info) and (
+        if (connectable or old_connectable_service_info is not None) and (
             bleak_callbacks := self._bleak_callbacks
         ):
             # Bleak callbacks must get a connectable device
