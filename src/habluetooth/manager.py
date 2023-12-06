@@ -500,12 +500,12 @@ class BluetoothManager:
             # will be called and the device can be discovered.
             service_info = BluetoothServiceInfoBleak(
                 service_info.name,
-                service_info.address,
+                address,
                 service_info.rssi,
-                service_info.manufacturer_data,
+                manufacturer_data,
                 service_info.service_data,
                 service_info.service_uuids,
-                service_info.source,
+                source,
                 service_info.device,
                 service_info.advertisement,
                 True,
