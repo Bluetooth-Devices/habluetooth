@@ -18,8 +18,9 @@ from bluetooth_adapters import (
 from bluetooth_data_tools import monotonic_time_coarse
 from home_assistant_bluetooth import BluetoothServiceInfoBleak
 
-from habluetooth import TRACKER_BUFFERING_WOBBLE_SECONDS, AdvertisementTracker
+from habluetooth import TRACKER_BUFFERING_WOBBLE_SECONDS
 
+from .advertisement_tracker import AdvertisementTracker
 from .base_scanner import BaseHaScanner, BluetoothScannerDevice
 from .const import (
     CALLBACK_TYPE,
@@ -496,17 +497,17 @@ class BluetoothManager:
             # mark the service_info as connectable so that the callbacks
             # will be called and the device can be discovered.
             service_info = BluetoothServiceInfoBleak(
-                name=service_info.name,
-                address=service_info.address,
-                rssi=service_info.rssi,
-                manufacturer_data=service_info.manufacturer_data,
-                service_data=service_info.service_data,
-                service_uuids=service_info.service_uuids,
-                source=service_info.source,
-                device=service_info.device,
-                advertisement=service_info.advertisement,
-                connectable=True,
-                time=service_info.time,
+                service_info.name,
+                service_info.address,
+                service_info.rssi,
+                service_info.manufacturer_data,
+                service_info.service_data,
+                service_info.service_uuids,
+                service_info.source,
+                service_info.device,
+                service_info.advertisement,
+                True,
+                service_info.time,
             )
 
         if (connectable or old_connectable_service_info) and (
@@ -515,8 +516,8 @@ class BluetoothManager:
             # Bleak callbacks must get a connectable device
             device = service_info.device
             advertisement_data = service_info.advertisement
-            for callback_filters in bleak_callbacks:
-                _dispatch_bleak_callback(*callback_filters, device, advertisement_data)
+            for callback, filters in bleak_callbacks:
+                _dispatch_bleak_callback(callback, filters, device, advertisement_data)
 
         self._discover_service_info(service_info)
 
