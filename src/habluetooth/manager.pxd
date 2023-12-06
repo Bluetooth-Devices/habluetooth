@@ -43,7 +43,7 @@ cdef class BluetoothManager:
     cdef public bint shutdown
     cdef public object _loop
 
-    cdef bint _prefer_previous_adv_from_different_source(self, object old, object new)
+    cdef bint _prefer_previous_adv_from_different_source(self, object address, object old, object new)
 
     @cython.locals(source=str, connectable=bint, scanner=BaseHaScanner, connectable_scanner=BaseHaScanner)
     cpdef void scanner_adv_received(self, object service_info)

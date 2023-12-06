@@ -13,6 +13,9 @@ ADVERTISING_TIMES_NEEDED = 16
 TRACKER_BUFFERING_WOBBLE_SECONDS = 5
 
 
+_str = str
+
+
 class AdvertisementTracker:
     """Tracker to determine the interval that a device is advertising."""
 
@@ -59,7 +62,7 @@ class AdvertisementTracker:
         self.intervals[address] = max_time_between_advertisements
         del self._timings[address]
 
-    def async_remove_address(self, address: str) -> None:
+    def async_remove_address(self, address: _str) -> None:
         """Remove the tracker."""
         self.intervals.pop(address, None)
         self.sources.pop(address, None)
