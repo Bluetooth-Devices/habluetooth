@@ -228,25 +228,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self._discovered_device_advertisement_datas = (
             history.discovered_device_advertisement_datas
         )
-        self._previous_service_info = {
-            address: BluetoothServiceInfoBleak(
-                device.name or address,
-                address,
-                device.rssi,
-                adv.manufacturer_data,
-                adv.service_data,
-                adv.service_uuids,
-                self.source,
-                device,
-                adv,
-                self.connectable,
-                history.discovered_device_timestamps[address],
-            )
-            for address, (
-                device,
-                adv,
-            ) in history.discovered_device_advertisement_datas.items()
-        }
+        self._discovered_device_timestamps = history.discovered_device_timestamps
         # Expire anything that is too old
         self._async_expire_devices()
 
@@ -267,6 +249,31 @@ class BaseHaRemoteScanner(BaseHaScanner):
         return {
             address: service_info.time
             for address, service_info in self._previous_service_info.items()
+        }
+
+    @property.setter
+    def _discovered_device_timestamps(
+        self, discovered_device_timestamps: dict[str, float]
+    ) -> None:
+        """Set the discovered device timestamps."""
+        self._previous_service_info = {
+            address: BluetoothServiceInfoBleak(
+                device.name or address,
+                address,
+                device.rssi,
+                adv.manufacturer_data,
+                adv.service_data,
+                adv.service_uuids,
+                self.source,
+                device,
+                adv,
+                self.connectable,
+                discovered_device_timestamps[address],
+            )
+            for address, (
+                device,
+                adv,
+            ) in self._discovered_device_advertisement_datas.items()
         }
 
     def _cancel_expire_devices(self) -> None:
