@@ -16,7 +16,6 @@ from bluetooth_adapters import (
     BluetoothAdapters,
 )
 from bluetooth_data_tools import monotonic_time_coarse
-from home_assistant_bluetooth import BluetoothServiceInfoBleak
 
 from habluetooth import TRACKER_BUFFERING_WOBBLE_SECONDS
 
@@ -27,6 +26,7 @@ from .const import (
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
 )
+from .models import BluetoothServiceInfoBleak
 from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catcher
 
 if TYPE_CHECKING:

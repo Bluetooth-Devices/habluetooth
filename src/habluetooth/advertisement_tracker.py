@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from home_assistant_bluetooth import BluetoothServiceInfoBleak
+from .models import BluetoothServiceInfoBleak
 
 ADVERTISING_TIMES_NEEDED = 16
 

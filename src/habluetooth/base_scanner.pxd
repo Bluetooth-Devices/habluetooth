@@ -1,6 +1,8 @@
 
 import cython
 
+from .models cimport BluetoothServiceInfoBleak
+
 cdef object NO_RSSI_VALUE
 cdef object BluetoothServiceInfoBleak
 cdef object AdvertisementData

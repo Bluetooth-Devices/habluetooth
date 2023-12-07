@@ -818,17 +818,6 @@ sphinx = ">=6.0,<8.0"
 sphinx-basic-ng = "*"
 
 [[package]]
-name = "home-assistant-bluetooth"
-version = "1.10.4"
-description = "Home Assistant Bluetooth Models and Helpers"
-optional = false
-python-versions = ">=3.9,<4.0"
-files = [
-    {file = "home_assistant_bluetooth-1.10.4-cp310-cp310-manylinux_2_31_x86_64.whl", hash = "sha256:7c3434bdec5dcfe733d3e7c56d4a24418fcd03718dc2e7707c9133d1e48145a8"},
-    {file = "home_assistant_bluetooth-1.10.4.tar.gz", hash = "sha256:21216b6be9d028bc232b9188ac4dce773798c6b4e47482cc3524bfc5f82515e3"},
-]
-
-[[package]]
 name = "idna"
 version = "3.6"
 description = "Internationalized Domain Names in Applications (IDNA)"
@@ -1999,4 +1988,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "c78f3beecb22cbb2ba6c702901b5b36073386a03282e8fdaade921200d9e1742"
+content-hash = "8069ed0042bdec4df811629f2b11b937a0f8d018804fe4cd1de1b7cc16ac8931"
