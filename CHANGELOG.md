@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.10.0 (2023-12-07)
+
+### Feature
+
+- Small speed ups to base_scanner (#17) ([`e1ff7e9`](https://github.com/Bluetooth-Devices/habluetooth/commit/e1ff7e9fb91a274b1a4bf6943a26e2a3f19780e7))
+
 ## v0.9.0 (2023-12-06)
 
 ### Feature
