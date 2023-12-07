@@ -5,6 +5,7 @@ cdef object NO_RSSI_VALUE
 cdef object BluetoothServiceInfoBleak
 cdef object AdvertisementData
 cdef object BLEDevice
+cdef bint TYPE_CHECKING
 
 cdef class BaseHaScanner:
 
@@ -27,7 +28,7 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
     cdef public dict _discovered_device_advertisement_datas
     cdef public dict _discovered_device_timestamps
     cdef public dict _details
-    cdef public object _expire_seconds
+    cdef public float _expire_seconds
     cdef public object _cancel_track
 
     @cython.locals(
@@ -35,13 +36,17 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         prev_service_data=dict,
         prev_manufacturer_data=dict,
         prev_name=str,
-        prev_discovery=tuple
+        prev_discovery=tuple,
+        has_manufacturer_data=bint,
+        has_service_data=bint,
+        has_service_uuids=bint,
+        prev_details=dict
     )
     cpdef void _async_on_advertisement(
         self,
         object address,
         object rssi,
-        object local_name,
+        str local_name,
         list service_uuids,
         dict service_data,
         dict manufacturer_data,
@@ -49,3 +54,6 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         dict details,
         object advertisement_monotonic_time
     )
+
+    @cython.locals(now=float, timestamp=float)
+    cpdef void _async_expire_devices(self)

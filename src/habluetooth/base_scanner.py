@@ -314,23 +314,27 @@ class BaseHaRemoteScanner(BaseHaScanner):
             prev_service_data = prev_advertisement.service_data
             prev_manufacturer_data = prev_advertisement.manufacturer_data
             prev_name = prev_device.name
+            prev_details = prev_device.details
 
             if prev_name and (not local_name or len(prev_name) > len(local_name)):
                 local_name = prev_name
 
-            if service_uuids and service_uuids != prev_service_uuids:
+            has_service_uuids = bool(service_uuids)
+            if has_service_uuids and service_uuids != prev_service_uuids:
                 service_uuids = list({*service_uuids, *prev_service_uuids})
-            elif not service_uuids:
+            elif not has_service_uuids:
                 service_uuids = prev_service_uuids
 
-            if service_data and service_data != prev_service_data:
+            has_service_data = bool(service_data)
+            if has_service_data and service_data != prev_service_data:
                 service_data = {**prev_service_data, **service_data}
-            elif not service_data:
+            elif not has_service_data:
                 service_data = prev_service_data
 
-            if manufacturer_data and manufacturer_data != prev_manufacturer_data:
+            has_manufacturer_data = bool(manufacturer_data)
+            if has_manufacturer_data and manufacturer_data != prev_manufacturer_data:
                 manufacturer_data = {**prev_manufacturer_data, **manufacturer_data}
-            elif not manufacturer_data:
+            elif not has_manufacturer_data:
                 manufacturer_data = prev_manufacturer_data
             #
             # Bleak updates the BLEDevice via create_or_update_device.
@@ -342,7 +346,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             #
             device = prev_device
             device.name = local_name
-            device.details = {**self._details, **details}
+            prev_details.update(details)
             # pylint: disable-next=protected-access
             device._rssi = rssi  # deprecated, will be removed in newer bleak
 
