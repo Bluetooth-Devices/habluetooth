@@ -198,7 +198,7 @@ class HaScanner(BaseHaScanner):
             self._last_detection = callback_time
         self._new_info_callback(
             BluetoothServiceInfoBleak(
-                advertisement_data.local_name or device.name or device.address,
+                str(advertisement_data.local_name or device.name or device.address),
                 device.address,
                 advertisement_data.rssi,
                 advertisement_data.manufacturer_data,
