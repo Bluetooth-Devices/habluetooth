@@ -260,7 +260,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             address: BluetoothServiceInfoBleak(
                 device.name or address,
                 address,
-                device.rssi,
+                adv.rssi,
                 adv.manufacturer_data,
                 adv.service_data,
                 adv.service_uuids,
