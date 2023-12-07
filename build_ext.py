@@ -34,6 +34,7 @@ def build(setup_kwargs: Any) -> None:
                         "src/habluetooth/advertisement_tracker.py",
                         "src/habluetooth/base_scanner.py",
                         "src/habluetooth/manager.py",
+                        "src/habluetooth/models.py",
                         "src/habluetooth/scanner.py",
                     ],
                     compiler_directives={"language_level": "3"},  # Python 3
