@@ -2,11 +2,11 @@ import cython
 
 from .advertisement_tracker cimport AdvertisementTracker
 from .base_scanner cimport BaseHaScanner
+from .models cimport BluetoothServiceInfoBleak
 
 cdef object NO_RSSI_VALUE
 cdef object RSSI_SWITCH_THRESHOLD
 cdef object FILTER_UUIDS
-cdef object BluetoothServiceInfoBleak
 cdef object AdvertisementData
 cdef object BLEDevice
 cdef bint TYPE_CHECKING
@@ -43,7 +43,7 @@ cdef class BluetoothManager:
     cdef public bint shutdown
     cdef public object _loop
 
-    cdef bint _prefer_previous_adv_from_different_source(self, object address, object old, object new)
+    cdef bint _prefer_previous_adv_from_different_source(self, object address, BluetoothServiceInfoBleak old, BluetoothServiceInfoBleak new)
 
     @cython.locals(source=str, connectable=bint, scanner=BaseHaScanner, connectable_scanner=BaseHaScanner)
-    cpdef void scanner_adv_received(self, object service_info)
+    cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)

@@ -197,6 +197,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         "_details",
         "_expire_seconds",
         "_cancel_track",
+        "_previous_service_info",
     )
 
     def __init__(
@@ -220,6 +221,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         # will handle taking care of availability for non-connectable devices
         self._expire_seconds = CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
         self._cancel_track: asyncio.TimerHandle | None = None
+        self._previous_service_info: dict[str, BluetoothServiceInfoBleak] = {}
 
     def _cancel_expire_devices(self) -> None:
         """Cancel the expiration of old devices."""
@@ -258,6 +260,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         for address in expired:
             del self._discovered_device_advertisement_datas[address]
             del self._discovered_device_timestamps[address]
+            del self._previous_service_info[address]
         self._schedule_expire_devices()
 
     @property
@@ -291,9 +294,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         """Call the registered callback."""
         self.scanning = not self._connecting
         self._last_detection = advertisement_monotonic_time
-        if (
-            prev_discovery := self._discovered_device_advertisement_datas.get(address)
-        ) is None:
+        if (prev_service_info := self._previous_service_info.get(address)) is None:
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
@@ -307,11 +308,10 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # Merge the new data with the old data
             # to function the same as BlueZ which
             # merges the dicts on PropertiesChanged
-            prev_device = prev_discovery[0]
-            prev_advertisement = prev_discovery[1]
-            prev_service_uuids = prev_advertisement.service_uuids
-            prev_service_data = prev_advertisement.service_data
-            prev_manufacturer_data = prev_advertisement.manufacturer_data
+            prev_device = prev_service_info.device
+            prev_service_uuids = prev_service_info.service_uuids
+            prev_service_data = prev_service_info.service_data
+            prev_manufacturer_data = prev_service_info.manufacturer_data
             prev_name = prev_device.name
             prev_details = prev_device.details
 
@@ -363,21 +363,21 @@ class BaseHaRemoteScanner(BaseHaScanner):
             advertisement_data,
         )
         self._discovered_device_timestamps[address] = advertisement_monotonic_time
-        self._new_info_callback(
-            BluetoothServiceInfoBleak(
-                local_name or address,
-                address,
-                rssi,
-                manufacturer_data,
-                service_data,
-                service_uuids,
-                self.source,
-                device,
-                advertisement_data,
-                self.connectable,
-                advertisement_monotonic_time,
-            )
+        service_info = BluetoothServiceInfoBleak(
+            local_name or address,
+            address,
+            rssi,
+            manufacturer_data,
+            service_data,
+            service_uuids,
+            self.source,
+            device,
+            advertisement_data,
+            self.connectable,
+            advertisement_monotonic_time,
         )
+        self._previous_service_info[address] = service_info
+        self._new_info_callback(service_info)
 
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""

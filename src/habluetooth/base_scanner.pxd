@@ -32,6 +32,7 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
     cdef public dict _details
     cdef public float _expire_seconds
     cdef public object _cancel_track
+    cdef dict _previous_service_info
 
     @cython.locals(
         prev_service_uuids=list,
@@ -42,7 +43,8 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         has_manufacturer_data=bint,
         has_service_data=bint,
         has_service_uuids=bint,
-        prev_details=dict
+        prev_details=dict,
+        prev_service_info=BluetoothServiceInfoBleak
     )
     cpdef void _async_on_advertisement(
         self,
