@@ -196,9 +196,12 @@ class HaScanner(BaseHaScanner):
             # as the adapter is in a failure
             # state if all the data is empty.
             self._last_detection = callback_time
+        name = advertisement_data.local_name or device.name or device.address
+        if name is not None and type(name) is not str:
+            name = str(name)
         self._new_info_callback(
             BluetoothServiceInfoBleak(
-                str(advertisement_data.local_name or device.name or device.address),
+                name,
                 device.address,
                 advertisement_data.rssi,
                 advertisement_data.manufacturer_data,
