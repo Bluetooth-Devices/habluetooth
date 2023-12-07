@@ -251,7 +251,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             for address, service_info in self._previous_service_info.items()
         }
 
-    @property.setter
+    @_discovered_device_timestamps.setter
     def _discovered_device_timestamps(
         self, discovered_device_timestamps: dict[str, float]
     ) -> None:
