@@ -6,14 +6,25 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
-if TYPE_CHECKING:
-    from bleak.backends.device import BLEDevice
-    from bleak.backends.scanner import AdvertisementData
-
 from bleak import BaseBleakClient
+from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData
 
 if TYPE_CHECKING:
     from .manager import BluetoothManager
+
+_BluetoothServiceInfoSelfT = TypeVar(
+    "_BluetoothServiceInfoSelfT", bound="BluetoothServiceInfo"
+)
+
+_BluetoothServiceInfoBleakSelfT = TypeVar(
+    "_BluetoothServiceInfoBleakSelfT", bound="BluetoothServiceInfoBleak"
+)
+SOURCE_LOCAL: Final = "local"
+
+_float = float  # avoid cython conversion since we always want a pyfloat
+_str = str  # avoid cython conversion since we always want a pystr
+_int = int  # avoid cython conversion since we always want a pyint
 
 
 class CentralBluetoothManager:
@@ -50,25 +61,7 @@ class BluetoothScanningMode(Enum):
     ACTIVE = "active"
 
 
-_BluetoothServiceInfoSelfT = TypeVar(
-    "_BluetoothServiceInfoSelfT", bound="BluetoothServiceInfo"
-)
-
-_BluetoothServiceInfoBleakSelfT = TypeVar(
-    "_BluetoothServiceInfoBleakSelfT", bound="BluetoothServiceInfoBleak"
-)
-SOURCE_LOCAL: Final = "local"
-
-_float = float  # avoid cython conversion since we always want a pyfloat
-_str = str  # avoid cython conversion since we always want a pystr
-_int = int  # avoid cython conversion since we always want a pyint
-
-
-class BaseServiceInfo:
-    """Base class for discovery ServiceInfo."""
-
-
-class BluetoothServiceInfo(BaseServiceInfo):
+class BluetoothServiceInfo:
     """Prepared info from bluetooth entries."""
 
     __slots__ = (
