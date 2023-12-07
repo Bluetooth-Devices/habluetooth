@@ -45,5 +45,12 @@ cdef class BluetoothManager:
 
     cdef bint _prefer_previous_adv_from_different_source(self, object address, BluetoothServiceInfoBleak old, BluetoothServiceInfoBleak new)
 
-    @cython.locals(source=str, connectable=bint, scanner=BaseHaScanner, connectable_scanner=BaseHaScanner)
+    @cython.locals(
+        old_service_info=BluetoothServiceInfoBleak,
+        old_connectable_service_info=BluetoothServiceInfoBleak,
+        source=str,
+        connectable=bint,
+        scanner=BaseHaScanner,
+        connectable_scanner=BaseHaScanner
+    )
     cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
