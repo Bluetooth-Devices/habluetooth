@@ -8,20 +8,17 @@ cdef object _str
 cdef object _BluetoothServiceInfoBleakSelfT
 cdef object _BluetoothServiceInfoSelfT
 
-cdef class BaseServiceInfo:
-    """Base class for discovery ServiceInfo."""
 
-
-cdef class BluetoothServiceInfo(BaseServiceInfo):
+cdef class BluetoothServiceInfo:
     """Prepared info from bluetooth entries."""
 
-    cdef public object name
-    cdef public object address
+    cdef public str name
+    cdef public str address
     cdef public object rssi
-    cdef public object manufacturer_data
-    cdef public object service_data
-    cdef public object service_uuids
-    cdef public object source
+    cdef public dict manufacturer_data
+    cdef public dict service_data
+    cdef public list service_uuids
+    cdef public str source
 
 
 cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
@@ -29,5 +26,5 @@ cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
 
     cdef public object device
     cdef public object advertisement
-    cdef public object connectable
+    cdef public bint connectable
     cdef public object time
