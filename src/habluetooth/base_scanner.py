@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Final, final
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bleak_retry_connector import NO_RSSI_VALUE
-from bluetooth_adapters import adapter_human_name
+from bluetooth_adapters import DiscoveredDeviceAdvertisementData, adapter_human_name
 from bluetooth_data_tools import monotonic_time_coarse
 
 from .const import (
@@ -193,7 +193,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
     __slots__ = (
         "_new_info_callback",
         "_discovered_device_advertisement_datas",
-        "_discovered_device_timestamps",
         "_details",
         "_expire_seconds",
         "_cancel_track",
@@ -214,7 +213,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self._discovered_device_advertisement_datas: dict[
             str, tuple[BLEDevice, AdvertisementData]
         ] = {}
-        self._discovered_device_timestamps: dict[str, float] = {}
         self.connectable = connectable
         self._details: dict[str, str | HaBluetoothConnector] = {"source": scanner_id}
         # Scanners only care about connectable devices. The manager
@@ -222,6 +220,54 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self._expire_seconds = CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
         self._cancel_track: asyncio.TimerHandle | None = None
         self._previous_service_info: dict[str, BluetoothServiceInfoBleak] = {}
+
+    def restore_discovered_devices(
+        self, history: DiscoveredDeviceAdvertisementData
+    ) -> None:
+        """Restore discovered devices from a previous run."""
+        self._discovered_device_advertisement_datas = (
+            history.discovered_device_advertisement_datas
+        )
+        self._previous_service_info = {
+            address: BluetoothServiceInfoBleak(
+                device.name or address,
+                address,
+                device.rssi,
+                adv.manufacturer_data,
+                adv.service_data,
+                adv.service_uuids,
+                self.source,
+                device,
+                adv,
+                self.connectable,
+                history.discovered_device_timestamps[address],
+            )
+            for address, (
+                device,
+                adv,
+            ) in history.discovered_device_advertisement_datas.items()
+        }
+        # Expire anything that is too old
+        self._async_expire_devices()
+
+    def serialize_discovered_devices(
+        self,
+    ) -> DiscoveredDeviceAdvertisementData:
+        """Serialize discovered devices to be stored."""
+        return DiscoveredDeviceAdvertisementData(
+            self.connectable,
+            self._expire_seconds,
+            self._discovered_device_advertisement_datas,
+            self._discovered_device_timestamps,
+        )
+
+    @property
+    def _discovered_device_timestamps(self) -> dict[str, float]:
+        """Return a dict of discovered device timestamps."""
+        return {
+            address: service_info.time
+            for address, service_info in self._previous_service_info.items()
+        }
 
     def _cancel_expire_devices(self) -> None:
         """Cancel the expiration of old devices."""
@@ -254,12 +300,11 @@ class BaseHaRemoteScanner(BaseHaScanner):
         now = monotonic_time_coarse()
         expired = [
             address
-            for address, timestamp in self._discovered_device_timestamps.items()
-            if now - timestamp > self._expire_seconds
+            for address, service_info in self._previous_service_info.items()
+            if now - service_info.time > self._expire_seconds
         ]
         for address in expired:
             del self._discovered_device_advertisement_datas[address]
-            del self._discovered_device_timestamps[address]
             del self._previous_service_info[address]
         self._schedule_expire_devices()
 
@@ -362,7 +407,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
             device,
             advertisement_data,
         )
-        self._discovered_device_timestamps[address] = advertisement_monotonic_time
         service_info = BluetoothServiceInfoBleak(
             local_name or address,
             address,
@@ -382,11 +426,12 @@ class BaseHaRemoteScanner(BaseHaScanner):
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""
         now = monotonic_time_coarse()
+        discovered_device_timestamps = self._discovered_device_timestamps
         return await super().async_diagnostics() | {
             "connectable": self.connectable,
-            "discovered_device_timestamps": self._discovered_device_timestamps,
+            "discovered_device_timestamps": discovered_device_timestamps,
             "time_since_last_device_detection": {
                 address: now - timestamp
-                for address, timestamp in self._discovered_device_timestamps.items()
+                for address, timestamp in discovered_device_timestamps.items()
             },
         }
