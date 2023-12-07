@@ -194,8 +194,8 @@ def test_pyobjc_compat():
     )
     now = time.monotonic()
     service_info = BluetoothServiceInfoBleak(
-        name=name,
-        address=address,
+        name=str(name),
+        address=str(address),
         rssi=rssi,
         manufacturer_data=switchbot_adv.manufacturer_data,
         service_data=switchbot_adv.service_data,
