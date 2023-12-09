@@ -4,15 +4,15 @@ from .advertisement_tracker cimport AdvertisementTracker
 from .base_scanner cimport BaseHaScanner
 from .models cimport BluetoothServiceInfoBleak
 
-cdef object NO_RSSI_VALUE
-cdef object RSSI_SWITCH_THRESHOLD
+cdef int NO_RSSI_VALUE
+cdef int RSSI_SWITCH_THRESHOLD
 cdef object FILTER_UUIDS
 cdef object AdvertisementData
 cdef object BLEDevice
 cdef bint TYPE_CHECKING
 cdef set APPLE_START_BYTES_WANTED
 
-cdef unsigned int APPLE_MFR_ID
+cdef object APPLE_MFR_ID
 
 @cython.locals(uuids=set)
 cdef _dispatch_bleak_callback(
@@ -21,6 +21,11 @@ cdef _dispatch_bleak_callback(
     object device,
     object advertisement_data
 )
+
+cdef class BleakCallback:
+
+    cdef public object callback
+    cdef public dict filters
 
 cdef class BluetoothManager:
 
@@ -43,6 +48,7 @@ cdef class BluetoothManager:
     cdef public bint shutdown
     cdef public object _loop
 
+    @cython.locals(stale_seconds=float)
     cdef bint _prefer_previous_adv_from_different_source(self, object address, BluetoothServiceInfoBleak old, BluetoothServiceInfoBleak new)
 
     @cython.locals(
@@ -51,6 +57,10 @@ cdef class BluetoothManager:
         source=str,
         connectable=bint,
         scanner=BaseHaScanner,
-        connectable_scanner=BaseHaScanner
+        connectable_scanner=BaseHaScanner,
+        apple_data=bytes,
+        bleak_callback=BleakCallback
     )
     cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
+
+    cdef _async_describe_source(self, BluetoothServiceInfoBleak service_info)

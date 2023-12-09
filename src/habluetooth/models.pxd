@@ -14,7 +14,7 @@ cdef class BluetoothServiceInfo:
 
     cdef public str name
     cdef public str address
-    cdef public object rssi
+    cdef public int rssi
     cdef public dict manufacturer_data
     cdef public dict service_data
     cdef public list service_uuids
@@ -27,4 +27,4 @@ cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     cdef public object device
     cdef public object advertisement
     cdef public bint connectable
-    cdef public object time
+    cdef public float time
