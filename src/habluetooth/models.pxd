@@ -27,4 +27,4 @@ cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     cdef public object device
     cdef public object advertisement
     cdef public bint connectable
-    cdef public float time
+    cdef public double time
