@@ -49,7 +49,12 @@ cdef class BluetoothManager:
     cdef public object _loop
 
     @cython.locals(stale_seconds=float)
-    cdef bint _prefer_previous_adv_from_different_source(self, object address, BluetoothServiceInfoBleak old, BluetoothServiceInfoBleak new)
+    cdef bint _prefer_previous_adv_from_different_source(
+        self,
+        object address,
+        BluetoothServiceInfoBleak old,
+        BluetoothServiceInfoBleak new
+    )
 
     @cython.locals(
         old_service_info=BluetoothServiceInfoBleak,
