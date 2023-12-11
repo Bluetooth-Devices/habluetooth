@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.11.1 (2023-12-11)
+
+### Fix
+
+- Do not schedule an expire when restoring devices (#20) ([`144cf15`](https://github.com/Bluetooth-Devices/habluetooth/commit/144cf15050a68cca66e7a2e24a5ddc7b87c32e41))
+
 ## v0.11.0 (2023-12-11)
 
 ### Feature
