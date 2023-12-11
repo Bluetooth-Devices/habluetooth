@@ -60,3 +60,5 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
 
     @cython.locals(now=float, timestamp=float, service_info=BluetoothServiceInfoBleak)
     cpdef void _async_expire_devices(self)
+
+    cpdef void _schedule_expire_devices(self)
