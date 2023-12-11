@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.11.0 (2023-12-11)
+
+### Feature
+
+- Relocate bluetoothserviceinfobleak (#18) ([`4f4f32d`](https://github.com/Bluetooth-Devices/habluetooth/commit/4f4f32d78d6abe21e28171f54ff5f3b17c8fb702))
+
 ## v0.10.0 (2023-12-07)
 
 ### Feature

@@ -7,7 +7,7 @@
 project = "habluetooth"
 copyright = "2023, J. Nick Koston"
 author = "J. Nick Koston"
-release = "0.10.0"
+release = "0.11.0"
 
 # General configuration
 extensions = [
