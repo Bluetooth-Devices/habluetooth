@@ -11,9 +11,8 @@ from typing import TYPE_CHECKING, Any, Final, final
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bleak_retry_connector import NO_RSSI_VALUE
-from bluetooth_adapters import adapter_human_name
+from bluetooth_adapters import DiscoveredDeviceAdvertisementData, adapter_human_name
 from bluetooth_data_tools import monotonic_time_coarse
-from home_assistant_bluetooth import BluetoothServiceInfoBleak
 
 from .const import (
     CALLBACK_TYPE,
@@ -21,7 +20,7 @@ from .const import (
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
 )
-from .models import HaBluetoothConnector
+from .models import BluetoothServiceInfoBleak, HaBluetoothConnector
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
@@ -194,10 +193,10 @@ class BaseHaRemoteScanner(BaseHaScanner):
     __slots__ = (
         "_new_info_callback",
         "_discovered_device_advertisement_datas",
-        "_discovered_device_timestamps",
         "_details",
         "_expire_seconds",
         "_cancel_track",
+        "_previous_service_info",
     )
 
     def __init__(
@@ -214,13 +213,68 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self._discovered_device_advertisement_datas: dict[
             str, tuple[BLEDevice, AdvertisementData]
         ] = {}
-        self._discovered_device_timestamps: dict[str, float] = {}
         self.connectable = connectable
         self._details: dict[str, str | HaBluetoothConnector] = {"source": scanner_id}
         # Scanners only care about connectable devices. The manager
         # will handle taking care of availability for non-connectable devices
         self._expire_seconds = CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
         self._cancel_track: asyncio.TimerHandle | None = None
+        self._previous_service_info: dict[str, BluetoothServiceInfoBleak] = {}
+
+    def restore_discovered_devices(
+        self, history: DiscoveredDeviceAdvertisementData
+    ) -> None:
+        """Restore discovered devices from a previous run."""
+        self._discovered_device_advertisement_datas = (
+            history.discovered_device_advertisement_datas
+        )
+        self._discovered_device_timestamps = history.discovered_device_timestamps
+        # Expire anything that is too old
+        self._async_expire_devices()
+
+    def serialize_discovered_devices(
+        self,
+    ) -> DiscoveredDeviceAdvertisementData:
+        """Serialize discovered devices to be stored."""
+        return DiscoveredDeviceAdvertisementData(
+            self.connectable,
+            self._expire_seconds,
+            self._discovered_device_advertisement_datas,
+            self._discovered_device_timestamps,
+        )
+
+    @property
+    def _discovered_device_timestamps(self) -> dict[str, float]:
+        """Return a dict of discovered device timestamps."""
+        return {
+            address: service_info.time
+            for address, service_info in self._previous_service_info.items()
+        }
+
+    @_discovered_device_timestamps.setter
+    def _discovered_device_timestamps(
+        self, discovered_device_timestamps: dict[str, float]
+    ) -> None:
+        """Set the discovered device timestamps."""
+        self._previous_service_info = {
+            address: BluetoothServiceInfoBleak(
+                device.name or address,
+                address,
+                adv.rssi,
+                adv.manufacturer_data,
+                adv.service_data,
+                adv.service_uuids,
+                self.source,
+                device,
+                adv,
+                self.connectable,
+                discovered_device_timestamps[address],
+            )
+            for address, (
+                device,
+                adv,
+            ) in self._discovered_device_advertisement_datas.items()
+        }
 
     def _cancel_expire_devices(self) -> None:
         """Cancel the expiration of old devices."""
@@ -253,12 +307,12 @@ class BaseHaRemoteScanner(BaseHaScanner):
         now = monotonic_time_coarse()
         expired = [
             address
-            for address, timestamp in self._discovered_device_timestamps.items()
-            if now - timestamp > self._expire_seconds
+            for address, service_info in self._previous_service_info.items()
+            if now - service_info.time > self._expire_seconds
         ]
         for address in expired:
             del self._discovered_device_advertisement_datas[address]
-            del self._discovered_device_timestamps[address]
+            del self._previous_service_info[address]
         self._schedule_expire_devices()
 
     @property
@@ -292,9 +346,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         """Call the registered callback."""
         self.scanning = not self._connecting
         self._last_detection = advertisement_monotonic_time
-        if (
-            prev_discovery := self._discovered_device_advertisement_datas.get(address)
-        ) is None:
+        if (prev_service_info := self._previous_service_info.get(address)) is None:
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
@@ -308,11 +360,10 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # Merge the new data with the old data
             # to function the same as BlueZ which
             # merges the dicts on PropertiesChanged
-            prev_device = prev_discovery[0]
-            prev_advertisement = prev_discovery[1]
-            prev_service_uuids = prev_advertisement.service_uuids
-            prev_service_data = prev_advertisement.service_data
-            prev_manufacturer_data = prev_advertisement.manufacturer_data
+            prev_device = prev_service_info.device
+            prev_service_uuids = prev_service_info.service_uuids
+            prev_service_data = prev_service_info.service_data
+            prev_manufacturer_data = prev_service_info.manufacturer_data
             prev_name = prev_device.name
             prev_details = prev_device.details
 
@@ -363,31 +414,31 @@ class BaseHaRemoteScanner(BaseHaScanner):
             device,
             advertisement_data,
         )
-        self._discovered_device_timestamps[address] = advertisement_monotonic_time
-        self._new_info_callback(
-            BluetoothServiceInfoBleak(
-                local_name or address,
-                address,
-                rssi,
-                manufacturer_data,
-                service_data,
-                service_uuids,
-                self.source,
-                device,
-                advertisement_data,
-                self.connectable,
-                advertisement_monotonic_time,
-            )
+        service_info = BluetoothServiceInfoBleak(
+            local_name or address,
+            address,
+            rssi,
+            manufacturer_data,
+            service_data,
+            service_uuids,
+            self.source,
+            device,
+            advertisement_data,
+            self.connectable,
+            advertisement_monotonic_time,
         )
+        self._previous_service_info[address] = service_info
+        self._new_info_callback(service_info)
 
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""
         now = monotonic_time_coarse()
+        discovered_device_timestamps = self._discovered_device_timestamps
         return await super().async_diagnostics() | {
             "connectable": self.connectable,
-            "discovered_device_timestamps": self._discovered_device_timestamps,
+            "discovered_device_timestamps": discovered_device_timestamps,
             "time_since_last_device_detection": {
                 address: now - timestamp
-                for address, timestamp in self._discovered_device_timestamps.items()
+                for address, timestamp in discovered_device_timestamps.items()
             },
         }

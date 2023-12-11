@@ -18,7 +18,6 @@ from bleak_retry_connector import restore_discoveries
 from bluetooth_adapters import DEFAULT_ADDRESS
 from bluetooth_data_tools import monotonic_time_coarse
 from dbus_fast import InvalidMessageError
-from home_assistant_bluetooth import BluetoothServiceInfoBleak
 
 from .base_scanner import BaseHaScanner
 from .const import (
@@ -28,7 +27,7 @@ from .const import (
     SOURCE_LOCAL,
     START_TIMEOUT,
 )
-from .models import BluetoothScanningMode
+from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
 
 OriginalBleakScanner = bleak.BleakScanner
@@ -197,9 +196,12 @@ class HaScanner(BaseHaScanner):
             # as the adapter is in a failure
             # state if all the data is empty.
             self._last_detection = callback_time
+        name = advertisement_data.local_name or device.name or device.address
+        if name is not None and type(name) is not str:
+            name = str(name)
         self._new_info_callback(
             BluetoothServiceInfoBleak(
-                advertisement_data.local_name or device.name or device.address,
+                name,
                 device.address,
                 advertisement_data.rssi,
                 advertisement_data.manufacturer_data,

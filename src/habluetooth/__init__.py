@@ -13,11 +13,19 @@ from .const import (
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .manager import BluetoothManager
-from .models import HaBluetoothConnector, get_manager, set_manager
+from .models import (
+    BluetoothServiceInfo,
+    BluetoothServiceInfoBleak,
+    HaBluetoothConnector,
+    get_manager,
+    set_manager,
+)
 from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
 from .wrappers import HaBleakClientWrapper, HaBleakScannerWrapper
 
 __all__ = [
+    "BluetoothServiceInfo",
+    "BluetoothServiceInfoBleak",
     "HaBleakScannerWrapper",
     "HaBleakClientWrapper",
     "BluetoothManager",

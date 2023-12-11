@@ -1,6 +1,8 @@
 
 import cython
 
+from .models cimport BluetoothServiceInfoBleak
+
 cdef object NO_RSSI_VALUE
 cdef object BluetoothServiceInfoBleak
 cdef object AdvertisementData
@@ -26,10 +28,10 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
 
     cdef public object _new_info_callback
     cdef public dict _discovered_device_advertisement_datas
-    cdef public dict _discovered_device_timestamps
     cdef public dict _details
     cdef public float _expire_seconds
     cdef public object _cancel_track
+    cdef public dict _previous_service_info
 
     @cython.locals(
         prev_service_uuids=list,
@@ -40,7 +42,8 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         has_manufacturer_data=bint,
         has_service_data=bint,
         has_service_uuids=bint,
-        prev_details=dict
+        prev_details=dict,
+        prev_service_info=BluetoothServiceInfoBleak
     )
     cpdef void _async_on_advertisement(
         self,
@@ -55,5 +58,5 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         object advertisement_monotonic_time
     )
 
-    @cython.locals(now=float, timestamp=float)
+    @cython.locals(now=float, timestamp=float, service_info=BluetoothServiceInfoBleak)
     cpdef void _async_expire_devices(self)
