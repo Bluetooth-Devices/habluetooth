@@ -300,7 +300,14 @@ class BaseHaRemoteScanner(BaseHaScanner):
         if TYPE_CHECKING:
             assert loop is not None
         self._cancel_expire_devices()
-        self._cancel_track = loop.call_at(loop.time() + 30, self._async_expire_devices)
+        self._cancel_track = loop.call_at(
+            loop.time() + 30, self._async_expire_devices_schedule_next
+        )
+
+    def _async_expire_devices_schedule_next(self) -> None:
+        """Expire old devices and schedule the next expiration."""
+        self._async_expire_devices()
+        self._schedule_expire_devices()
 
     def _async_expire_devices(self) -> None:
         """Expire old devices."""
@@ -313,7 +320,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
         for address in expired:
             del self._discovered_device_advertisement_datas[address]
             del self._previous_service_info[address]
-        self._schedule_expire_devices()
 
     @property
     def discovered_devices(self) -> list[BLEDevice]:
