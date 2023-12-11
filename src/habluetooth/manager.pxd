@@ -68,4 +68,4 @@ cdef class BluetoothManager:
     )
     cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
 
-    cdef _async_describe_source(self, BluetoothServiceInfoBleak service_info)
+    cpdef _async_describe_source(self, BluetoothServiceInfoBleak service_info)
