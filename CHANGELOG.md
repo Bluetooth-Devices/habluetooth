@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.0 (2023-12-12)
+
+### Breaking
+
+- Eliminate the need to pass the new_info_callback (#21) ([`65c54a6`](https://github.com/Bluetooth-Devices/habluetooth/commit/65c54a68500be6053677511ffd21ce3dca4b6991))
+
 ## v0.11.1 (2023-12-11)
 
 ### Fix
