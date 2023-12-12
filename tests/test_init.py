@@ -1,15 +1,27 @@
 from unittest.mock import ANY
 
+import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from bleak_retry_connector import BleakSlotManager
+from bluetooth_adapters import BluetoothAdapters
 
 from habluetooth import (
     BaseHaRemoteScanner,
     BaseHaScanner,
+    BluetoothManager,
     BluetoothScanningMode,
     HaBluetoothConnector,
     HaScanner,
+    set_manager,
 )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def manager():
+    slot_manager = BleakSlotManager()
+    bluetooth_adapters = BluetoothAdapters()
+    set_manager(BluetoothManager(bluetooth_adapters, slot_manager))
 
 
 class MockBleakClient:
