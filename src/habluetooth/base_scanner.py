@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, final
 
 from bleak.backends.device import BLEDevice
@@ -14,6 +13,7 @@ from bleak_retry_connector import NO_RSSI_VALUE
 from bluetooth_adapters import DiscoveredDeviceAdvertisementData, adapter_human_name
 from bluetooth_data_tools import monotonic_time_coarse
 
+from .central_manager import get_manager
 from .const import (
     CALLBACK_TYPE,
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
@@ -31,15 +31,6 @@ _int = int
 _str = str
 
 
-@dataclass(slots=True)
-class BluetoothScannerDevice:
-    """Data for a bluetooth device from a given scanner."""
-
-    scanner: BaseHaScanner
-    ble_device: BLEDevice
-    advertisement: AdvertisementData
-
-
 class BaseHaScanner:
     """Base class for high availability BLE scanners."""
 
@@ -55,6 +46,7 @@ class BaseHaScanner:
         "_start_time",
         "_cancel_watchdog",
         "_loop",
+        "_manager",
     )
 
     def __init__(
@@ -75,6 +67,7 @@ class BaseHaScanner:
         self._start_time = 0.0
         self._cancel_watchdog: asyncio.TimerHandle | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._manager = get_manager()
 
     def async_setup(self) -> CALLBACK_TYPE:
         """Set up the scanner."""
@@ -191,7 +184,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
     """Base class for a high availability remote BLE scanner."""
 
     __slots__ = (
-        "_new_info_callback",
         "_discovered_device_advertisement_datas",
         "_details",
         "_expire_seconds",
@@ -203,13 +195,11 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self,
         scanner_id: str,
         name: str,
-        new_info_callback: Callable[[BluetoothServiceInfoBleak], None],
         connector: HaBluetoothConnector | None,
         connectable: bool,
     ) -> None:
         """Initialize the scanner."""
         super().__init__(scanner_id, name, connector)
-        self._new_info_callback = new_info_callback
         self._discovered_device_advertisement_datas: dict[
             str, tuple[BLEDevice, AdvertisementData]
         ] = {}
@@ -434,7 +424,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             advertisement_monotonic_time,
         )
         self._previous_service_info[address] = service_info
-        self._new_info_callback(service_info)
+        self._manager.scanner_adv_received(service_info)
 
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""

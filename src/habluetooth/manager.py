@@ -17,21 +17,24 @@ from bluetooth_adapters import (
 )
 from bluetooth_data_tools import monotonic_time_coarse
 
-from habluetooth import TRACKER_BUFFERING_WOBBLE_SECONDS
-
-from .advertisement_tracker import AdvertisementTracker
-from .base_scanner import BaseHaScanner, BluetoothScannerDevice
+from .advertisement_tracker import (
+    TRACKER_BUFFERING_WOBBLE_SECONDS,
+    AdvertisementTracker,
+)
 from .const import (
     CALLBACK_TYPE,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .models import BluetoothServiceInfoBleak
+from .scanner_device import BluetoothScannerDevice
 from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catcher
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
     from bleak.backends.scanner import AdvertisementData
+
+    from .base_scanner import BaseHaScanner
 
 
 FILTER_UUIDS: Final = "UUIDs"

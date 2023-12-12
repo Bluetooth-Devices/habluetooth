@@ -2,6 +2,7 @@
 import cython
 
 from .models cimport BluetoothServiceInfoBleak
+from .manager cimport BluetoothManager
 
 cdef object NO_RSSI_VALUE
 cdef object BluetoothServiceInfoBleak
@@ -22,11 +23,11 @@ cdef class BaseHaScanner:
     cdef public object _start_time
     cdef public object _cancel_watchdog
     cdef public object _loop
+    cdef BluetoothManager _manager
 
 
 cdef class BaseHaRemoteScanner(BaseHaScanner):
 
-    cdef public object _new_info_callback
     cdef public dict _discovered_device_advertisement_datas
     cdef public dict _details
     cdef public float _expire_seconds

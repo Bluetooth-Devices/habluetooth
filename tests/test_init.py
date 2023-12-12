@@ -1,16 +1,27 @@
-from typing import Any
 from unittest.mock import ANY
 
+import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from bleak_retry_connector import BleakSlotManager
+from bluetooth_adapters import BluetoothAdapters
 
 from habluetooth import (
     BaseHaRemoteScanner,
     BaseHaScanner,
+    BluetoothManager,
     BluetoothScanningMode,
     HaBluetoothConnector,
     HaScanner,
+    set_manager,
 )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def manager():
+    slot_manager = BleakSlotManager()
+    bluetooth_adapters = BluetoothAdapters()
+    set_manager(BluetoothManager(bluetooth_adapters, slot_manager))
 
 
 class MockBleakClient:
@@ -36,20 +47,14 @@ def test_create_scanner():
 def test_create_remote_scanner():
     connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
 
-    def callback(data: Any) -> None:
-        pass
-
-    scanner = BaseHaRemoteScanner("any", "any", callback, connector, True)
+    scanner = BaseHaRemoteScanner("any", "any", connector, True)
     assert isinstance(scanner, BaseHaRemoteScanner)
 
 
 def test__async_on_advertisement():
     connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
 
-    def callback(data: Any) -> None:
-        pass
-
-    scanner = BaseHaRemoteScanner("any", "any", callback, connector, True)
+    scanner = BaseHaRemoteScanner("any", "any", connector, True)
     details = scanner._details | {}
     scanner._async_on_advertisement(
         "AA:BB:CC:DD:EE:FF",
@@ -105,10 +110,5 @@ def test__async_on_advertisement():
 
 
 def test_create_ha_scanner():
-    def callback(data: Any) -> None:
-        pass
-
-    scanner = HaScanner(
-        BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF", callback
-    )
+    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
     assert isinstance(scanner, HaScanner)

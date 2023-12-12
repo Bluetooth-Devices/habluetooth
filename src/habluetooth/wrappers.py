@@ -25,15 +25,16 @@ from bleak_retry_connector import (
     device_source,
 )
 
-from .base_scanner import BaseHaScanner, BluetoothScannerDevice
+from .central_manager import get_manager
 from .const import CALLBACK_TYPE
-from .models import get_manager
+from .scanner_device import BluetoothScannerDevice
 
 FILTER_UUIDS: Final = "UUIDs"
 _LOGGER = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
+    from .base_scanner import BaseHaScanner
     from .manager import BluetoothManager
 
 
