@@ -5,6 +5,7 @@ from .advertisement_tracker import (
     AdvertisementTracker,
 )
 from .base_scanner import BaseHaRemoteScanner, BaseHaScanner, BluetoothScannerDevice
+from .central_manager import get_manager, set_manager
 from .const import (
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
@@ -17,8 +18,6 @@ from .models import (
     BluetoothServiceInfo,
     BluetoothServiceInfoBleak,
     HaBluetoothConnector,
-    get_manager,
-    set_manager,
 )
 from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
 from .wrappers import HaBleakClientWrapper, HaBleakScannerWrapper

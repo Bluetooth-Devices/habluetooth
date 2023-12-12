@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Coroutine
 
 import bleak
@@ -123,7 +122,6 @@ class HaScanner(BaseHaScanner):
         mode: BluetoothScanningMode,
         adapter: str,
         address: str,
-        new_info_callback: Callable[[BluetoothServiceInfoBleak], None],
     ) -> None:
         """Init bluetooth discovery."""
         self.mac_address = address
@@ -132,7 +130,6 @@ class HaScanner(BaseHaScanner):
         self.connectable = True
         self.mode = mode
         self._start_stop_lock = asyncio.Lock()
-        self._new_info_callback = new_info_callback
         self.scanning = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.scanner: bleak.BleakScanner | None = None
@@ -199,7 +196,7 @@ class HaScanner(BaseHaScanner):
         name = advertisement_data.local_name or device.name or device.address
         if name is not None and type(name) is not str:
             name = str(name)
-        self._new_info_callback(
+        self._manager.scanner_adv_received(
             BluetoothServiceInfoBleak(
                 name,
                 device.address,
