@@ -15,8 +15,8 @@ class CentralBluetoothManager:
 
 def get_manager() -> BluetoothManager:
     """Get the BluetoothManager."""
-    if TYPE_CHECKING:
-        assert CentralBluetoothManager.manager is not None
+    if CentralBluetoothManager.manager is None:
+        raise RuntimeError("BluetoothManager has not been set")
     return CentralBluetoothManager.manager
 
 

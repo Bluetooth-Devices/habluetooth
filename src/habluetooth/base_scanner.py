@@ -5,7 +5,6 @@ import asyncio
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, final
 
 from bleak.backends.device import BLEDevice
@@ -30,15 +29,6 @@ _LOGGER = logging.getLogger(__name__)
 _float = float
 _int = int
 _str = str
-
-
-@dataclass(slots=True)
-class BluetoothScannerDevice:
-    """Data for a bluetooth device from a given scanner."""
-
-    scanner: BaseHaScanner
-    ble_device: BLEDevice
-    advertisement: AdvertisementData
 
 
 class BaseHaScanner:

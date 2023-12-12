@@ -4,7 +4,7 @@ from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
     AdvertisementTracker,
 )
-from .base_scanner import BaseHaRemoteScanner, BaseHaScanner, BluetoothScannerDevice
+from .base_scanner import BaseHaRemoteScanner, BaseHaScanner
 from .central_manager import get_manager, set_manager
 from .const import (
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
@@ -20,6 +20,7 @@ from .models import (
     HaBluetoothConnector,
 )
 from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
+from .scanner_device import BluetoothScannerDevice
 from .wrappers import HaBleakClientWrapper, HaBleakScannerWrapper
 
 __all__ = [
