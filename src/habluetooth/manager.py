@@ -612,12 +612,11 @@ class BluetoothManager:
     def async_register_scanner(
         self,
         scanner: BaseHaScanner,
-        connectable: bool,
         connection_slots: int | None = None,
     ) -> CALLBACK_TYPE:
         """Register a new scanner."""
         _LOGGER.debug("Registering scanner %s", scanner.name)
-        if connectable:
+        if scanner.connectable:
             scanners = self._connectable_scanners
         else:
             scanners = self._non_connectable_scanners
