@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.0 (2023-12-21)
+
+### Breaking
+
+- Simplify async_register_scanner by removing connectable argument (#22) ([`10ac6da`](https://github.com/Bluetooth-Devices/habluetooth/commit/10ac6da0672c121b5f0246ed688e98111adc7339))
+
 ## v1.0.0 (2023-12-12)
 
 ### Breaking
