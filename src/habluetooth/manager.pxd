@@ -6,6 +6,7 @@ from .models cimport BluetoothServiceInfoBleak
 
 cdef int NO_RSSI_VALUE
 cdef int RSSI_SWITCH_THRESHOLD
+cdef unsigned int TRACKER_BUFFERING_WOBBLE_SECONDS
 cdef object FILTER_UUIDS
 cdef object AdvertisementData
 cdef object BLEDevice
