@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.1 (2023-12-31)
+
+### Fix
+
+- Switching scanners too quickly (#23) ([`bd53685`](https://github.com/Bluetooth-Devices/habluetooth/commit/bd536854457bd8b27f9e91921965b88b0ff798c3))
+
 ## v2.0.0 (2023-12-21)
 
 ### Breaking
