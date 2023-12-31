@@ -352,7 +352,7 @@ class BluetoothManager:
     ) -> bool:
         """Prefer previous advertisement from a different source if it is better."""
         if stale_seconds := self._intervals.get(
-            address, self._fallback_intervals.get(address)
+            address, self._fallback_intervals.get(address, 0)
         ):
             stale_seconds += TRACKER_BUFFERING_WOBBLE_SECONDS
         else:
