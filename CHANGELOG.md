@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.2 (2024-01-04)
+
+### Fix
+
+- Handle subclassed str in the client wrapper (#24) ([`f18a30e`](https://github.com/Bluetooth-Devices/habluetooth/commit/f18a30e48fe064993dc64f3af01c5d64b676a82f))
+
 ## v2.0.1 (2023-12-31)
 
 ### Fix
