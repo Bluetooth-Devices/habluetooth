@@ -214,7 +214,9 @@ class HaBleakClientWrapper(BleakClient):
         if isinstance(address_or_ble_device, BLEDevice):
             self.__address = address_or_ble_device.address
         else:
-            self.__address = address_or_ble_device
+            # If we are passed an address we need to make sure
+            # its not a subclassed str
+            self.__address = str(address_or_ble_device)
         self.__disconnected_callback = disconnected_callback
         self.__timeout = timeout
         self.__connect_failures: dict[BaseHaScanner, int] = {}
