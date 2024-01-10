@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING, Any, Coroutine
 import bleak
 from bleak import BleakError
 from bleak.assigned_numbers import AdvertisementDataType
-from bleak.backends.bluezdbus.advertisement_monitor import OrPattern
-from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 from bleak_retry_connector import restore_discoveries
@@ -29,17 +27,25 @@ from .const import (
 from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
 
+SYSTEM = platform.system()
+
+if SYSTEM == "Linux":
+    from bleak.backends.bluezdbus.advertisement_monitor import OrPattern
+    from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
+
+    # or_patterns is a workaround for the fact that passive scanning
+    # needs at least one matcher to be set. The below matcher
+    # will match all devices.
+    PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
+        or_patterns=[
+            OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
+            OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
+        ]
+    )
+
+
 OriginalBleakScanner = bleak.BleakScanner
 
-# or_patterns is a workaround for the fact that passive scanning
-# needs at least one matcher to be set. The below matcher
-# will match all devices.
-PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
-    or_patterns=[
-        OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
-        OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
-    ]
-)
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -87,14 +93,13 @@ def create_bleak_scanner(
         "detection_callback": detection_callback,
         "scanning_mode": SCANNING_MODE_TO_BLEAK[scanning_mode],
     }
-    system = platform.system()
-    if system == "Linux":
+    if SYSTEM == "Linux":
         # Only Linux supports multiple adapters
         if adapter:
             scanner_kwargs["adapter"] = adapter
         if scanning_mode == BluetoothScanningMode.PASSIVE:
             scanner_kwargs["bluez"] = PASSIVE_SCANNER_ARGS
-    elif system == "Darwin":
+    elif SYSTEM == "Darwin":
         # We want mac address on macOS
         scanner_kwargs["cb"] = {"use_bdaddr": True}
     _LOGGER.debug("Initializing bluetooth scanner with %s", scanner_kwargs)
