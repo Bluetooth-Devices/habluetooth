@@ -42,6 +42,7 @@ jobs:
         os:
           - ubuntu-latest
           - macOS-latest
+          - windows-latest
         extension:
           - "skip_cython"
           - "use_cython"
