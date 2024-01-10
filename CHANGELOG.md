@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.1.0 (2024-01-10)
+
+### Feature
+
+- Add support for windows (#25) ([`788dd77`](https://github.com/Bluetooth-Devices/habluetooth/commit/788dd77ffac6664083821d5ba8b264725a3baaff))
+
 ## v2.0.2 (2024-01-04)
 
 ### Fix
