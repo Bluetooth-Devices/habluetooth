@@ -1,3 +1,4 @@
+# cython: profile=True
 import cython
 
 from .advertisement_tracker cimport AdvertisementTracker

@@ -1,3 +1,4 @@
+# cython: profile=True
 """The advertisement tracker."""
 from __future__ import annotations
 

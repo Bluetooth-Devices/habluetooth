@@ -1,4 +1,4 @@
-
+# cython: profile=True
 import cython
 
 from .models cimport BluetoothServiceInfoBleak
