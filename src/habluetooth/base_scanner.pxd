@@ -25,6 +25,8 @@ cdef class BaseHaScanner:
     cdef public object _loop
     cdef BluetoothManager _manager
 
+    cpdef tuple get_discovered_device_advertisement_data(self, str address)
+
 
 cdef class BaseHaRemoteScanner(BaseHaScanner):
 
@@ -63,4 +65,5 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
 
     cpdef void _schedule_expire_devices(self)
 
-    cpdef get_discovered_device_advertisement_data(self, str address)
+    @cython.locals(info=BluetoothServiceInfoBleak)
+    cpdef tuple get_discovered_device_advertisement_data(self, str address)

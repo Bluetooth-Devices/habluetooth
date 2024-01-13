@@ -348,7 +348,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self, address: str
     ) -> tuple[BLEDevice, AdvertisementData] | None:
         """Return the advertisement data for a discovered device."""
-        if info := self._previous_service_info.get(address):
+        if (info := self._previous_service_info.get(address)) is not None:
             return info.device, info.advertisement
         return None
 
