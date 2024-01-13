@@ -239,11 +239,7 @@ class BluetoothManager:
         return [
             BluetoothScannerDevice(scanner, *device_adv)
             for scanner in scanners
-            if (
-                device_adv := scanner.discovered_devices_and_advertisement_data.get(
-                    address
-                )
-            )
+            if (device_adv := scanner.get_discovered_device_advertisement_data(address))
         ]
 
     def _async_all_discovered_addresses(self, connectable: bool) -> Iterable[str]:
@@ -253,12 +249,11 @@ class BluetoothManager:
         Include addresses from all the scanners including duplicates.
         """
         yield from itertools.chain.from_iterable(
-            scanner.discovered_devices_and_advertisement_data
-            for scanner in self._connectable_scanners
+            scanner.discovered_addresses for scanner in self._connectable_scanners
         )
         if not connectable:
             yield from itertools.chain.from_iterable(
-                scanner.discovered_devices_and_advertisement_data
+                scanner.discovered_addresses
                 for scanner in self._non_connectable_scanners
             )
 

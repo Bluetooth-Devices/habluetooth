@@ -285,7 +285,12 @@ class HaBleakClientWrapper(BleakClient):
         if debug_logging:
             # Only lookup the description if we are going to log it
             description = ble_device_description(device)
-            _, adv = scanner.discovered_devices_and_advertisement_data[device.address]
+            device_adv = scanner.get_discovered_device_advertisement_data(
+                device.address
+            )
+            if TYPE_CHECKING:
+                assert device_adv is not None
+            adv = device_adv[1]
             rssi = adv.rssi
             _LOGGER.debug(
                 "%s: Connecting via %s (last rssi: %s)", description, scanner.name, rssi
