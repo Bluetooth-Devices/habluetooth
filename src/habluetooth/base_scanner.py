@@ -5,7 +5,7 @@ import asyncio
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Final, final
+from typing import TYPE_CHECKING, Any, Final, Iterable, final
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
@@ -147,14 +147,27 @@ class BaseHaScanner:
             self.scanning = not self._connecting
 
     @property
-    def discovered_devices(self) -> list[BLEDevice]:  # type: ignore[empty-body]
+    def discovered_devices(self) -> list[BLEDevice]:
         """Return a list of discovered devices."""
+        raise NotImplementedError
 
     @property
-    def discovered_devices_and_advertisement_data(  # type: ignore[empty-body]
+    def discovered_devices_and_advertisement_data(
         self,
     ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
         """Return a list of discovered devices and their advertisement data."""
+        raise NotImplementedError
+
+    @property
+    def discovered_addresses(self) -> Iterable[str]:
+        """Return an iterable of discovered devices."""
+        raise NotImplementedError
+
+    def get_discovered_device_advertisement_data(
+        self, address: str
+    ) -> tuple[BLEDevice, AdvertisementData] | None:
+        """Return the advertisement data for a discovered device."""
+        raise NotImplementedError
 
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""
@@ -184,7 +197,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
     """Base class for a high availability remote BLE scanner."""
 
     __slots__ = (
-        "_discovered_device_advertisement_datas",
         "_details",
         "_expire_seconds",
         "_cancel_track",
@@ -200,9 +212,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
     ) -> None:
         """Initialize the scanner."""
         super().__init__(scanner_id, name, connector)
-        self._discovered_device_advertisement_datas: dict[
-            str, tuple[BLEDevice, AdvertisementData]
-        ] = {}
         self.connectable = connectable
         self._details: dict[str, str | HaBluetoothConnector] = {"source": scanner_id}
         # Scanners only care about connectable devices. The manager
@@ -215,37 +224,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self, history: DiscoveredDeviceAdvertisementData
     ) -> None:
         """Restore discovered devices from a previous run."""
-        self._discovered_device_advertisement_datas = (
-            history.discovered_device_advertisement_datas
-        )
-        self._discovered_device_timestamps = history.discovered_device_timestamps
-        # Expire anything that is too old
-        self._async_expire_devices()
-
-    def serialize_discovered_devices(
-        self,
-    ) -> DiscoveredDeviceAdvertisementData:
-        """Serialize discovered devices to be stored."""
-        return DiscoveredDeviceAdvertisementData(
-            self.connectable,
-            self._expire_seconds,
-            self._discovered_device_advertisement_datas,
-            self._discovered_device_timestamps,
-        )
-
-    @property
-    def _discovered_device_timestamps(self) -> dict[str, float]:
-        """Return a dict of discovered device timestamps."""
-        return {
-            address: service_info.time
-            for address, service_info in self._previous_service_info.items()
-        }
-
-    @_discovered_device_timestamps.setter
-    def _discovered_device_timestamps(
-        self, discovered_device_timestamps: dict[str, float]
-    ) -> None:
-        """Set the discovered device timestamps."""
+        discovered_device_timestamps = history.discovered_device_timestamps
         self._previous_service_info = {
             address: BluetoothServiceInfoBleak(
                 device.name or address,
@@ -263,7 +242,41 @@ class BaseHaRemoteScanner(BaseHaScanner):
             for address, (
                 device,
                 adv,
-            ) in self._discovered_device_advertisement_datas.items()
+            ) in history.discovered_device_advertisement_datas.items()
+        }
+        # Expire anything that is too old
+        self._async_expire_devices()
+
+    def serialize_discovered_devices(
+        self,
+    ) -> DiscoveredDeviceAdvertisementData:
+        """Serialize discovered devices to be stored."""
+        return DiscoveredDeviceAdvertisementData(
+            self.connectable,
+            self._expire_seconds,
+            self._discovered_device_advertisement_datas,
+            self._discovered_device_timestamps,
+        )
+
+    @property
+    def _discovered_device_advertisement_datas(
+        self,
+    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
+        """Return a list of discovered devices and advertisement data."""
+        return {
+            address: (
+                service_info.device,
+                service_info.advertisement,
+            )
+            for address, service_info in self._previous_service_info.items()
+        }
+
+    @property
+    def _discovered_device_timestamps(self) -> dict[str, float]:
+        """Return a dict of discovered device timestamps."""
+        return {
+            address: service_info.time
+            for address, service_info in self._previous_service_info.items()
         }
 
     def _cancel_expire_devices(self) -> None:
@@ -308,16 +321,15 @@ class BaseHaRemoteScanner(BaseHaScanner):
             if now - service_info.time > self._expire_seconds
         ]
         for address in expired:
-            del self._discovered_device_advertisement_datas[address]
             del self._previous_service_info[address]
 
     @property
     def discovered_devices(self) -> list[BLEDevice]:
         """Return a list of discovered devices."""
-        device_adv_datas = self._discovered_device_advertisement_datas.values()
+        service_infos = self._previous_service_info.values()
         return [
-            device_advertisement_data[0]
-            for device_advertisement_data in device_adv_datas
+            device_advertisement_data.device
+            for device_advertisement_data in service_infos
         ]
 
     @property
@@ -326,6 +338,19 @@ class BaseHaRemoteScanner(BaseHaScanner):
     ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
         """Return a list of discovered devices and advertisement data."""
         return self._discovered_device_advertisement_datas
+
+    @property
+    def discovered_addresses(self) -> Iterable[str]:
+        """Return an iterable of discovered devices."""
+        return self._previous_service_info
+
+    def get_discovered_device_advertisement_data(
+        self, address: str
+    ) -> tuple[BLEDevice, AdvertisementData] | None:
+        """Return the advertisement data for a discovered device."""
+        if info := self._previous_service_info.get(address):
+            return info.device, info.advertisement
+        return None
 
     def _async_on_advertisement(
         self,
@@ -405,10 +430,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
             NO_RSSI_VALUE if tx_power is None else tx_power,
             rssi,
             (),
-        )
-        self._discovered_device_advertisement_datas[address] = (
-            device,
-            advertisement_data,
         )
         service_info = BluetoothServiceInfoBleak(
             local_name or address,

@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
-from typing import TYPE_CHECKING, Any, Coroutine
+from typing import TYPE_CHECKING, Any, Coroutine, Iterable
 
 import bleak
 from bleak import BleakError
@@ -160,6 +160,17 @@ class HaScanner(BaseHaScanner):
         if TYPE_CHECKING:
             assert self.scanner is not None
         return self.scanner.discovered_devices_and_advertisement_data
+
+    @property
+    def discovered_addresses(self) -> Iterable[str]:
+        """Return an iterable of discovered devices."""
+        return self.discovered_devices_and_advertisement_data
+
+    def get_discovered_device_advertisement_data(
+        self, address: str
+    ) -> tuple[BLEDevice, AdvertisementData] | None:
+        """Return the advertisement data for a discovered device."""
+        return self.discovered_devices_and_advertisement_data.get(address)
 
     def async_setup(self) -> CALLBACK_TYPE:
         """Set up the scanner."""
