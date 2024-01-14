@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.2.0 (2024-01-14)
+
+### Feature
+
+- Improve remote scanner performance (#26) ([`c549b1c`](https://github.com/Bluetooth-Devices/habluetooth/commit/c549b1cf9bbbda0c39dfce92d2888d5b990211da))
+
 ## v2.1.0 (2024-01-10)
 
 ### Feature
