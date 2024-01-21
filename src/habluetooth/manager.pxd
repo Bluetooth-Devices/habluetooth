@@ -37,11 +37,11 @@ cdef class BluetoothManager:
     cdef public dict _intervals
     cdef public dict _unavailable_callbacks
     cdef public dict _connectable_unavailable_callbacks
-    cdef public list _bleak_callbacks
+    cdef public set _bleak_callbacks
     cdef public dict _all_history
     cdef public dict _connectable_history
-    cdef public list _non_connectable_scanners
-    cdef public list _connectable_scanners
+    cdef public set _non_connectable_scanners
+    cdef public set _connectable_scanners
     cdef public dict _adapters
     cdef public dict _sources
     cdef public object _bluetooth_adapters
