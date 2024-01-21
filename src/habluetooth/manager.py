@@ -5,6 +5,7 @@ import asyncio
 import itertools
 import logging
 from collections.abc import Callable, Iterable
+from functools import partial
 from typing import TYPE_CHECKING, Any, Final
 
 from bleak.backends.scanner import AdvertisementDataCallback
@@ -128,17 +129,17 @@ class BluetoothManager:
         self._intervals = self._advertisement_tracker.intervals
 
         self._unavailable_callbacks: dict[
-            str, list[Callable[[BluetoothServiceInfoBleak], None]]
+            str, set[Callable[[BluetoothServiceInfoBleak], None]]
         ] = {}
         self._connectable_unavailable_callbacks: dict[
-            str, list[Callable[[BluetoothServiceInfoBleak], None]]
+            str, set[Callable[[BluetoothServiceInfoBleak], None]]
         ] = {}
 
-        self._bleak_callbacks: list[BleakCallback] = []
+        self._bleak_callbacks: set[BleakCallback] = set()
         self._all_history: dict[str, BluetoothServiceInfoBleak] = {}
         self._connectable_history: dict[str, BluetoothServiceInfoBleak] = {}
-        self._non_connectable_scanners: list[BaseHaScanner] = []
-        self._connectable_scanners: list[BaseHaScanner] = []
+        self._non_connectable_scanners: set[BaseHaScanner] = set()
+        self._connectable_scanners: set[BaseHaScanner] = set()
         self._adapters: dict[str, AdapterDetails] = {}
         self._sources: dict[str, BaseHaScanner] = {}
         self._bluetooth_adapters = bluetooth_adapters
@@ -556,6 +557,20 @@ class BluetoothManager:
             description += " [connectable]"
         return description
 
+    def _async_remove_unavailable_callback(
+        self,
+        unavailable_callbacks: dict[
+            str, set[Callable[[BluetoothServiceInfoBleak], None]]
+        ],
+        address: str,
+        callbacks: set[Callable[[BluetoothServiceInfoBleak], None]],
+        callback: Callable[[BluetoothServiceInfoBleak], None],
+    ) -> None:
+        """Remove a callback."""
+        callbacks.remove(callback)
+        if not callbacks:
+            del unavailable_callbacks[address]
+
     def async_track_unavailable(
         self,
         callback: Callable[[BluetoothServiceInfoBleak], None],
@@ -567,14 +582,15 @@ class BluetoothManager:
             unavailable_callbacks = self._connectable_unavailable_callbacks
         else:
             unavailable_callbacks = self._unavailable_callbacks
-        unavailable_callbacks.setdefault(address, []).append(callback)
-
-        def _async_remove_callback() -> None:
-            unavailable_callbacks[address].remove(callback)
-            if not unavailable_callbacks[address]:
-                del unavailable_callbacks[address]
-
-        return _async_remove_callback
+        callbacks = unavailable_callbacks.setdefault(address, set())
+        callbacks.add(callback)
+        return partial(
+            self._async_remove_unavailable_callback,
+            unavailable_callbacks,
+            address,
+            callbacks,
+            callback,
+        )
 
     def async_ble_device_from_address(
         self, address: str, connectable: bool
@@ -604,6 +620,20 @@ class BluetoothManager:
         histories = self._connectable_history if connectable else self._all_history
         return histories.get(address)
 
+    def _async_unregister_scanner(
+        self,
+        scanners: set[BaseHaScanner],
+        scanner: BaseHaScanner,
+        connection_slots: int | None = None,
+    ) -> None:
+        """Unregister a scanner."""
+        _LOGGER.debug("Unregistering scanner %s", scanner.name)
+        self._advertisement_tracker.async_remove_source(scanner.source)
+        scanners.remove(scanner)
+        del self._sources[scanner.source]
+        if connection_slots:
+            self.slot_manager.remove_adapter(scanner.adapter)
+
     def async_register_scanner(
         self,
         scanner: BaseHaScanner,
@@ -615,31 +645,20 @@ class BluetoothManager:
             scanners = self._connectable_scanners
         else:
             scanners = self._non_connectable_scanners
-
-        def _unregister_scanner() -> None:
-            _LOGGER.debug("Unregistering scanner %s", scanner.name)
-            self._advertisement_tracker.async_remove_source(scanner.source)
-            scanners.remove(scanner)
-            del self._sources[scanner.source]
-            if connection_slots:
-                self.slot_manager.remove_adapter(scanner.adapter)
-
-        scanners.append(scanner)
+        scanners.add(scanner)
         self._sources[scanner.source] = scanner
         if connection_slots:
             self.slot_manager.register_adapter(scanner.adapter, connection_slots)
-        return _unregister_scanner
+        return partial(
+            self._async_unregister_scanner, scanners, scanner, connection_slots
+        )
 
     def async_register_bleak_callback(
         self, callback: AdvertisementDataCallback, filters: dict[str, set[str]]
     ) -> CALLBACK_TYPE:
         """Register a callback."""
         callback_entry = BleakCallback(callback, filters)
-        self._bleak_callbacks.append(callback_entry)
-
-        def _remove_callback() -> None:
-            self._bleak_callbacks.remove(callback_entry)
-
+        self._bleak_callbacks.add(callback_entry)
         # Replay the history since otherwise we miss devices
         # that were already discovered before the callback was registered
         # or we are in passive mode
@@ -648,7 +667,7 @@ class BluetoothManager:
                 callback, filters, history.device, history.advertisement
             )
 
-        return _remove_callback
+        return partial(self._bleak_callbacks.remove, callback_entry)
 
     def async_release_connection_slot(self, device: BLEDevice) -> None:
         """Release a connection slot."""
