@@ -557,7 +557,7 @@ class BluetoothManager:
             description += " [connectable]"
         return description
 
-    def _async_remove_unavailable_callback(
+    def _async_remove_unavailable_callback_internal(
         self,
         unavailable_callbacks: dict[
             str, set[Callable[[BluetoothServiceInfoBleak], None]]
@@ -585,7 +585,7 @@ class BluetoothManager:
         callbacks = unavailable_callbacks.setdefault(address, set())
         callbacks.add(callback)
         return partial(
-            self._async_remove_unavailable_callback,
+            self._async_remove_unavailable_callback_internal,
             unavailable_callbacks,
             address,
             callbacks,
@@ -620,7 +620,7 @@ class BluetoothManager:
         histories = self._connectable_history if connectable else self._all_history
         return histories.get(address)
 
-    def _async_unregister_scanner(
+    def _async_unregister_scanner_internal(
         self,
         scanners: set[BaseHaScanner],
         scanner: BaseHaScanner,
@@ -650,7 +650,7 @@ class BluetoothManager:
         if connection_slots:
             self.slot_manager.register_adapter(scanner.adapter, connection_slots)
         return partial(
-            self._async_unregister_scanner, scanners, scanner, connection_slots
+            self._async_unregister_scanner_internal, scanners, scanner, connection_slots
         )
 
     def async_register_bleak_callback(
