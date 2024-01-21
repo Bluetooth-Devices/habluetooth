@@ -624,7 +624,7 @@ class BluetoothManager:
         self,
         scanners: set[BaseHaScanner],
         scanner: BaseHaScanner,
-        connection_slots: int | None = None,
+        connection_slots: int | None,
     ) -> None:
         """Unregister a scanner."""
         _LOGGER.debug("Unregistering scanner %s", scanner.name)
