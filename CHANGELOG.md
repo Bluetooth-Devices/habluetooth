@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.3.0 (2024-01-22)
+
+### Feature
+
+- Reduce overhead to remove callbacks by using sets to store callbacks (#27) ([`05ceb85`](https://github.com/Bluetooth-Devices/habluetooth/commit/05ceb85901b17f72988068997c7f39bc0179dca2))
+
 ## v2.2.0 (2024-01-14)
 
 ### Feature
