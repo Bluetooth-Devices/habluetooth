@@ -325,7 +325,7 @@ class BluetoothManager:
                 if not (callbacks := unavailable_callbacks.get(address)):
                     continue
 
-                for callback in callbacks:
+                for callback in callbacks.copy():
                     try:
                         callback(service_info)
                     except Exception:  # pylint: disable=broad-except
