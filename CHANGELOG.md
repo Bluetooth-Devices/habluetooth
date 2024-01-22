@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.3.1 (2024-01-22)
+
+### Fix
+
+- Ensure unavailable callbacks can be removed from fired callbacks (#28) ([`65e7706`](https://github.com/Bluetooth-Devices/habluetooth/commit/65e7706ef4cdb99f9df5a00f666ab1d30e92e3b1))
+
 ## v2.3.0 (2024-01-22)
 
 ### Feature
