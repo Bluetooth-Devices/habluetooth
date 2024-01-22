@@ -293,7 +293,8 @@ class HaScanner(BaseHaScanner):
                     continue
                 raise ScannerStartError(
                     f"{self.name}: Timed out starting Bluetooth after"
-                    f" {START_TIMEOUT} seconds"
+                    f" {START_TIMEOUT} seconds; "
+                    "Try power cycling the Bluetooth hardware."
                 ) from ex
             except BleakError as ex:
                 error_str = str(ex)
@@ -329,7 +330,8 @@ class HaScanner(BaseHaScanner):
                     exc_info=True,
                 )
                 raise ScannerStartError(
-                    f"{self.name}: Failed to start Bluetooth: {ex}"
+                    f"{self.name}: Failed to start Bluetooth: {ex}; "
+                    "Try power cycling the Bluetooth hardware."
                 ) from ex
 
             # Everything is fine, break out of the loop
