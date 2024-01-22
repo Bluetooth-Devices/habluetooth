@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.4.0 (2024-01-22)
+
+### Feature
+
+- Improve error reporting resolution suggestions (#29) ([`afff5ba`](https://github.com/Bluetooth-Devices/habluetooth/commit/afff5ba4dfd8a5582174b367ae5ed9c9953b81e9))
+
 ## v2.3.1 (2024-01-22)
 
 ### Fix
