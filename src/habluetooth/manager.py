@@ -114,6 +114,7 @@ class BluetoothManager:
         "_debug",
         "shutdown",
         "_loop",
+        "_adapter_refresh_future",
     )
 
     def __init__(
@@ -147,6 +148,7 @@ class BluetoothManager:
         self._debug = _LOGGER.isEnabledFor(logging.DEBUG)
         self.shutdown = False
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._adapter_refresh_future: asyncio.Future[None] | None = None
 
     @property
     def supports_passive_scan(self) -> bool:
@@ -193,13 +195,28 @@ class BluetoothManager:
         """Return the scanner for a source."""
         return self._sources.get(source)
 
+    async def _async_refresh_adapters(self) -> None:
+        """Refresh the adapters."""
+        if self._adapter_refresh_future:
+            await self._adapter_refresh_future
+            return
+        if TYPE_CHECKING:
+            assert self._loop is not None
+        self._adapter_refresh_future = self._loop.create_future()
+        try:
+            await self._bluetooth_adapters.refresh()
+            self._adapters = self._bluetooth_adapters.adapters
+        finally:
+            self._adapter_refresh_future.set_result(None)
+            self._adapter_refresh_future = None
+
     async def async_get_bluetooth_adapters(
         self, cached: bool = True
     ) -> dict[str, AdapterDetails]:
         """Get bluetooth adapters."""
         if not self._adapters or not cached:
             if not cached:
-                await self._bluetooth_adapters.refresh()
+                await self._async_refresh_adapters()
             self._adapters = self._bluetooth_adapters.adapters
         return self._adapters
 
@@ -207,14 +224,13 @@ class BluetoothManager:
         """Get adapter from address."""
         if adapter := self._find_adapter_by_address(address):
             return adapter
-        await self._bluetooth_adapters.refresh()
-        self._adapters = self._bluetooth_adapters.adapters
+        await self._async_refresh_adapters()
         return self._find_adapter_by_address(address)
 
     async def async_setup(self) -> None:
         """Set up the bluetooth manager."""
         self._loop = asyncio.get_running_loop()
-        await self._bluetooth_adapters.refresh()
+        await self._async_refresh_adapters()
         install_multiple_bleak_catcher()
         self.async_setup_unavailable_tracking()
 

@@ -49,6 +49,7 @@ cdef class BluetoothManager:
     cdef public bint _debug
     cdef public bint shutdown
     cdef public object _loop
+    cdef public object _adapter_refresh_future
 
     @cython.locals(stale_seconds=float)
     cdef bint _prefer_previous_adv_from_different_source(
