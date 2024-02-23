@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.4.1 (2024-02-23)
+
+### Fix
+
+- Avoid concurrent refreshes of adapters (#30) ([`d355b17`](https://github.com/Bluetooth-Devices/habluetooth/commit/d355b1768705706dec7062ad5d6267089d87a88e))
+
 ## v2.4.0 (2024-01-22)
 
 ### Feature
