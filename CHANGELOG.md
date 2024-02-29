@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.4.2 (2024-02-29)
+
+### Fix
+
+- Android beacons in passive mode with flags 0x02 (#31) ([`8330e18`](https://github.com/Bluetooth-Devices/habluetooth/commit/8330e187550ec00ed415d3650a2c231921fb8ae7))
+
 ## v2.4.1 (2024-02-23)
 
 ### Fix
