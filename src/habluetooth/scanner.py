@@ -38,6 +38,7 @@ if SYSTEM == "Linux":
     # will match all devices.
     PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
         or_patterns=[
+            OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
             OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
             OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
         ]
