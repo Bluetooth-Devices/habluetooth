@@ -61,37 +61,17 @@ class BluetoothScanningMode(Enum):
     ACTIVE = "active"
 
 
+@dataclass
 class BluetoothServiceInfo:
     """Prepared info from bluetooth entries."""
 
-    __slots__ = (
-        "name",
-        "address",
-        "rssi",
-        "manufacturer_data",
-        "service_data",
-        "service_uuids",
-        "source",
-    )
-
-    def __init__(
-        self,
-        name: _str,  # may be a pyobjc object
-        address: _str,  # may be a pyobjc object
-        rssi: _int,  # may be a pyobjc object
-        manufacturer_data: dict[_int, bytes],
-        service_data: dict[_str, bytes],
-        service_uuids: list[_str],
-        source: _str,
-    ) -> None:
-        """Initialize a bluetooth service info."""
-        self.name = name
-        self.address = address
-        self.rssi = rssi
-        self.manufacturer_data = manufacturer_data
-        self.service_data = service_data
-        self.service_uuids = service_uuids
-        self.source = source
+    name: _str
+    address: _str
+    rssi: _int
+    manufacturer_data: dict[_int, bytes]
+    service_data: dict[_str, bytes]
+    service_uuids: list[_str]
+    source: _str
 
     @classmethod
     def from_advertisement(
@@ -132,6 +112,7 @@ class BluetoothServiceInfo:
         return None
 
 
+@dataclass
 class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     """
     BluetoothServiceInfo with bleak data.
@@ -142,33 +123,10 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     internal details.
     """
 
-    __slots__ = ("device", "advertisement", "connectable", "time")
-
-    def __init__(
-        self,
-        name: _str,  # may be a pyobjc object
-        address: _str,  # may be a pyobjc object
-        rssi: _int,  # may be a pyobjc object
-        manufacturer_data: dict[_int, bytes],
-        service_data: dict[_str, bytes],
-        service_uuids: list[_str],
-        source: _str,
-        device: BLEDevice,
-        advertisement: AdvertisementData,
-        connectable: bool,
-        time: _float,
-    ) -> None:
-        self.name = name
-        self.address = address
-        self.rssi = rssi
-        self.manufacturer_data = manufacturer_data
-        self.service_data = service_data
-        self.service_uuids = service_uuids
-        self.source = source
-        self.device = device
-        self.advertisement = advertisement
-        self.connectable = connectable
-        self.time = time
+    device: BLEDevice
+    advertisement: AdvertisementData
+    connectable: bool
+    time: _float
 
     def as_dict(self) -> dict[str, Any]:
         """

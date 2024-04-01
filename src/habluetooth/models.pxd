@@ -1,3 +1,4 @@
+import cython
 
 cdef object BLEDevice
 cdef object AdvertisementData
@@ -9,6 +10,7 @@ cdef object _BluetoothServiceInfoBleakSelfT
 cdef object _BluetoothServiceInfoSelfT
 
 
+@cython.dataclasses.dataclass
 cdef class BluetoothServiceInfo:
     """Prepared info from bluetooth entries."""
 
@@ -20,7 +22,7 @@ cdef class BluetoothServiceInfo:
     cdef public list service_uuids
     cdef public str source
 
-
+@cython.dataclasses.dataclass
 cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     """BluetoothServiceInfo with bleak data."""
 
