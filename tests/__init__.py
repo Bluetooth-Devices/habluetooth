@@ -1,14 +1,14 @@
 import asyncio
 import time
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Generator
 from unittest.mock import patch
 
 from bleak.backends.scanner import AdvertisementData, BLEDevice
 
-utcnow = partial(datetime.now, UTC)
+utcnow = partial(datetime.now, timezone.utc)
 
 
 _MONOTONIC_RESOLUTION = time.get_clock_info("monotonic").resolution
