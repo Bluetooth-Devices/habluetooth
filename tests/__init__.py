@@ -10,6 +10,7 @@ from bleak.backends.scanner import AdvertisementData, BLEDevice
 
 utcnow = partial(datetime.now, UTC)
 
+
 _MONOTONIC_RESOLUTION = time.get_clock_info("monotonic").resolution
 
 ADVERTISEMENT_DATA_DEFAULTS = {

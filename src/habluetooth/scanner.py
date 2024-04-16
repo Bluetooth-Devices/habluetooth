@@ -253,6 +253,7 @@ class HaScanner(BaseHaScanner):
         for attempt in range(1, START_ATTEMPTS + 1):
             if await self._async_start_attempt(attempt):
                 # Everything is fine, break out of the loop
+                self._log_start_success(attempt)
                 break
         await self._async_on_successful_start()
 
@@ -334,6 +335,14 @@ class HaScanner(BaseHaScanner):
     def _log_adapter_init_wait(self, attempt: int) -> None:
         _LOGGER.debug(
             "%s: Waiting for adapter to initialize; attempt (%s/%s)",
+            self.name,
+            attempt,
+            START_ATTEMPTS,
+        )
+
+    def _log_start_success(self, attempt: int) -> None:
+        _LOGGER.debug(
+            "%s: Success while starting bluetooth; attempt: (%s/%s)",
             self.name,
             attempt,
             START_ATTEMPTS,
