@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "habluetooth"
-version = "2.4.2"
+version = "2.5.0"
 description = "High availability Bluetooth"
 authors = ["J. Nick Koston <bluetooth@koston.org>"]
 license = "Apache Software License 2.0"

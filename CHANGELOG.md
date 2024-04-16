@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.5.0 (2024-04-16)
+
+### Feature
+
+- Fallback to passive scanning if active cannot start (#33) ([`3fae981`](https://github.com/Bluetooth-Devices/habluetooth/commit/3fae98162e6b0279375823a3b6e60ee51b87c1bb))
+
 ## v2.4.2 (2024-02-29)
 
 ### Fix
