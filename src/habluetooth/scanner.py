@@ -23,13 +23,16 @@ from .const import (
     SCANNER_WATCHDOG_TIMEOUT,
     SOURCE_LOCAL,
     START_TIMEOUT,
+    STOP_TIMEOUT,
 )
 from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
 
 SYSTEM = platform.system()
+IS_LINUX = SYSTEM == "Linux"
+IS_MACOS = SYSTEM == "Darwin"
 
-if SYSTEM == "Linux":
+if IS_LINUX:
     from bleak.backends.bluezdbus.advertisement_monitor import OrPattern
     from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
 
@@ -63,7 +66,7 @@ NEED_RESET_ERRORS = [
 WAIT_FOR_ADAPTER_TO_INIT_ERRORS = ["org.freedesktop.DBus.Error.UnknownObject"]
 ADAPTER_INIT_TIME = 1.5
 
-START_ATTEMPTS = 3
+START_ATTEMPTS = 4
 
 SCANNING_MODE_TO_BLEAK = {
     BluetoothScanningMode.ACTIVE: "active",
@@ -94,13 +97,13 @@ def create_bleak_scanner(
         "detection_callback": detection_callback,
         "scanning_mode": SCANNING_MODE_TO_BLEAK[scanning_mode],
     }
-    if SYSTEM == "Linux":
+    if IS_LINUX:
         # Only Linux supports multiple adapters
         if adapter:
             scanner_kwargs["adapter"] = adapter
         if scanning_mode == BluetoothScanningMode.PASSIVE:
             scanner_kwargs["bluez"] = PASSIVE_SCANNER_ARGS
-    elif SYSTEM == "Darwin":
+    elif IS_MACOS:
         # We want mac address on macOS
         scanner_kwargs["cb"] = {"use_bdaddr": True}
     _LOGGER.debug("Initializing bluetooth scanner with %s", scanner_kwargs)
@@ -109,6 +112,20 @@ def create_bleak_scanner(
         return OriginalBleakScanner(**scanner_kwargs)
     except (FileNotFoundError, BleakError) as ex:
         raise RuntimeError(f"Failed to initialize Bluetooth: {ex}") from ex
+
+
+def _error_indicates_reset_needed(error_str: str) -> bool:
+    """Return if the error indicates a reset is needed."""
+    return any(
+        needs_reset_error in error_str for needs_reset_error in NEED_RESET_ERRORS
+    )
+
+
+def _error_indicates_wait_for_adapter_to_init(error_str: str) -> bool:
+    """Return if the error indicates the adapter is still initializing."""
+    return any(
+        wait_error in error_str for wait_error in WAIT_FOR_ADAPTER_TO_INIT_ERRORS
+    )
 
 
 class HaScanner(BaseHaScanner):
@@ -176,9 +193,6 @@ class HaScanner(BaseHaScanner):
     def async_setup(self) -> CALLBACK_TYPE:
         """Set up the scanner."""
         super().async_setup()
-        self.scanner = create_bleak_scanner(
-            self._async_detection_callback, self.mode, self.adapter
-        )
         return self._unsetup
 
     async def async_diagnostics(self) -> dict[str, Any]:
@@ -236,111 +250,179 @@ class HaScanner(BaseHaScanner):
 
     async def _async_start(self) -> None:
         """Start bluetooth scanner under the lock."""
-        if TYPE_CHECKING:
-            assert self.scanner is not None
-        for attempt in range(START_ATTEMPTS):
-            _LOGGER.debug(
-                "%s: Starting bluetooth discovery attempt: (%s/%s)",
-                self.name,
-                attempt + 1,
-                START_ATTEMPTS,
-            )
-            try:
-                async with asyncio.timeout(START_TIMEOUT):
-                    await self.scanner.start()
-            except InvalidMessageError as ex:
-                _LOGGER.debug(
-                    "%s: Invalid DBus message received: %s",
-                    self.name,
-                    ex,
-                    exc_info=True,
-                )
-                raise ScannerStartError(
-                    f"{self.name}: Invalid DBus message received: {ex}; "
-                    "try restarting `dbus`"
-                ) from ex
-            except BrokenPipeError as ex:
-                _LOGGER.debug(
-                    "%s: DBus connection broken: %s", self.name, ex, exc_info=True
-                )
-                if is_docker_env():
-                    raise ScannerStartError(
-                        f"{self.name}: DBus connection broken: {ex}; try restarting "
-                        "`bluetooth`, `dbus`, and finally the docker container"
-                    ) from ex
-                raise ScannerStartError(
-                    f"{self.name}: DBus connection broken: {ex}; try restarting "
-                    "`bluetooth` and `dbus`"
-                ) from ex
-            except FileNotFoundError as ex:
-                _LOGGER.debug(
-                    "%s: FileNotFoundError while starting bluetooth: %s",
-                    self.name,
-                    ex,
-                    exc_info=True,
-                )
-                if is_docker_env():
-                    raise ScannerStartError(
-                        f"{self.name}: DBus service not found; docker config may "
-                        "be missing `-v /run/dbus:/run/dbus:ro`: {ex}"
-                    ) from ex
-                raise ScannerStartError(
-                    f"{self.name}: DBus service not found; make sure the DBus socket "
-                    f"is available to Home Assistant: {ex}"
-                ) from ex
-            except asyncio.TimeoutError as ex:
-                if attempt == 0:
-                    await self._async_reset_adapter()
-                    continue
-                raise ScannerStartError(
-                    f"{self.name}: Timed out starting Bluetooth after"
-                    f" {START_TIMEOUT} seconds; "
-                    "Try power cycling the Bluetooth hardware."
-                ) from ex
-            except BleakError as ex:
-                error_str = str(ex)
-                if attempt == 0:
-                    if any(
-                        needs_reset_error in error_str
-                        for needs_reset_error in NEED_RESET_ERRORS
-                    ):
-                        await self._async_reset_adapter()
-                    continue
-                if attempt != START_ATTEMPTS - 1:
-                    # If we are not out of retry attempts, and the
-                    # adapter is still initializing, wait a bit and try again.
-                    if any(
-                        wait_error in error_str
-                        for wait_error in WAIT_FOR_ADAPTER_TO_INIT_ERRORS
-                    ):
-                        _LOGGER.debug(
-                            "%s: Waiting for adapter to initialize; attempt (%s/%s)",
-                            self.name,
-                            attempt + 1,
-                            START_ATTEMPTS,
-                        )
-                        await asyncio.sleep(ADAPTER_INIT_TIME)
-                        continue
+        for attempt in range(1, START_ATTEMPTS + 1):
+            if await self._async_start_attempt(attempt):
+                # Everything is fine, break out of the loop
+                break
+        await self._async_on_successful_start()
 
-                _LOGGER.debug(
-                    "%s: BleakError while starting bluetooth; attempt: (%s/%s): %s",
-                    self.name,
-                    attempt + 1,
-                    START_ATTEMPTS,
-                    ex,
-                    exc_info=True,
-                )
-                raise ScannerStartError(
-                    f"{self.name}: Failed to start Bluetooth: {ex}; "
-                    "Try power cycling the Bluetooth hardware."
-                ) from ex
-
-            # Everything is fine, break out of the loop
-            break
-
+    async def _async_on_successful_start(self) -> None:
+        """Run when the scanner has successfully started."""
         self.scanning = True
         self._async_setup_scanner_watchdog()
         await restore_discoveries(self.scanner, self.adapter)
+
+    async def _async_start_attempt(self, attempt: int) -> bool:
+        """Start the scanner and handle errors."""
+        mode = self.mode
+        # 1st attempt - no auto reset
+        # 2nd attempt - try to reset the adapter and wait a bit
+        # 3th attempt - no auto reset
+        # 4th attempt - fallback to passive if available
+
+        if (
+            IS_LINUX
+            and attempt == START_ATTEMPTS
+            and mode is BluetoothScanningMode.ACTIVE
+        ):
+            mode = BluetoothScanningMode.PASSIVE
+            _LOGGER.warning(
+                "%s: Falling back to passive scanning mode "
+                "after active scanning failed (%s/%s)",
+                self.name,
+                attempt,
+                START_ATTEMPTS,
+            )
+
+        self.scanner = create_bleak_scanner(
+            self._async_detection_callback, mode, self.adapter
+        )
+        self._log_start_attempt(attempt)
+        try:
+            async with asyncio.timeout(START_TIMEOUT):
+                await self.scanner.start()
+        except InvalidMessageError as ex:
+            await self._async_stop_scanner()
+            self._raise_for_invalid_dbus_message(ex)
+        except BrokenPipeError as ex:
+            await self._async_stop_scanner()
+            self._raise_for_broken_pipe_error(ex)
+        except FileNotFoundError as ex:
+            await self._async_stop_scanner()
+            self._raise_for_file_not_found_error(ex)
+        except asyncio.TimeoutError as ex:
+            await self._async_stop_scanner()
+            if attempt == 2:
+                await self._async_reset_adapter()
+            if attempt < START_ATTEMPTS:
+                self._log_start_timeout(attempt)
+                return False
+            raise ScannerStartError(
+                f"{self.name}: Timed out starting Bluetooth after"
+                f" {START_TIMEOUT} seconds; "
+                "Try power cycling the Bluetooth hardware."
+            ) from ex
+        except BleakError as ex:
+            await self._async_stop_scanner()
+            error_str = str(ex)
+            if attempt == 2 and _error_indicates_reset_needed(error_str):
+                await self._async_reset_adapter()
+            elif (
+                attempt != START_ATTEMPTS
+                and _error_indicates_wait_for_adapter_to_init(error_str)
+            ):
+                # If we are not out of retry attempts, and the
+                # adapter is still initializing, wait a bit and try again.
+                self._log_adapter_init_wait(attempt)
+                await asyncio.sleep(ADAPTER_INIT_TIME)
+            if attempt < START_ATTEMPTS:
+                self._log_start_failed(ex, attempt)
+                return False
+            raise ScannerStartError(
+                f"{self.name}: Failed to start Bluetooth: {ex}; "
+                "Try power cycling the Bluetooth hardware."
+            ) from ex
+
+        self._log_start_success(attempt)
+        return True
+
+    def _log_adapter_init_wait(self, attempt: int) -> None:
+        _LOGGER.debug(
+            "%s: Waiting for adapter to initialize; attempt (%s/%s)",
+            self.name,
+            attempt,
+            START_ATTEMPTS,
+        )
+
+    def _log_start_success(self, attempt: int) -> None:
+        _LOGGER.debug(
+            "%s: Success while starting bluetooth; attempt: (%s/%s)",
+            self.name,
+            attempt,
+            START_ATTEMPTS,
+        )
+
+    def _log_start_timeout(self, attempt: int) -> None:
+        _LOGGER.debug(
+            "%s: TimeoutError while starting bluetooth; attempt: (%s/%s)",
+            self.name,
+            attempt,
+            START_ATTEMPTS,
+        )
+
+    def _log_start_failed(self, ex: BleakError, attempt: int) -> None:
+        _LOGGER.debug(
+            "%s: BleakError while starting bluetooth; attempt: (%s/%s): %s",
+            self.name,
+            attempt,
+            START_ATTEMPTS,
+            ex,
+            exc_info=True,
+        )
+
+    def _log_start_attempt(self, attempt: int) -> None:
+        _LOGGER.debug(
+            "%s: Starting bluetooth discovery attempt: (%s/%s)",
+            self.name,
+            attempt,
+            START_ATTEMPTS,
+        )
+
+    def _raise_for_file_not_found_error(self, ex: FileNotFoundError) -> None:
+        _LOGGER.debug(
+            "%s: FileNotFoundError while starting bluetooth: %s",
+            self.name,
+            ex,
+            exc_info=True,
+        )
+        if is_docker_env():
+            raise ScannerStartError(
+                f"{self.name}: DBus service not found; docker config may "
+                "be missing `-v /run/dbus:/run/dbus:ro`: {ex}"
+            ) from ex
+        raise ScannerStartError(
+            f"{self.name}: DBus service not found; make sure the DBus socket "
+            f"is available: {ex}"
+        ) from ex
+
+    def _raise_for_broken_pipe_error(self, ex: BrokenPipeError) -> None:
+        """Raise a ScannerStartError for a BrokenPipeError."""
+        _LOGGER.debug("%s: DBus connection broken: %s", self.name, ex, exc_info=True)
+        if is_docker_env():
+            msg = (
+                f"{self.name}: DBus connection broken: {ex}; try restarting "
+                "`bluetooth`, `dbus`, and finally the docker container"
+            )
+        else:
+            msg = (
+                f"{self.name}: DBus connection broken: {ex}; try restarting "
+                "`bluetooth` and `dbus`"
+            )
+        raise ScannerStartError(msg) from ex
+
+    def _raise_for_invalid_dbus_message(self, ex: InvalidMessageError) -> None:
+        """Raise a ScannerStartError for an InvalidMessageError."""
+        _LOGGER.debug(
+            "%s: Invalid DBus message received: %s",
+            self.name,
+            ex,
+            exc_info=True,
+        )
+        msg = (
+            f"{self.name}: Invalid DBus message received: {ex}; "
+            "try restarting `dbus`"
+        )
+        raise ScannerStartError(msg) from ex
 
     def _async_scanner_watchdog(self) -> None:
         """Check if the scanner is running."""
@@ -403,14 +485,17 @@ class HaScanner(BaseHaScanner):
 
     async def _async_stop_scanner(self) -> None:
         """Stop bluetooth discovery under the lock."""
-        if TYPE_CHECKING:
-            assert self.scanner is not None
         self.scanning = False
+        if self.scanner is None:
+            _LOGGER.debug("%s: Scanner is already stopped", self.name)
+            return
         _LOGGER.debug("%s: Stopping bluetooth discovery", self.name)
         try:
-            await self.scanner.stop()
-        except BleakError as ex:
+            async with asyncio.timeout(STOP_TIMEOUT):
+                await self.scanner.stop()
+        except (asyncio.TimeoutError, BleakError) as ex:
             # This is not fatal, and they may want to reload
             # the config entry to restart the scanner if they
             # change the bluetooth dongle.
             _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
+        self.scanner = None

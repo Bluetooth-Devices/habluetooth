@@ -4,10 +4,7 @@ import time
 
 from bleak.backends.device import BLEDevice
 
-from habluetooth import (
-    BluetoothServiceInfo,
-    BluetoothServiceInfoBleak,
-)
+from habluetooth import BluetoothServiceInfo, BluetoothServiceInfoBleak
 
 from . import generate_advertisement_data
 

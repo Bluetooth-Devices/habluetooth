@@ -9,6 +9,7 @@ CALLBACK_TYPE = Callable[[], None]
 SOURCE_LOCAL: Final = "local"
 
 START_TIMEOUT = 15
+STOP_TIMEOUT = 5
 
 # The maximum time between advertisements for a device to be considered
 # stale when the advertisement tracker cannot determine the interval.
