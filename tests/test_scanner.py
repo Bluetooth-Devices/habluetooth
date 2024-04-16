@@ -145,6 +145,7 @@ async def test_invalid_dbus_message(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() == 'Windows'")
 @pytest.mark.parametrize("error", NEED_RESET_ERRORS)
 async def test_adapter_needs_reset_at_start(
     caplog: pytest.LogCaptureFixture, error: str
@@ -198,6 +199,7 @@ async def test_adapter_needs_reset_at_start(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() == 'Windows'")
 async def test_recovery_from_dbus_restart() -> None:
     """Test we can recover when DBus gets restarted out from under us."""
     called_start = 0
