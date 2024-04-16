@@ -56,6 +56,7 @@ def manager():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() == 'Darwin'")
 async def test_dbus_socket_missing_in_container(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -77,6 +78,7 @@ async def test_dbus_socket_missing_in_container(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() == 'Darwin'")
 async def test_dbus_socket_missing(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle dbus being missing."""
     with (
@@ -96,6 +98,7 @@ async def test_dbus_socket_missing(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() == 'Darwin'")
 async def test_dbus_broken_pipe_in_container(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle dbus broken pipe in the container."""
     with (
@@ -112,6 +115,7 @@ async def test_dbus_broken_pipe_in_container(caplog: pytest.LogCaptureFixture) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() == 'Darwin'")
 async def test_dbus_broken_pipe(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle dbus broken pipe."""
     with (
@@ -128,6 +132,7 @@ async def test_dbus_broken_pipe(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() == 'Darwin'")
 async def test_invalid_dbus_message(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle invalid dbus message."""
     with patch(
