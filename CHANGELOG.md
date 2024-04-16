@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.5.2 (2024-04-16)
+
+### Fix
+
+- Ensure discovered_devices returns an empty list for offline scanners (#35) ([`2350543`](https://github.com/Bluetooth-Devices/habluetooth/commit/23505437c98529f692ab2dc0f5c3bdb5c9b7e3bd))
+
 ## v2.5.1 (2024-04-16)
 
 ### Fix
