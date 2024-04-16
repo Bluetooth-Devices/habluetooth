@@ -29,8 +29,10 @@ from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
 
 SYSTEM = platform.system()
+IS_LINUX = SYSTEM == "Linux"
+IS_MACOS = SYSTEM == "Darwin"
 
-if SYSTEM == "Linux":
+if IS_LINUX:
     from bleak.backends.bluezdbus.advertisement_monitor import OrPattern
     from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
 
@@ -79,8 +81,6 @@ SCANNING_MODE_TO_BLEAK = {
 SCANNER_WATCHDOG_MULTIPLE = (
     SCANNER_WATCHDOG_TIMEOUT + SCANNER_WATCHDOG_INTERVAL.total_seconds()
 )
-IS_LINUX = SYSTEM == "Linux"
-IS_MACOS = SYSTEM == "Darwin"
 
 
 class ScannerStartError(Exception):
@@ -253,7 +253,6 @@ class HaScanner(BaseHaScanner):
         for attempt in range(1, START_ATTEMPTS + 1):
             if await self._async_start_attempt(attempt):
                 # Everything is fine, break out of the loop
-                self._log_start_success(attempt)
                 break
         await self._async_on_successful_start()
 
@@ -293,10 +292,13 @@ class HaScanner(BaseHaScanner):
             async with asyncio.timeout(START_TIMEOUT):
                 await self.scanner.start()
         except InvalidMessageError as ex:
+            await self._async_stop_scanner()
             self._raise_for_invalid_dbus_message(ex)
         except BrokenPipeError as ex:
+            await self._async_stop_scanner()
             self._raise_for_broken_pipe_error(ex)
         except FileNotFoundError as ex:
+            await self._async_stop_scanner()
             self._raise_for_file_not_found_error(ex)
         except asyncio.TimeoutError as ex:
             await self._async_stop_scanner()
@@ -311,6 +313,7 @@ class HaScanner(BaseHaScanner):
                 "Try power cycling the Bluetooth hardware."
             ) from ex
         except BleakError as ex:
+            await self._async_stop_scanner()
             error_str = str(ex)
             if attempt == 2 and _error_indicates_reset_needed(error_str):
                 await self._async_reset_adapter()
@@ -330,6 +333,7 @@ class HaScanner(BaseHaScanner):
                 "Try power cycling the Bluetooth hardware."
             ) from ex
 
+        self._log_start_success(attempt)
         return True
 
     def _log_adapter_init_wait(self, attempt: int) -> None:
@@ -481,9 +485,10 @@ class HaScanner(BaseHaScanner):
 
     async def _async_stop_scanner(self) -> None:
         """Stop bluetooth discovery under the lock."""
-        if TYPE_CHECKING:
-            assert self.scanner is not None
         self.scanning = False
+        if self.scanner is None:
+            _LOGGER.debug("%s: Scanner is already stopped", self.name)
+            return
         _LOGGER.debug("%s: Stopping bluetooth discovery", self.name)
         try:
             async with asyncio.timeout(STOP_TIMEOUT):
@@ -493,3 +498,4 @@ class HaScanner(BaseHaScanner):
             # the config entry to restart the scanner if they
             # change the bluetooth dongle.
             _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
+        self.scanner = None
