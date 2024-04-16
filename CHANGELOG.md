@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.5.1 (2024-04-16)
+
+### Fix
+
+- Wheel builds (#34) ([`5bd671a`](https://github.com/Bluetooth-Devices/habluetooth/commit/5bd671a159292dffe30a69639411926d0bc28123))
+
 ## v2.5.0 (2024-04-16)
 
 ### Feature
