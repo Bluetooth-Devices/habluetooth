@@ -56,6 +56,15 @@ def manager():
 
 
 @pytest.mark.asyncio
+async def test_empty_data_no_scanner() -> None:
+    """Test we handle empty data."""
+    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    scanner.async_setup()
+    assert scanner.discovered_devices == []
+    assert scanner.discovered_devices_and_advertisement_data == {}
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif("platform.system() != 'Linux'")
 async def test_dbus_socket_missing_in_container(
     caplog: pytest.LogCaptureFixture,
