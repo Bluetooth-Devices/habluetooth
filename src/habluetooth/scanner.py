@@ -379,21 +379,23 @@ class HaScanner(BaseHaScanner):
             ) from ex
         raise ScannerStartError(
             f"{self.name}: DBus service not found; make sure the DBus socket "
-            f"is available to Home Assistant: {ex}"
+            f"is available: {ex}"
         ) from ex
 
     def _raise_for_broken_pipe_error(self, ex: BrokenPipeError) -> None:
         """Raise a ScannerStartError for a BrokenPipeError."""
         _LOGGER.debug("%s: DBus connection broken: %s", self.name, ex, exc_info=True)
         if is_docker_env():
-            raise ScannerStartError(
+            msg = (
                 f"{self.name}: DBus connection broken: {ex}; try restarting "
                 "`bluetooth`, `dbus`, and finally the docker container"
-            ) from ex
-        raise ScannerStartError(
-            f"{self.name}: DBus connection broken: {ex}; try restarting "
-            "`bluetooth` and `dbus`"
-        ) from ex
+            )
+        else:
+            msg = (
+                f"{self.name}: DBus connection broken: {ex}; try restarting "
+                "`bluetooth` and `dbus`"
+            )
+        raise ScannerStartError(msg) from ex
 
     def _raise_for_invalid_dbus_message(self, ex: InvalidMessageError) -> None:
         """Raise a ScannerStartError for an InvalidMessageError."""
@@ -403,10 +405,11 @@ class HaScanner(BaseHaScanner):
             ex,
             exc_info=True,
         )
-        raise ScannerStartError(
+        msg = (
             f"{self.name}: Invalid DBus message received: {ex}; "
             "try restarting `dbus`"
-        ) from ex
+        )
+        raise ScannerStartError(msg) from ex
 
     def _async_scanner_watchdog(self) -> None:
         """Check if the scanner is running."""
