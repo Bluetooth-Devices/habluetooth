@@ -1,8 +1,16 @@
+import asyncio
+import time
 from contextlib import contextmanager
+from datetime import UTC, datetime
+from functools import partial
 from typing import Any, Generator
 from unittest.mock import patch
 
 from bleak.backends.scanner import AdvertisementData, BLEDevice
+
+utcnow = partial(datetime.now, UTC)
+
+_MONOTONIC_RESOLUTION = time.get_clock_info("monotonic").resolution
 
 ADVERTISEMENT_DATA_DEFAULTS = {
     "manufacturer_data": {},
@@ -60,3 +68,20 @@ def patch_bluetooth_time(mock_time: float) -> Generator[Any, None, None]:
         patch("habluetooth.scanner.monotonic_time_coarse", return_value=mock_time),
     ):
         yield
+
+
+def async_fire_time_changed(utc_datetime: datetime) -> None:
+    timestamp = utc_datetime.timestamp()
+    loop = asyncio.get_running_loop()
+    for task in list(loop._scheduled):  # type: ignore[attr-defined]
+        if not isinstance(task, asyncio.TimerHandle):
+            continue
+        if task.cancelled():
+            continue
+
+        mock_seconds_into_future = timestamp - time.time()
+        future_seconds = task.when() - (loop.time() + _MONOTONIC_RESOLUTION)
+
+        if mock_seconds_into_future >= future_seconds:
+            task._run()
+            task.cancel()
