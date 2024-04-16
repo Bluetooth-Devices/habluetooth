@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
-from typing import TYPE_CHECKING, Any, Coroutine, Iterable
+from typing import Any, Coroutine, Iterable
 
 import bleak
 from bleak import BleakError
@@ -166,8 +166,8 @@ class HaScanner(BaseHaScanner):
     @property
     def discovered_devices(self) -> list[BLEDevice]:
         """Return a list of discovered devices."""
-        if TYPE_CHECKING:
-            assert self.scanner is not None
+        if not self.scanner:
+            return []
         return self.scanner.discovered_devices
 
     @property
@@ -175,8 +175,8 @@ class HaScanner(BaseHaScanner):
         self,
     ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
         """Return a list of discovered devices and advertisement data."""
-        if TYPE_CHECKING:
-            assert self.scanner is not None
+        if not self.scanner:
+            return {}
         return self.scanner.discovered_devices_and_advertisement_data
 
     @property
