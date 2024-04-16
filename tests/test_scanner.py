@@ -281,6 +281,7 @@ async def test_recovery_from_dbus_restart() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() == 'Windows'")
 async def test_adapter_recovery() -> None:
     """Test we can recover when the adapter stops responding."""
     called_start = 0
@@ -371,6 +372,7 @@ async def test_adapter_recovery() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() == 'Windows'")
 async def test_adapter_scanner_fails_to_start_first_time() -> None:
     """
     Test we can recover when the adapter stops responding.
