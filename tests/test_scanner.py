@@ -4,13 +4,10 @@ import asyncio
 import time
 from datetime import timedelta
 from typing import Any
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
 from bleak import BleakError
-from bleak.assigned_numbers import AdvertisementDataType
-from bleak.backends.bluezdbus.advertisement_monitor import OrPattern
-from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
 from bleak.backends.scanner import AdvertisementDataCallback
 from bleak_retry_connector import BleakSlotManager
 from bluetooth_adapters import BluetoothAdapters
@@ -38,13 +35,7 @@ from . import (
 # or_patterns is a workaround for the fact that passive scanning
 # needs at least one matcher to be set. The below matcher
 # will match all devices.
-scanner.PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
-    or_patterns=[
-        OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
-        OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
-        OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
-    ]
-)
+scanner.PASSIVE_SCANNER_ARGS = Mock()
 # If the adapter is in a stuck state the following errors are raised:
 NEED_RESET_ERRORS = [
     "org.bluez.Error.Failed",
