@@ -238,9 +238,10 @@ class BluetoothManager:
             # start another recovery
             return
         async with self._recovery_lock:
+            adapters = await self.async_get_bluetooth_adapters()
             for adapter in [
                 adapter
-                for adapter, details in self._adapters.items()
+                for adapter, details in adapters.items()
                 if details[ADAPTER_ADDRESS] == FAILED_ADAPTER_MAC
             ]:
                 await async_reset_adapter(adapter, FAILED_ADAPTER_MAC)
