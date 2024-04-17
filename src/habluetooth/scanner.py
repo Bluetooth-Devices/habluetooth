@@ -332,6 +332,9 @@ class HaScanner(BaseHaScanner):
                 f"{self.name}: Failed to start Bluetooth: {ex}; "
                 "Try power cycling the Bluetooth hardware."
             ) from ex
+        except BaseException:
+            await self._async_stop_scanner()
+            raise
 
         self._log_start_success(attempt)
         return True
