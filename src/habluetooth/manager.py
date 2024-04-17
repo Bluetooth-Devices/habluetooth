@@ -24,12 +24,14 @@ from .advertisement_tracker import (
 )
 from .const import (
     CALLBACK_TYPE,
+    FAILED_ADAPTER_MAC,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .models import BluetoothServiceInfoBleak
 from .scanner_device import BluetoothScannerDevice
 from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catcher
+from .util import async_reset_adapter
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
@@ -115,6 +117,7 @@ class BluetoothManager:
         "shutdown",
         "_loop",
         "_adapter_refresh_future",
+        "_recovery_lock",
     )
 
     def __init__(
@@ -149,6 +152,7 @@ class BluetoothManager:
         self.shutdown = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._adapter_refresh_future: asyncio.Future[None] | None = None
+        self._recovery_lock: asyncio.Lock = asyncio.Lock()
 
     @property
     def supports_passive_scan(self) -> bool:
@@ -226,6 +230,31 @@ class BluetoothManager:
             return adapter
         await self._async_refresh_adapters()
         return self._find_adapter_by_address(address)
+
+    async def async_get_adapter_from_address_or_recover(
+        self, address: str
+    ) -> str | None:
+        """Get adapter from address or recover."""
+        if adapter := self._find_adapter_by_address(address):
+            return adapter
+        await self._async_recover_failed_adapters()
+        return self._find_adapter_by_address(address)
+
+    async def _async_recover_failed_adapters(self) -> None:
+        """Recover failed adapters."""
+        if self._recovery_lock.locked():
+            # Already recovering, no need to
+            # start another recovery
+            return
+        async with self._recovery_lock:
+            adapters = await self.async_get_bluetooth_adapters()
+            for adapter in [
+                adapter
+                for adapter, details in adapters.items()
+                if details[ADAPTER_ADDRESS] == FAILED_ADAPTER_MAC
+            ]:
+                await async_reset_adapter(adapter, FAILED_ADAPTER_MAC)
+            await self._async_refresh_adapters()
 
     async def async_setup(self) -> None:
         """Set up the bluetooth manager."""
