@@ -15,22 +15,8 @@ from habluetooth import (
 
 
 @pytest.mark.asyncio
-async def test_create_manager() -> None:
-    """Return the BluetoothManager instance."""
-    adapters = BluetoothAdapters()
-    slot_manager = BleakSlotManager()
-    manager = BluetoothManager(adapters, slot_manager)
-    set_manager(manager)
-    assert manager
-
-
-@pytest.mark.asyncio
 async def test_async_recover_failed_adapters() -> None:
     """Return the BluetoothManager instance."""
-    adapters = BluetoothAdapters()
-    slot_manager = BleakSlotManager()
-    manager = BluetoothManager(adapters, slot_manager)
-    set_manager(manager)
 
     class MockLinuxAdapters(LinuxAdapters):
         @property
@@ -69,14 +55,26 @@ async def test_async_recover_failed_adapters() -> None:
             }
 
     with (
-        patch(
-            "habluetooth.scanner.platform.system",
-            return_value="Linux",
-        ),
-        patch("bluetooth_adapters.systems.platform.system", return_value="Linux"),
-        patch("bluetooth_adapters.systems.linux.LinuxAdapters", MockLinuxAdapters),
         patch("habluetooth.manager.async_reset_adapter") as mock_async_reset_adapter,
     ):
+        adapters = MockLinuxAdapters()
+        slot_manager = BleakSlotManager()
+        manager = BluetoothManager(adapters, slot_manager)
+        set_manager(manager)
         await manager.async_recover_failed_adapters()
 
     assert mock_async_reset_adapter.call_count == 2
+    assert mock_async_reset_adapter.call_args_list == [
+        (("hci1", "00:00:00:00:00:00"),),
+        (("hci2", "00:00:00:00:00:00"),),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_manager() -> None:
+    """Return the BluetoothManager instance."""
+    adapters = BluetoothAdapters()
+    slot_manager = BleakSlotManager()
+    manager = BluetoothManager(adapters, slot_manager)
+    set_manager(manager)
+    assert manager
