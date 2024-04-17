@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.6.0 (2024-04-17)
+
+### Feature
+
+- Speed up stopping the scanner when its stuck setting up (#37) ([`bba8b51`](https://github.com/Bluetooth-Devices/habluetooth/commit/bba8b514490d98dca1020bbfefd9dc1e6a79af5f))
+
 ## v2.5.3 (2024-04-17)
 
 ### Fix
