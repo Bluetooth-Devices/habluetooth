@@ -115,6 +115,7 @@ async def test_dbus_socket_missing(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() != 'Linux'")
 async def test_handle_cancellation(caplog: pytest.LogCaptureFixture) -> None:
     """Test cancellation stops."""
     with (
