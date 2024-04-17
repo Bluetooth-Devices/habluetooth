@@ -76,6 +76,9 @@ async def test_dbus_socket_missing_in_container(
             "habluetooth.scanner.OriginalBleakScanner.start",
             side_effect=FileNotFoundError,
         ),
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner.stop",
+        ) as mock_stop,
         pytest.raises(
             ScannerStartError,
             match="DBus service not found; docker config may be missing",
@@ -83,6 +86,7 @@ async def test_dbus_socket_missing_in_container(
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
         await scanner.async_start()
+        assert mock_stop.called
         await scanner.async_stop()
 
 
@@ -96,6 +100,9 @@ async def test_dbus_socket_missing(caplog: pytest.LogCaptureFixture) -> None:
             "habluetooth.scanner.OriginalBleakScanner.start",
             side_effect=FileNotFoundError,
         ),
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner.stop",
+        ) as mock_stop,
         pytest.raises(
             ScannerStartError,
             match="DBus service not found; make sure the DBus socket is available",
@@ -103,7 +110,27 @@ async def test_dbus_socket_missing(caplog: pytest.LogCaptureFixture) -> None:
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
         await scanner.async_start()
-    await scanner.async_stop()
+        assert mock_stop.called
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_handle_cancellation(caplog: pytest.LogCaptureFixture) -> None:
+    """Test cancellation stops."""
+    with (
+        patch("habluetooth.scanner.is_docker_env", return_value=False),
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner.start",
+            side_effect=asyncio.CancelledError,
+        ),
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner.stop",
+        ) as mock_stop,
+    ):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        with pytest.raises(asyncio.CancelledError):
+            await scanner.async_start()
+        assert mock_stop.called
 
 
 @pytest.mark.asyncio
@@ -116,10 +143,14 @@ async def test_dbus_broken_pipe_in_container(caplog: pytest.LogCaptureFixture) -
             "habluetooth.scanner.OriginalBleakScanner.start",
             side_effect=BrokenPipeError,
         ),
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner.stop",
+        ) as mock_stop,
         pytest.raises(ScannerStartError, match="DBus connection broken"),
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
         await scanner.async_start()
+        assert mock_stop.called
         await scanner.async_stop()
 
 
@@ -133,10 +164,14 @@ async def test_dbus_broken_pipe(caplog: pytest.LogCaptureFixture) -> None:
             "habluetooth.scanner.OriginalBleakScanner.start",
             side_effect=BrokenPipeError,
         ),
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner.stop",
+        ) as mock_stop,
         pytest.raises(ScannerStartError, match="DBus connection broken:"),
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
         await scanner.async_start()
+        assert mock_stop.called
         await scanner.async_stop()
 
 
