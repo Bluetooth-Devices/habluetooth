@@ -1,6 +1,5 @@
 """Tests for the manager."""
 
-import asyncio
 from typing import Any
 from unittest.mock import patch
 
@@ -16,6 +15,7 @@ from habluetooth import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() == 'Windows'")
 async def test_async_recover_failed_adapters() -> None:
     """Return the BluetoothManager instance."""
     attempt = 0
@@ -99,7 +99,7 @@ async def test_async_recover_failed_adapters() -> None:
         adapters = MockLinuxAdapters()
         slot_manager = BleakSlotManager()
         manager = BluetoothManager(adapters, slot_manager)
-        manager._loop = asyncio.get_running_loop()
+        await manager.async_setup()
         set_manager(manager)
         adapter = await manager.async_get_adapter_from_address_or_recover(
             "00:00:00:00:00:03"
