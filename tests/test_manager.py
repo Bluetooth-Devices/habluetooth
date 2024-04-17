@@ -1,5 +1,6 @@
 """Tests for the manager."""
 
+import asyncio
 from typing import Any
 from unittest.mock import patch
 
@@ -98,7 +99,7 @@ async def test_async_recover_failed_adapters() -> None:
         adapters = MockLinuxAdapters()
         slot_manager = BleakSlotManager()
         manager = BluetoothManager(adapters, slot_manager)
-        await manager.async_setup()
+        manager._loop = asyncio.get_running_loop()
         set_manager(manager)
         adapter = await manager.async_get_adapter_from_address_or_recover(
             "00:00:00:00:00:03"
