@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.7.0 (2024-04-17)
+
+### Feature
+
+- Improve fallback to passive mode when active mode fails (#39) ([`17ecc01`](https://github.com/Bluetooth-Devices/habluetooth/commit/17ecc012e096bec0113efea9ceb6a21bb50023fe))
+
 ## v2.6.0 (2024-04-17)
 
 ### Feature
