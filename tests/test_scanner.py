@@ -85,6 +85,7 @@ async def test_dbus_socket_missing_in_container(
         ),
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
         await scanner.async_start()
         assert mock_stop.called
         await scanner.async_stop()
@@ -109,6 +110,7 @@ async def test_dbus_socket_missing(caplog: pytest.LogCaptureFixture) -> None:
         ),
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
         await scanner.async_start()
         assert mock_stop.called
         await scanner.async_stop()
@@ -129,6 +131,7 @@ async def test_handle_cancellation(caplog: pytest.LogCaptureFixture) -> None:
         ) as mock_stop,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
         with pytest.raises(asyncio.CancelledError):
             await scanner.async_start()
         assert mock_stop.called
@@ -177,6 +180,7 @@ async def test_dbus_broken_pipe_in_container(caplog: pytest.LogCaptureFixture) -
         pytest.raises(ScannerStartError, match="DBus connection broken"),
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
         await scanner.async_start()
         assert mock_stop.called
         await scanner.async_stop()
@@ -198,6 +202,7 @@ async def test_dbus_broken_pipe(caplog: pytest.LogCaptureFixture) -> None:
         pytest.raises(ScannerStartError, match="DBus connection broken:"),
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
         await scanner.async_start()
         assert mock_stop.called
         await scanner.async_stop()
@@ -212,6 +217,7 @@ async def test_invalid_dbus_message(caplog: pytest.LogCaptureFixture) -> None:
         side_effect=InvalidMessageError,
     ), pytest.raises(ScannerStartError, match="Invalid DBus message received"):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
         await scanner.async_start()
         await scanner.async_stop()
 
