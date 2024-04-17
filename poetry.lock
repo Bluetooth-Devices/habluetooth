@@ -44,6 +44,17 @@ test = ["anyio[trio]", "coverage[toml] (>=7)", "exceptiongroup (>=1.2.0)", "hypo
 trio = ["trio (>=0.23)"]
 
 [[package]]
+name = "async-interrupt"
+version = "1.1.1"
+description = "Context manager to raise an exception when a future is done"
+optional = false
+python-versions = ">=3.9,<4.0"
+files = [
+    {file = "async_interrupt-1.1.1-py3-none-any.whl", hash = "sha256:b0d8c8228b75834fd39608382e1c721d3e68e0011443e0f434b8e8e1cc7bd391"},
+    {file = "async_interrupt-1.1.1.tar.gz", hash = "sha256:1e5999f0980b5db21293e4cd022518eeaf52284c0499631932a1df250cb99215"},
+]
+
+[[package]]
 name = "babel"
 version = "2.14.0"
 description = "Internationalization utilities"
@@ -1773,4 +1784,4 @@ all = ["winrt-Windows.Foundation.Collections[all] (==2.0.0-beta.1)", "winrt-Wind
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.13"
-content-hash = "25f159c7ba9d11717570003130736c442c2a99ff944627d5ebc4c9a98a8cd4b8"
+content-hash = "13f0a2596ddf377bd085b471895696814092309e37b9e9668870aad307f4524d"
