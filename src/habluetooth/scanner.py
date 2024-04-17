@@ -6,6 +6,7 @@ import logging
 import platform
 from typing import Any, Coroutine, Iterable
 
+import async_interrupt
 import bleak
 from bleak import BleakError
 from bleak.assigned_numbers import AdvertisementDataType
@@ -83,6 +84,10 @@ SCANNER_WATCHDOG_MULTIPLE = (
 )
 
 
+class _AbortStartError(Exception):
+    """Error to indicate that the start should be aborted."""
+
+
 class ScannerStartError(Exception):
     """Error to indicate that the scanner failed to start."""
 
@@ -156,6 +161,7 @@ class HaScanner(BaseHaScanner):
         self.scanning = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.scanner: bleak.BleakScanner | None = None
+        self._start_future: asyncio.Future[None] | None = None
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
@@ -264,6 +270,10 @@ class HaScanner(BaseHaScanner):
 
     async def _async_start_attempt(self, attempt: int) -> bool:
         """Start the scanner and handle errors."""
+        assert (  # noqa: S101
+            self._loop is not None
+        ), "Loop is not set, call async_setup first"
+
         mode = self.mode
         # 1st attempt - no auto reset
         # 2nd attempt - try to reset the adapter and wait a bit
@@ -288,9 +298,15 @@ class HaScanner(BaseHaScanner):
             self._async_detection_callback, mode, self.adapter
         )
         self._log_start_attempt(attempt)
+        self._start_future = self._loop.create_future()
         try:
-            async with asyncio.timeout(START_TIMEOUT):
+            async with asyncio.timeout(START_TIMEOUT), async_interrupt.interrupt(
+                self._start_future, _AbortStartError, None
+            ):
                 await self.scanner.start()
+        except _AbortStartError as ex:
+            await self._async_stop_scanner()
+            self._raise_for_abort_start(ex)
         except InvalidMessageError as ex:
             await self._async_stop_scanner()
             self._raise_for_invalid_dbus_message(ex)
@@ -335,6 +351,8 @@ class HaScanner(BaseHaScanner):
         except BaseException:
             await self._async_stop_scanner()
             raise
+        finally:
+            self._start_future = None
 
         self._log_start_success(attempt)
         return True
@@ -380,6 +398,16 @@ class HaScanner(BaseHaScanner):
             attempt,
             START_ATTEMPTS,
         )
+
+    def _raise_for_abort_start(self, ex: _AbortStartError) -> None:
+        _LOGGER.debug(
+            "%s: Starting bluetooth scanner aborted: %s",
+            self.name,
+            ex,
+            exc_info=True,
+        )
+        msg = f"{self.name}: Starting bluetooth scanner aborted"
+        raise ScannerStartError(msg) from ex
 
     def _raise_for_file_not_found_error(self, ex: FileNotFoundError) -> None:
         _LOGGER.debug(
@@ -482,6 +510,8 @@ class HaScanner(BaseHaScanner):
 
     async def async_stop(self) -> None:
         """Stop bluetooth scanner."""
+        if self._start_future is not None and not self._start_future.done():
+            self._start_future.set_exception(_AbortStartError())
         async with self._start_stop_lock:
             self._async_stop_scanner_watchdog()
             await self._async_stop_scanner()

@@ -136,6 +136,33 @@ async def test_handle_cancellation(caplog: pytest.LogCaptureFixture) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.skipif("platform.system() != 'Linux'")
+async def test_handle_stop_while_starting(caplog: pytest.LogCaptureFixture) -> None:
+    """Test stop while starting."""
+
+    async def _start(*args, **kwargs):
+        await asyncio.sleep(1000)
+
+    with (
+        patch("habluetooth.scanner.is_docker_env", return_value=False),
+        patch("habluetooth.scanner.OriginalBleakScanner.start", _start),
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner.stop",
+        ) as mock_stop,
+    ):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        task = asyncio.create_task(scanner.async_start())
+        await asyncio.sleep(0)
+        await scanner.async_stop()
+        with pytest.raises(
+            ScannerStartError, match="Starting bluetooth scanner aborted"
+        ):
+            await task
+        assert mock_stop.called
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif("platform.system() != 'Linux'")
 async def test_dbus_broken_pipe_in_container(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle dbus broken pipe in the container."""
     with (
