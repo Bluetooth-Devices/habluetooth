@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.8.0 (2024-04-17)
+
+### Feature
+
+- Add support for recovering failed adapters after reboot (#40) ([`04948c3`](https://github.com/Bluetooth-Devices/habluetooth/commit/04948c337adf0f7b291e4e33618a7eae6dc4ebc2))
+
 ## v2.7.0 (2024-04-17)
 
 ### Feature
