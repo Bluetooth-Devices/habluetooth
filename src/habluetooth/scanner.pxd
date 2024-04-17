@@ -18,6 +18,7 @@ cdef class HaScanner(BaseHaScanner):
     cdef public object _background_tasks
     cdef public object scanner
     cdef public object _start_future
+    cdef public object current_mode
 
     cpdef void _async_detection_callback(
         self,

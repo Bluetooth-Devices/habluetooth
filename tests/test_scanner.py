@@ -789,6 +789,11 @@ async def test_adapter_init_fails_fallback_to_passive(
             nonlocal _callback
             _callback = callback
 
+        @property
+        def discovered_devices_and_advertisement_data(self) -> dict[str, Any]:
+            """Mock discovered_devices."""
+            return {}
+
     mock_scanner = MockBleakScanner()
     start_time_monotonic = time.monotonic()
 
@@ -821,7 +826,33 @@ async def test_adapter_init_fails_fallback_to_passive(
         assert len(mock_recover_adapter.mock_calls) == 1
         assert "Waiting for adapter to initialize" in caplog.text
         assert (
-            "Falling back to passive scanning mode after active scanning failed"
+            "Successful fall-back to passive scanning mode after active scanning failed"
             in caplog.text
         )
+        assert await scanner.async_diagnostics() == {
+            "adapter": "hci0",
+            "current_mode": BluetoothScanningMode.PASSIVE,
+            "discovered_devices_and_advertisement_data": [],
+            "last_detection": ANY,
+            "monotonic_time": ANY,
+            "name": "hci0 (AA:BB:CC:DD:EE:FF)",
+            "requested_mode": BluetoothScanningMode.ACTIVE,
+            "scanning": True,
+            "source": "AA:BB:CC:DD:EE:FF",
+            "start_time": ANY,
+            "type": "HaScanner",
+        }
         await scanner.async_stop()
+        assert await scanner.async_diagnostics() == {
+            "adapter": "hci0",
+            "current_mode": BluetoothScanningMode.PASSIVE,
+            "discovered_devices_and_advertisement_data": [],
+            "last_detection": ANY,
+            "monotonic_time": ANY,
+            "name": "hci0 (AA:BB:CC:DD:EE:FF)",
+            "requested_mode": BluetoothScanningMode.ACTIVE,
+            "scanning": False,
+            "source": "AA:BB:CC:DD:EE:FF",
+            "start_time": ANY,
+            "type": "HaScanner",
+        }

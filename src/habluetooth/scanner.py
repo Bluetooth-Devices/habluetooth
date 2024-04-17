@@ -156,12 +156,13 @@ class HaScanner(BaseHaScanner):
         source = address if address != DEFAULT_ADDRESS else adapter or SOURCE_LOCAL
         super().__init__(source, adapter)
         self.connectable = True
-        self.mode = mode
+        self.requested_mode = mode
         self._start_stop_lock = asyncio.Lock()
         self.scanning = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.scanner: bleak.BleakScanner | None = None
         self._start_future: asyncio.Future[None] | None = None
+        self.current_mode: BluetoothScanningMode | None = None
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
@@ -206,6 +207,8 @@ class HaScanner(BaseHaScanner):
         base_diag = await super().async_diagnostics()
         return base_diag | {
             "adapter": self.adapter,
+            "requested_mode": self.requested_mode,
+            "current_mode": self.current_mode,
         }
 
     def _async_detection_callback(
@@ -274,7 +277,7 @@ class HaScanner(BaseHaScanner):
             self._loop is not None
         ), "Loop is not set, call async_setup first"
 
-        mode = self.mode
+        self.current_mode = self.requested_mode
         # 1st attempt - no auto reset
         # 2nd attempt - try to reset the adapter and wait a bit
         # 3th attempt - no auto reset
@@ -283,19 +286,19 @@ class HaScanner(BaseHaScanner):
         if (
             IS_LINUX
             and attempt == START_ATTEMPTS
-            and mode is BluetoothScanningMode.ACTIVE
+            and self.requested_mode is BluetoothScanningMode.ACTIVE
         ):
-            mode = BluetoothScanningMode.PASSIVE
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "%s: Falling back to passive scanning mode "
                 "after active scanning failed (%s/%s)",
                 self.name,
                 attempt,
                 START_ATTEMPTS,
             )
+            self.current_mode = BluetoothScanningMode.PASSIVE
 
         self.scanner = create_bleak_scanner(
-            self._async_detection_callback, mode, self.adapter
+            self._async_detection_callback, self.current_mode, self.adapter
         )
         self._log_start_attempt(attempt)
         self._start_future = self._loop.create_future()
@@ -366,6 +369,14 @@ class HaScanner(BaseHaScanner):
         )
 
     def _log_start_success(self, attempt: int) -> None:
+        if self.current_mode is not self.requested_mode:
+            _LOGGER.warning(
+                "%s: Successful fall-back to passive scanning mode "
+                "after active scanning failed (%s/%s)",
+                self.name,
+                attempt,
+                START_ATTEMPTS,
+            )
         _LOGGER.debug(
             "%s: Success while starting bluetooth; attempt: (%s/%s)",
             self.name,
