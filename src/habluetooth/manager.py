@@ -231,7 +231,16 @@ class BluetoothManager:
         await self._async_refresh_adapters()
         return self._find_adapter_by_address(address)
 
-    async def async_recover_failed_adapters(self) -> None:
+    async def async_get_adapter_from_address_or_recover(
+        self, address: str
+    ) -> str | None:
+        """Get adapter from address or recover."""
+        if adapter := self._find_adapter_by_address(address):
+            return adapter
+        await self._async_recover_failed_adapters()
+        return self._find_adapter_by_address(address)
+
+    async def _async_recover_failed_adapters(self) -> None:
         """Recover failed adapters."""
         if self._recovery_lock.locked():
             # Already recovering, no need to
@@ -245,6 +254,7 @@ class BluetoothManager:
                 if details[ADAPTER_ADDRESS] == FAILED_ADAPTER_MAC
             ]:
                 await async_reset_adapter(adapter, FAILED_ADAPTER_MAC)
+            await self._async_refresh_adapters()
 
     async def async_setup(self) -> None:
         """Set up the bluetooth manager."""

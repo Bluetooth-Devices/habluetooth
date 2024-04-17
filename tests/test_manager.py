@@ -17,10 +17,48 @@ from habluetooth import (
 @pytest.mark.asyncio
 async def test_async_recover_failed_adapters() -> None:
     """Return the BluetoothManager instance."""
+    attempt = 0
 
     class MockLinuxAdapters(LinuxAdapters):
         @property
         def adapters(self) -> dict[str, Any]:
+            nonlocal attempt
+            attempt += 1
+
+            if attempt == 1:
+                return {
+                    "hci0": {
+                        "address": "00:00:00:00:00:01",
+                        "hw_version": "usb:v1D6Bp0246d053F",
+                        "passive_scan": False,
+                        "sw_version": "homeassistant",
+                        "manufacturer": "ACME",
+                        "product": "Bluetooth Adapter 5.0",
+                        "product_id": "aa01",
+                        "vendor_id": "cc01",
+                    },
+                    "hci1": {
+                        "address": "00:00:00:00:00:00",
+                        "hw_version": "usb:v1D6Bp0246d053F",
+                        "passive_scan": False,
+                        "sw_version": "homeassistant",
+                        "manufacturer": "ACME",
+                        "product": "Bluetooth Adapter 5.0",
+                        "product_id": "aa01",
+                        "vendor_id": "cc01",
+                    },
+                    "hci2": {
+                        "address": "00:00:00:00:00:00",
+                        "hw_version": "usb:v1D6Bp0246d053F",
+                        "passive_scan": False,
+                        "sw_version": "homeassistant",
+                        "manufacturer": "ACME",
+                        "product": "Bluetooth Adapter 5.0",
+                        "product_id": "aa01",
+                        "vendor_id": "cc01",
+                    },
+                }
+
             return {
                 "hci0": {
                     "address": "00:00:00:00:00:01",
@@ -33,7 +71,7 @@ async def test_async_recover_failed_adapters() -> None:
                     "vendor_id": "cc01",
                 },
                 "hci1": {
-                    "address": "00:00:00:00:00:00",
+                    "address": "00:00:00:00:00:02",
                     "hw_version": "usb:v1D6Bp0246d053F",
                     "passive_scan": False,
                     "sw_version": "homeassistant",
@@ -43,7 +81,7 @@ async def test_async_recover_failed_adapters() -> None:
                     "vendor_id": "cc01",
                 },
                 "hci2": {
-                    "address": "00:00:00:00:00:00",
+                    "address": "00:00:00:00:00:03",
                     "hw_version": "usb:v1D6Bp0246d053F",
                     "passive_scan": False,
                     "sw_version": "homeassistant",
@@ -60,8 +98,20 @@ async def test_async_recover_failed_adapters() -> None:
         adapters = MockLinuxAdapters()
         slot_manager = BleakSlotManager()
         manager = BluetoothManager(adapters, slot_manager)
+        await manager.async_setup()
         set_manager(manager)
-        await manager.async_recover_failed_adapters()
+        adapter = await manager.async_get_adapter_from_address_or_recover(
+            "00:00:00:00:00:03"
+        )
+        assert adapter == "hci2"
+        adapter = await manager.async_get_adapter_from_address_or_recover(
+            "00:00:00:00:00:02"
+        )
+        assert adapter == "hci1"
+        adapter = await manager.async_get_adapter_from_address_or_recover(
+            "00:00:00:00:00:01"
+        )
+        assert adapter == "hci0"
 
     assert mock_async_reset_adapter.call_count == 2
     assert mock_async_reset_adapter.call_args_list == [
