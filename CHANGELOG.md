@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.5.3 (2024-04-17)
+
+### Fix
+
+- Ensure scanner is stopped on cancellation (#36) ([`a21d70a`](https://github.com/Bluetooth-Devices/habluetooth/commit/a21d70a1ac88135eade61c0abc8912c5b04a6b8b))
+
 ## v2.5.2 (2024-04-16)
 
 ### Fix
