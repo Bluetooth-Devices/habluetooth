@@ -1,6 +1,4 @@
 
-cdef object BLEDevice
-cdef object AdvertisementData
 
 cdef object _float
 cdef object _int
@@ -24,13 +22,13 @@ cdef class BluetoothServiceInfo:
 cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     """BluetoothServiceInfo with bleak data."""
 
-    cdef public _BLEDevice device
-    cdef public _AdvertisementData advertisement
+    cdef public BLEDevice device
+    cdef public AdvertisementData advertisement
     cdef public bint connectable
     cdef public double time
 
 
-cdef class _AdvertisementData:
+cdef class AdvertisementData:
 
     cdef public str local_name
     cdef public dict manufacturer_data
@@ -40,7 +38,7 @@ cdef class _AdvertisementData:
     cdef public object rssi
     cdef public tuple platform_data
 
-cdef class _BLEDevice:
+cdef class BLEDevice:
 
     cdef public str address
     cdef public str name

@@ -3,10 +3,10 @@ import cython
 
 from .base_scanner cimport BaseHaScanner
 from .models cimport BluetoothServiceInfoBleak
+from .models cimport BLEDevice
+from .models cimport AdvertisementData
 
 cdef object NO_RSSI_VALUE
-cdef object AdvertisementData
-cdef object BLEDevice
 cdef bint TYPE_CHECKING
 
 
@@ -22,6 +22,6 @@ cdef class HaScanner(BaseHaScanner):
 
     cpdef void _async_detection_callback(
         self,
-        object device,
-        object advertisement_data
+        BLEDevice device,
+        AdvertisementData advertisement_data
     )

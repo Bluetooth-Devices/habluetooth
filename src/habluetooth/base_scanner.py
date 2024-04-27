@@ -7,8 +7,6 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Final, Iterable, final
 
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
 from bleak_retry_connector import NO_RSSI_VALUE
 from bluetooth_adapters import DiscoveredDeviceAdvertisementData, adapter_human_name
 from bluetooth_data_tools import monotonic_time_coarse
@@ -20,7 +18,12 @@ from .const import (
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
 )
-from .models import BluetoothServiceInfoBleak, HaBluetoothConnector
+from .models import (
+    AdvertisementData,
+    BLEDevice,
+    BluetoothServiceInfoBleak,
+    HaBluetoothConnector,
+)
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)

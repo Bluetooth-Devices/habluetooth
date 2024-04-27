@@ -10,8 +10,7 @@ import async_interrupt
 import bleak
 from bleak import BleakError
 from bleak.assigned_numbers import AdvertisementDataType
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
+from bleak.backends.scanner import AdvertisementDataCallback
 from bleak_retry_connector import restore_discoveries
 from bluetooth_adapters import DEFAULT_ADDRESS
 from bluetooth_data_tools import monotonic_time_coarse
@@ -26,7 +25,12 @@ from .const import (
     START_TIMEOUT,
     STOP_TIMEOUT,
 )
-from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
+from .models import (
+    AdvertisementData,
+    BLEDevice,
+    BluetoothScanningMode,
+    BluetoothServiceInfoBleak,
+)
 from .util import async_reset_adapter, is_docker_env
 
 SYSTEM = platform.system()

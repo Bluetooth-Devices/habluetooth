@@ -3,12 +3,11 @@ import cython
 
 from .models cimport BluetoothServiceInfoBleak
 from .manager cimport BluetoothManager
+from .models cimport BLEDevice, AdvertisementData
 
 
 cdef object NO_RSSI_VALUE
 cdef object BluetoothServiceInfoBleak
-cdef object AdvertisementData
-cdef object BLEDevice
 cdef bint TYPE_CHECKING
 
 cdef class BaseHaScanner:

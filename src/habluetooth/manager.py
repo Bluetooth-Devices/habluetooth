@@ -28,15 +28,12 @@ from .const import (
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
 )
-from .models import BluetoothServiceInfoBleak
+from .models import AdvertisementData, BLEDevice, BluetoothServiceInfoBleak
 from .scanner_device import BluetoothScannerDevice
 from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catcher
 from .util import async_reset_adapter
 
 if TYPE_CHECKING:
-    from bleak.backends.device import BLEDevice
-    from bleak.backends.scanner import AdvertisementData
-
     from .base_scanner import BaseHaScanner
 
 

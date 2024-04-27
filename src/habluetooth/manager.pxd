@@ -3,14 +3,14 @@ import cython
 from .advertisement_tracker cimport AdvertisementTracker
 from .base_scanner cimport BaseHaScanner
 from .models cimport BluetoothServiceInfoBleak
+from .models cimport BLEDevice
+from .models cimport AdvertisementData
 
 cdef int NO_RSSI_VALUE
 cdef int RSSI_SWITCH_THRESHOLD
 cdef double TRACKER_BUFFERING_WOBBLE_SECONDS
 cdef double FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
 cdef object FILTER_UUIDS
-cdef object AdvertisementData
-cdef object BLEDevice
 cdef bint TYPE_CHECKING
 cdef set APPLE_START_BYTES_WANTED
 
@@ -20,8 +20,8 @@ cdef object APPLE_MFR_ID
 cdef _dispatch_bleak_callback(
     object callback,
     dict filters,
-    object device,
-    object advertisement_data
+    BLEDevice device,
+    AdvertisementData advertisement_data
 )
 
 cdef class BleakCallback:

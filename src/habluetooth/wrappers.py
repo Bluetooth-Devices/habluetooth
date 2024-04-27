@@ -12,9 +12,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from bleak import BleakClient, BleakError
 from bleak.backends.client import BaseBleakClient, get_platform_client_backend_type
-from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import (
-    AdvertisementData,
     AdvertisementDataCallback,
     BaseBleakScanner,
 )
@@ -27,6 +25,7 @@ from bleak_retry_connector import (
 
 from .central_manager import get_manager
 from .const import CALLBACK_TYPE
+from .models import AdvertisementData, BLEDevice
 from .scanner_device import BluetoothScannerDevice
 
 FILTER_UUIDS: Final = "UUIDs"

@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 from bleak import BaseBleakClient
 from bleak.backends import device, scanner
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
 
 if TYPE_CHECKING:
     from .manager import BluetoothManager
@@ -26,6 +24,109 @@ SOURCE_LOCAL: Final = "local"
 _float = float  # avoid cython conversion since we always want a pyfloat
 _str = str  # avoid cython conversion since we always want a pystr
 _int = int  # avoid cython conversion since we always want a pyint
+
+
+KEY_MAP = {
+    0: "local_name",
+    1: "manufacturer_data",
+    2: "service_data",
+    3: "service_uuids",
+    4: "tx_power",
+    5: "rssi",
+    6: "platform_data",
+}
+
+
+class AdvertisementData:
+    """Wrapper around the advertisement data upon discovery."""
+
+    __slots__ = (
+        "local_name",
+        "manufacturer_data",
+        "service_data",
+        "service_uuids",
+        "tx_power",
+        "rssi",
+        "platform_data",
+    )
+
+    def __init__(
+        self,
+        local_name: str | None,
+        manufacturer_data: dict[int, bytes],
+        service_data: dict[str, bytes],
+        service_uuids: list[str],
+        tx_power: int | None,
+        rssi: int,
+        platform_data: tuple[Any, ...],
+    ) -> None:
+        """Initialize the advertisement data."""
+        self.local_name = local_name
+        self.manufacturer_data = manufacturer_data
+        self.service_data = service_data
+        self.service_uuids = service_uuids
+        self.tx_power = tx_power
+        self.rssi = rssi
+        self.platform_data = platform_data
+
+    def __getitem__(self, index: int) -> Any:
+        """Get by index."""
+        if not (name := KEY_MAP.get(index)):
+            raise IndexError(index)
+        return getattr(self, name)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the advertisement data."""
+        kwargs = []
+        if self.local_name:
+            kwargs.append(f"local_name={self.local_name!r}")
+        if self.manufacturer_data:
+            kwargs.append(f"manufacturer_data={self.manufacturer_data!r}")
+        if self.service_data:
+            kwargs.append(f"service_data={self.service_data!r}")
+        if self.service_uuids:
+            kwargs.append(f"service_uuids={self.service_uuids!r}")
+        if self.tx_power is not None:
+            kwargs.append(f"tx_power={self.tx_power!r}")
+        kwargs.append(f"rssi={self.rssi!r}")
+        return f"AdvertisementData({', '.join(kwargs)})"
+
+
+class BLEDevice:
+    """A simple wrapper class representing a BLE server detected during scanning."""
+
+    __slots__ = ("address", "name", "details", "_rssi", "_metadata")
+
+    def __init__(
+        self, address: str, name: str | None, details: Any, rssi: int, **kwargs: Any
+    ) -> None:
+        self.address = address
+        self.name = name
+        self.details = details
+        self._rssi = rssi
+        self._metadata = kwargs
+
+    @property
+    def rssi(self) -> int:
+        """Gets the RSSI of the last received advertisement."""
+        return self._rssi
+
+    @property
+    def metadata(self) -> dict[Any, Any]:
+        """Gets the metadata of the device."""
+        return self._metadata
+
+    def __str__(self) -> str:
+        """Return the string representation of the device."""
+        return f"{self.address}: {self.name}"
+
+    def __repr__(self) -> str:
+        """Return the repr representation of the device."""
+        return f"BLEDevice({self.address}, {self.name})"
+
+
+scanner.AdvertisementData = AdvertisementData
+device.BLEDevice = BLEDevice
 
 
 class CentralBluetoothManager:
@@ -239,104 +340,3 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             connectable,
             time,
         )
-
-
-KEY_MAP = {
-    0: "local_name",
-    1: "manufacturer_data",
-    2: "service_data",
-    3: "service_uuids",
-    4: "tx_power",
-    5: "rssi",
-    6: "platform_data",
-}
-
-
-class _AdvertisementData:
-    """Wrapper around the advertisement data upon discovery."""
-
-    __slots__ = (
-        "local_name",
-        "manufacturer_data",
-        "service_data",
-        "service_uuids",
-        "tx_power",
-        "rssi",
-        "platform_data",
-    )
-
-    def __init__(
-        self,
-        local_name: str | None,
-        manufacturer_data: dict[int, bytes],
-        service_data: dict[str, bytes],
-        service_uuids: list[str],
-        tx_power: int | None,
-        rssi: int,
-        platform_data: tuple[Any, ...],
-    ) -> None:
-        """Initialize the advertisement data."""
-        self.local_name = local_name
-        self.manufacturer_data = manufacturer_data
-        self.service_data = service_data
-        self.service_uuids = service_uuids
-        self.tx_power = tx_power
-        self.rssi = rssi
-        self.platform_data = platform_data
-
-    def __getitem__(self, index: int) -> Any:
-        """Get by index."""
-        if not (name := KEY_MAP.get(index)):
-            raise IndexError(index)
-        return getattr(self, name)
-
-    def __repr__(self) -> str:
-        """Return a string representation of the advertisement data."""
-        kwargs = []
-        if self.local_name:
-            kwargs.append(f"local_name={self.local_name!r}")
-        if self.manufacturer_data:
-            kwargs.append(f"manufacturer_data={self.manufacturer_data!r}")
-        if self.service_data:
-            kwargs.append(f"service_data={self.service_data!r}")
-        if self.service_uuids:
-            kwargs.append(f"service_uuids={self.service_uuids!r}")
-        if self.tx_power is not None:
-            kwargs.append(f"tx_power={self.tx_power!r}")
-        kwargs.append(f"rssi={self.rssi!r}")
-        return f"AdvertisementData({', '.join(kwargs)})"
-
-
-class _BLEDevice:
-    """A simple wrapper class representing a BLE server detected during scanning."""
-
-    __slots__ = ("address", "name", "details", "_rssi", "_metadata")
-
-    def __init__(
-        self, address: str, name: str | None, details: Any, rssi: int, **kwargs: Any
-    ) -> None:
-        self.address = address
-        self.name = name
-        self.details = details
-        self._rssi = rssi
-        self._metadata = kwargs
-
-    @property
-    def rssi(self) -> int:
-        """Gets the RSSI of the last received advertisement."""
-        return self._rssi
-
-    @property
-    def metadata(self) -> dict[Any, Any]:
-        """Gets the metadata of the device."""
-        return self._metadata
-
-    def __str__(self) -> str:
-        return f"{self.address}: {self.name}"
-
-    def __repr__(self) -> str:
-        return f"BLEDevice({self.address}, {self.name})"
-
-
-scanner.AdvertisementData = _AdvertisementData
-device.BLEDevice = _BLEDevice
