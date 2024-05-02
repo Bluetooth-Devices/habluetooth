@@ -167,7 +167,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         self.service_uuids = service_uuids
         self.source = source
         self.device = device
-        if advertisement is None:
+        if advertisement is not None:
             self.__dict__["advertisement"] = advertisement
         self.connectable = connectable
         self.time = time
