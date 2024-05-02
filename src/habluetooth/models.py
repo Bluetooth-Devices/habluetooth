@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from functools import cached_property
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 from bleak import BaseBleakClient
@@ -144,6 +143,8 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     internal details.
     """
 
+    __slots__ = ("device", "_advertisement", "connectable", "time", "tx_power")
+
     def __init__(
         self,
         name: _str,  # may be a pyobjc object
@@ -167,24 +168,25 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         self.service_uuids = service_uuids
         self.source = source
         self.device = device
-        if advertisement is not None:
-            self.__dict__["advertisement"] = advertisement
+        self._advertisement = advertisement
         self.connectable = connectable
         self.time = time
         self.tx_power = tx_power
 
-    @cached_property
+    @property
     def advertisement(self) -> AdvertisementData:
         """Get the advertisement data."""
-        return AdvertisementData(
-            None if self.name == "" else self.name,
-            self.manufacturer_data,
-            self.service_data,
-            self.service_uuids,
-            NO_RSSI_VALUE if self.tx_power is None else self.tx_power,
-            self.rssi,
-            (),
-        )
+        if self._advertisement is None:
+            self._advertisement = AdvertisementData(
+                None if self.name == "" else self.name,
+                self.manufacturer_data,
+                self.service_data,
+                self.service_uuids,
+                NO_RSSI_VALUE if self.tx_power is None else self.tx_power,
+                self.rssi,
+                (),
+            )
+        return self._advertisement
 
     def as_dict(self) -> dict[str, Any]:
         """
