@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.8.1 (2024-05-02)
+
+### Fix
+
+- Add missing find_device_by_address mapping (#43) ([`cc8e57e`](https://github.com/Bluetooth-Devices/habluetooth/commit/cc8e57eef7b97a6f2a30488a64d156cb5023c6c6))
+
 ## v2.8.0 (2024-04-17)
 
 ### Feature
