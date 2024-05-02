@@ -236,6 +236,9 @@ class HaScanner(BaseHaScanner):
         name = advertisement_data.local_name or device.name or device.address
         if name is not None and type(name) is not str:
             name = str(name)
+        tx_power = advertisement_data.tx_power
+        if tx_power is not None and type(tx_power) is not int:
+            tx_power = int(tx_power)
         self._manager.scanner_adv_received(
             BluetoothServiceInfoBleak(
                 name,
@@ -249,7 +252,7 @@ class HaScanner(BaseHaScanner):
                 advertisement_data,
                 True,
                 callback_time,
-                advertisement_data.tx_power,
+                tx_power,
             )
         )
 
