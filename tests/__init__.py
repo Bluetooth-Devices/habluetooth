@@ -14,6 +14,7 @@ utcnow = partial(datetime.now, timezone.utc)
 _MONOTONIC_RESOLUTION = time.get_clock_info("monotonic").resolution
 
 ADVERTISEMENT_DATA_DEFAULTS = {
+    "local_name": "Unknown",
     "manufacturer_data": {},
     "service_data": {},
     "service_uuids": [],
