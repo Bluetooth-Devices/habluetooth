@@ -86,6 +86,7 @@ def test_model_from_scanner():
         "service_uuids": ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
         "source": "local",
         "time": now,
+        "tx_power": -127,
     }
 
 
@@ -131,6 +132,7 @@ def test_construct_service_info_bleak():
         "service_uuids": ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
         "source": "local",
         "time": now,
+        "tx_power": 1,
     }
 
 
@@ -168,6 +170,7 @@ def test_from_device_and_advertisement_data():
         "service_uuids": ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
         "source": "local",
         "time": now_monotonic,
+        "tx_power": -127,
     }
 
 
@@ -227,4 +230,5 @@ def test_pyobjc_compat():
         "service_uuids": ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
         "source": "local",
         "time": now,
+        "tx_power": 1,
     }
