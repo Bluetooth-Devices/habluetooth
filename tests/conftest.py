@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from habluetooth import scanner as bluetooth_scanner
+
 
 @pytest.fixture(name="enable_bluetooth")
 async def mock_enable_bluetooth(
@@ -42,11 +44,6 @@ def mock_bluetooth_adapters() -> Generator[None, None, None]:
 @pytest.fixture
 def mock_bleak_scanner_start() -> Generator[MagicMock, None, None]:
     """Fixture to mock starting the bleak scanner."""
-    # Late imports to avoid loading bleak unless we need it
-
-    # pylint: disable-next=import-outside-toplevel
-    from habluetooth import scanner as bluetooth_scanner
-
     bluetooth_scanner.OriginalBleakScanner.stop = AsyncMock()
     with (
         patch.object(
