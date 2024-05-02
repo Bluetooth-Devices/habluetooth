@@ -567,6 +567,7 @@ class BluetoothManager:
                 service_info.advertisement,
                 True,
                 service_info.time,
+                service_info.tx_power,
             )
 
         if (connectable or old_connectable_service_info is not None) and (

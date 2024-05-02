@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Final, Iterable, final
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from bleak_retry_connector import NO_RSSI_VALUE
 from bluetooth_adapters import DiscoveredDeviceAdvertisementData, adapter_human_name
 from bluetooth_data_tools import monotonic_time_coarse
 
@@ -238,6 +237,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 adv,
                 self.connectable,
                 discovered_device_timestamps[address],
+                adv.tx_power,
             )
             for address, (
                 device,
@@ -422,15 +422,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # pylint: disable-next=protected-access
             device._rssi = rssi  # deprecated, will be removed in newer bleak
 
-        advertisement_data = AdvertisementData(
-            None if local_name == "" else local_name,
-            manufacturer_data,
-            service_data,
-            service_uuids,
-            NO_RSSI_VALUE if tx_power is None else tx_power,
-            rssi,
-            (),
-        )
         service_info = BluetoothServiceInfoBleak(
             local_name or address,
             address,
@@ -440,9 +431,10 @@ class BaseHaRemoteScanner(BaseHaScanner):
             service_uuids,
             self.source,
             device,
-            advertisement_data,
+            None,
             self.connectable,
             advertisement_monotonic_time,
+            tx_power,
         )
         self._previous_service_info[address] = service_info
         self._manager.scanner_adv_received(service_info)
