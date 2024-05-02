@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.0.0 (2024-05-02)
+
+### Breaking
+
+- Make generation of advertisementdata lazy (#42) ([`25f8437`](https://github.com/Bluetooth-Devices/habluetooth/commit/25f843795927ad663a1d5ef1fa9472ec366b9da5))
+
 ## v2.8.1 (2024-05-02)
 
 ### Fix
