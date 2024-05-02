@@ -249,6 +249,7 @@ class HaScanner(BaseHaScanner):
                 advertisement_data,
                 True,
                 callback_time,
+                advertisement_data.tx_power,
             )
         )
 

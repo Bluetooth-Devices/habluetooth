@@ -4,11 +4,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 from bleak import BaseBleakClient
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from bleak_retry_connector import NO_RSSI_VALUE
 
 if TYPE_CHECKING:
     from .manager import BluetoothManager
@@ -142,8 +144,6 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     internal details.
     """
 
-    __slots__ = ("device", "advertisement", "connectable", "time")
-
     def __init__(
         self,
         name: _str,  # may be a pyobjc object
@@ -154,9 +154,10 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         service_uuids: list[_str],
         source: _str,
         device: BLEDevice,
-        advertisement: AdvertisementData,
+        advertisement: AdvertisementData | None,
         connectable: bool,
         time: _float,
+        tx_power: int | None,
     ) -> None:
         self.name = name
         self.address = address
@@ -166,9 +167,24 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         self.service_uuids = service_uuids
         self.source = source
         self.device = device
-        self.advertisement = advertisement
+        if advertisement is None:
+            self.__dict__["advertisement"] = advertisement
         self.connectable = connectable
         self.time = time
+        self.tx_power = tx_power
+
+    @cached_property
+    def advertisement(self) -> AdvertisementData:
+        """Get the advertisement data."""
+        return AdvertisementData(
+            None if self.name == "" else self.name,
+            self.manufacturer_data,
+            self.service_data,
+            self.service_uuids,
+            NO_RSSI_VALUE if self.tx_power is None else self.tx_power,
+            self.rssi,
+            (),
+        )
 
     def as_dict(self) -> dict[str, Any]:
         """
@@ -213,6 +229,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             advertisement_data,
             connectable,
             monotonic_time,
+            advertisement_data.tx_power,
         )
 
     @classmethod
@@ -237,4 +254,5 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             advertisement_data,
             connectable,
             time,
+            advertisement_data.tx_power,
         )
