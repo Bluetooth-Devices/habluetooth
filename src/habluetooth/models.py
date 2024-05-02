@@ -205,6 +205,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             "device": self.device,
             "connectable": self.connectable,
             "time": self.time,
+            "tx_power": self.tx_power,
         }
 
     @classmethod
