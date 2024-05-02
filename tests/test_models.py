@@ -107,6 +107,7 @@ def test_construct_service_info_bleak():
         advertisement=switchbot_adv,
         connectable=False,
         time=now,
+        tx_power=1,
     )
 
     assert service_info.service_uuids == ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
@@ -202,6 +203,7 @@ def test_pyobjc_compat():
         advertisement=switchbot_adv,
         connectable=False,
         time=now,
+        tx_power=1,
     )
 
     assert service_info.service_uuids == ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
