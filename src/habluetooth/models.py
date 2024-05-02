@@ -158,7 +158,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         advertisement: AdvertisementData | None,
         connectable: bool,
         time: _float,
-        tx_power: int | None,
+        tx_power: _int | None,
     ) -> None:
         self.name = name
         self.address = address
