@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.0.1 (2024-05-03)
+
+### Fix
+
+- Ensure lazy advertisement uses none when name is not present (#44) ([`c300f73`](https://github.com/Bluetooth-Devices/habluetooth/commit/c300f73ba82d3549ea4c156ef11023e9478c8b6c))
+
 ## v3.0.0 (2024-05-02)
 
 ### Breaking
