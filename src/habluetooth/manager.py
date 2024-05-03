@@ -564,7 +564,7 @@ class BluetoothManager:
                 service_info.service_uuids,
                 source,
                 service_info.device,
-                service_info.advertisement,
+                service_info._advertisement,
                 True,
                 service_info.time,
                 service_info.tx_power,
