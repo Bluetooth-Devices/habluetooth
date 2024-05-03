@@ -173,12 +173,28 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         self.time = time
         self.tx_power = tx_power
 
+    def __repr__(self) -> str:
+        """Return the representation of the object."""
+        return (
+            f"<{self.__class__.__name__} "
+            f"name={self.name} "
+            f"address={self.address} "
+            f"rssi={self.rssi} "
+            f"manufacturer_data={self.manufacturer_data} "
+            f"service_data={self.service_data} "
+            f"service_uuids={self.service_uuids} "
+            f"source={self.source} "
+            f"connectable={self.connectable} "
+            f"time={self.time} "
+            f"tx_power={self.tx_power}>"
+        )
+
     @property
     def advertisement(self) -> AdvertisementData:
         """Get the advertisement data."""
         if self._advertisement is None:
             self._advertisement = AdvertisementData(
-                None if self.name == "" else self.name,
+                None if self.name == "" or self.name == self.address else self.name,
                 self.manufacturer_data,
                 self.service_data,
                 self.service_uuids,
