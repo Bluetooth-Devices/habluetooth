@@ -1,3 +1,4 @@
+# cython: profile=True
 """Base classes for HA Bluetooth scanners for bluetooth."""
 from __future__ import annotations
 
@@ -362,7 +363,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         manufacturer_data: dict[int, bytes],
         tx_power: _int | None,
         details: dict[Any, Any],
-        advertisement_monotonic_time: _float,
+        advertisement_monotonic_time: float,
     ) -> None:
         """Call the registered callback."""
         self.scanning = not self._connecting

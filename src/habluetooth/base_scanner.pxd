@@ -49,15 +49,15 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
     )
     cpdef void _async_on_advertisement(
         self,
-        object address,
-        object rssi,
+        str address,
+        int rssi,
         str local_name,
         list service_uuids,
         dict service_data,
         dict manufacturer_data,
-        object tx_power,
+        int tx_power,
         dict details,
-        object advertisement_monotonic_time
+        double advertisement_monotonic_time
     )
 
     @cython.locals(now=float, timestamp=float, service_info=BluetoothServiceInfoBleak)
