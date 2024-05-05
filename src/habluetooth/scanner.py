@@ -239,11 +239,14 @@ class HaScanner(BaseHaScanner):
         tx_power = advertisement_data.tx_power
         if tx_power is not None and type(tx_power) is not int:
             tx_power = int(tx_power)
+        rssi = advertisement_data.rssi
+        if rssi is not None and type(rssi) is not int:
+            rssi = int(rssi)
         self._manager.scanner_adv_received(
             BluetoothServiceInfoBleak(
                 name,
                 device.address,
-                advertisement_data.rssi,
+                rssi,
                 advertisement_data.manufacturer_data,
                 advertisement_data.service_data,
                 advertisement_data.service_uuids,

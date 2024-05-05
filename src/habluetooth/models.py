@@ -147,18 +147,18 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
 
     def __init__(
         self,
-        name: _str,  # may be a pyobjc object
-        address: _str,  # may be a pyobjc object
-        rssi: _int,  # may be a pyobjc object
-        manufacturer_data: dict[_int, bytes],
-        service_data: dict[_str, bytes],
-        service_uuids: list[_str],
-        source: _str,
+        name: str,
+        address: str,
+        rssi: int,
+        manufacturer_data: dict[int, bytes],
+        service_data: dict[str, bytes],
+        service_uuids: list[str],
+        source: str,
         device: BLEDevice,
         advertisement: AdvertisementData | None,
         connectable: bool,
-        time: _float,
-        tx_power: _int | None,
+        time: float,
+        tx_power: int | None,
     ) -> None:
         self.name = name
         self.address = address

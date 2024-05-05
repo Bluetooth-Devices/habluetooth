@@ -181,15 +181,9 @@ def test_from_device_and_advertisement_data():
 
 
 def test_pyobjc_compat():
-    class pyobjc_str(str):
-        pass
-
-    class pyobjc_int(int):
-        pass
-
-    name = pyobjc_str("wohand")
-    address = pyobjc_str("44:44:33:11:23:45")
-    rssi = pyobjc_int(-127)
+    name = "wohand"
+    address = "44:44:33:11:23:45"
+    rssi = int(-127)
 
     assert name == "wohand"
     assert address == "44:44:33:11:23:45"
