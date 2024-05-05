@@ -1,3 +1,4 @@
+# cython: profile=True
 """Models for bluetooth."""
 from __future__ import annotations
 

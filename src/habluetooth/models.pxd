@@ -1,4 +1,5 @@
 
+# cython: profile=True
 cdef object BLEDevice
 cdef object AdvertisementData
 
