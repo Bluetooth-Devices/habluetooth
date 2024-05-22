@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.1.0 (2024-05-22)
+
+### Feature
+
+- Speed up dispatching bleak callbacks (#46) ([`cbc8b26`](https://github.com/Bluetooth-Devices/habluetooth/commit/cbc8b26f90b9ea4f2a8569c0625b527dd37ef180))
+
 ## v3.0.1 (2024-05-03)
 
 ### Fix
