@@ -18,8 +18,7 @@ cdef object APPLE_MFR_ID
 
 @cython.locals(uuids=set)
 cdef _dispatch_bleak_callback(
-    object callback,
-    dict filters,
+    BleakCallback bleak_callback,
     object device,
     object advertisement_data
 )

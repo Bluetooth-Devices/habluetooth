@@ -60,25 +60,20 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _dispatch_bleak_callback(
-    callback: AdvertisementDataCallback | None,
-    filters: dict[str, set[str]],
+    bleak_callback: BleakCallback,
     device: BLEDevice,
     advertisement_data: AdvertisementData,
 ) -> None:
     """Dispatch the callback."""
-    if not callback:
-        # Callback destroyed right before being called, ignore
-        return
-
-    if (uuids := filters.get(FILTER_UUIDS)) is not None and not uuids.intersection(
-        advertisement_data.service_uuids
-    ):
+    if (
+        uuids := bleak_callback.filters.get(FILTER_UUIDS)
+    ) is not None and not uuids.intersection(advertisement_data.service_uuids):
         return
 
     try:
-        callback(device, advertisement_data)
+        bleak_callback.callback(device, advertisement_data)
     except Exception:  # pylint: disable=broad-except
-        _LOGGER.exception("Error in callback: %s", callback)
+        _LOGGER.exception("Error in callback: %s", bleak_callback.callback)
 
 
 class BleakCallback:
@@ -454,9 +449,10 @@ class BluetoothManager:
             return
 
         address = service_info.address
-        old_connectable_service_info = None
         if connectable := service_info.connectable:
             old_connectable_service_info = self._connectable_history.get(address)
+        else:
+            old_connectable_service_info = None
         source = service_info.source
         # This logic is complex due to the many combinations of scanners
         # that are supported.
@@ -577,12 +573,7 @@ class BluetoothManager:
             device = service_info.device
             advertisement_data = service_info.advertisement
             for bleak_callback in bleak_callbacks:
-                _dispatch_bleak_callback(
-                    bleak_callback.callback,
-                    bleak_callback.filters,
-                    device,
-                    advertisement_data,
-                )
+                _dispatch_bleak_callback(bleak_callback, device, advertisement_data)
 
         self._discover_service_info(service_info)
 
@@ -710,7 +701,7 @@ class BluetoothManager:
         # or we are in passive mode
         for history in self._connectable_history.values():
             _dispatch_bleak_callback(
-                callback, filters, history.device, history.advertisement
+                callback_entry, history.device, history.advertisement
             )
 
         return partial(self._bleak_callbacks.remove, callback_entry)
