@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.1.1 (2024-05-23)
+
+### Fix
+
+- Missing classmethod decorator on find_device_by_address (#47) ([`aa08b13`](https://github.com/Bluetooth-Devices/habluetooth/commit/aa08b136660cddea7c356274c21f20b6d0eef1fa))
+
 ## v3.1.0 (2024-05-22)
 
 ### Feature
