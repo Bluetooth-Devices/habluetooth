@@ -406,14 +406,9 @@ async def test_find_device_by_address(
 ) -> None:
     """Ensure the client wrapper can handle a subclassed str as the address."""
     _, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
-
-    class SubclassedStr(str):
-        __slots__ = ()
-
-    scanner = bleak.BleakScanner()
-
-    device = await scanner.find_device_by_address("00:00:00:00:00:01")
-
+    device = await bleak.BleakScanner.find_device_by_address("00:00:00:00:00:01")
+    assert device.address == "00:00:00:00:00:01"
+    device = await bleak.BleakScanner().find_device_by_address("00:00:00:00:00:01")
     assert device.address == "00:00:00:00:00:01"
 
 

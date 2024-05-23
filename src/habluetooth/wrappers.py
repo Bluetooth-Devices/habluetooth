@@ -73,8 +73,9 @@ class HaBleakScannerWrapper(BaseBleakScanner):
             detection_callback=detection_callback, service_uuids=service_uuids or []
         )
 
+    @classmethod
     async def find_device_by_address(
-        self, device_identifier: str, timeout: float = 10.0, **kwargs: Any
+        cls, device_identifier: str, timeout: float = 10.0, **kwargs: Any
     ) -> BLEDevice | None:
         """Find a device by address."""
         manager = get_manager()
