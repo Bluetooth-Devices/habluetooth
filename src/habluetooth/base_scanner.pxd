@@ -10,7 +10,7 @@ cdef object AdvertisementData
 cdef object BLEDevice
 cdef bint TYPE_CHECKING
 
-cdef BluetoothServiceInfoBleak _NEW_SERVICE_INFO
+cdef object _NEW_SERVICE_INFO
 
 cdef class BaseHaScanner:
 
