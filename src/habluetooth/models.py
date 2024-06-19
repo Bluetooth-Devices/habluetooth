@@ -125,10 +125,25 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     """
 
     device: BLEDevice
-    advertisement: AdvertisementData
+    _advertisement: AdvertisementData | None
     connectable: bool
     time: _float
     tx_power: _int | None
+
+    @property
+    def advertisement(self) -> AdvertisementData:
+        """Get the advertisement data."""
+        if self._advertisement is None:
+            self._advertisement = AdvertisementData(
+                None if self.name == "" or self.name == self.address else self.name,
+                self.manufacturer_data,
+                self.service_data,
+                self.service_uuids,
+                NO_RSSI_VALUE if self.tx_power is None else self.tx_power,
+                self.rssi,
+                (),
+            )
+        return self._advertisement
 
     def as_dict(self) -> dict[str, Any]:
         """
