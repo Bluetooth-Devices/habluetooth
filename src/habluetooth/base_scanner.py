@@ -29,6 +29,8 @@ _float = float
 _int = int
 _str = str
 
+_NEW_SERVICE_INFO = BluetoothServiceInfoBleak.__new__
+
 
 class BaseHaScanner:
     """Base class for high availability BLE scanners."""
@@ -422,7 +424,8 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # pylint: disable-next=protected-access
             device._rssi = rssi  # deprecated, will be removed in newer bleak
 
-        service_info = BluetoothServiceInfoBleak(
+        service_info = _NEW_SERVICE_INFO(BluetoothServiceInfoBleak)
+        service_info._cython_init(
             local_name or address,
             address,
             rssi,

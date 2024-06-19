@@ -25,7 +25,23 @@ cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     """BluetoothServiceInfo with bleak data."""
 
     cdef public object device
-    cdef public bint connectable
     cdef public object _advertisement
+    cdef public bint connectable
     cdef public double time
     cdef public object tx_power
+
+    cdef _cython_init(
+        self,
+        str name,
+        str address,
+        int rssi,
+        dict manufacturer_data,
+        dict service_data,
+        list service_uuids,
+        str source,
+        object device,
+        object _advertisement,
+        bint connectable,
+        double time,
+        object tx_power
+    )

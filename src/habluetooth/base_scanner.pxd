@@ -10,10 +10,12 @@ cdef object AdvertisementData
 cdef object BLEDevice
 cdef bint TYPE_CHECKING
 
+cdef BluetoothServiceInfoBleak _NEW_SERVICE_INFO
+
 cdef class BaseHaScanner:
 
     cdef public str adapter
-    cdef public object connectable
+    cdef public bint connectable
     cdef public str source
     cdef public object connector
     cdef public unsigned int _connecting
@@ -45,19 +47,20 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         has_service_data=bint,
         has_service_uuids=bint,
         prev_details=dict,
+        service_info=BluetoothServiceInfoBleak,
         prev_service_info=BluetoothServiceInfoBleak
     )
     cpdef void _async_on_advertisement(
         self,
-        object address,
-        object rssi,
+        str address,
+        int rssi,
         str local_name,
         list service_uuids,
         dict service_data,
         dict manufacturer_data,
         object tx_power,
         dict details,
-        object advertisement_monotonic_time
+        double advertisement_monotonic_time
     )
 
     @cython.locals(now=float, timestamp=float, service_info=BluetoothServiceInfoBleak)
