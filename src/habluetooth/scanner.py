@@ -1,3 +1,4 @@
+# cython: profile=True
 """A local bleak scanner."""
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from .const import (
     START_TIMEOUT,
     STOP_TIMEOUT,
 )
-from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
+from .models import _NEW_SERVICE_INFO, BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
 
 SYSTEM = platform.system()
@@ -239,22 +240,22 @@ class HaScanner(BaseHaScanner):
         tx_power = advertisement_data.tx_power
         if tx_power is not None and type(tx_power) is not int:
             tx_power = int(tx_power)
-        self._manager.scanner_adv_received(
-            BluetoothServiceInfoBleak(
-                name,
-                device.address,
-                advertisement_data.rssi,
-                advertisement_data.manufacturer_data,
-                advertisement_data.service_data,
-                advertisement_data.service_uuids,
-                self.source,
-                device,
-                advertisement_data,
-                True,
-                callback_time,
-                tx_power,
-            )
+        service_info: BluetoothServiceInfoBleak = _NEW_SERVICE_INFO()
+        service_info._cython_init(
+            name,
+            device.address,
+            advertisement_data.rssi,
+            advertisement_data.manufacturer_data,
+            advertisement_data.service_data,
+            advertisement_data.service_uuids,
+            self.source,
+            device,
+            advertisement_data,
+            True,
+            callback_time,
+            tx_power,
         )
+        self._manager.scanner_adv_received(service_info)
 
     async def async_start(self) -> None:
         """Start bluetooth scanner."""

@@ -5,7 +5,6 @@ import asyncio
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
-from functools import partial
 from typing import TYPE_CHECKING, Any, Final, Iterable, final
 
 from bleak.backends.device import BLEDevice
@@ -20,7 +19,7 @@ from .const import (
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
 )
-from .models import BluetoothServiceInfoBleak, HaBluetoothConnector
+from .models import _NEW_SERVICE_INFO, BluetoothServiceInfoBleak, HaBluetoothConnector
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
@@ -29,10 +28,6 @@ _LOGGER = logging.getLogger(__name__)
 _float = float
 _int = int
 _str = str
-
-_NEW_SERVICE_INFO = partial(
-    BluetoothServiceInfoBleak.__new__, BluetoothServiceInfoBleak
-)
 
 
 class BaseHaScanner:
@@ -427,7 +422,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # pylint: disable-next=protected-access
             device._rssi = rssi  # deprecated, will be removed in newer bleak
 
-        service_info = _NEW_SERVICE_INFO()
+        service_info: BluetoothServiceInfoBleak = _NEW_SERVICE_INFO()
         service_info._cython_init(
             local_name or address,
             address,

@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from functools import partial
 from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 from bleak import BaseBleakClient
@@ -304,3 +305,8 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             time,
             advertisement_data.tx_power,
         )
+
+
+_NEW_SERVICE_INFO = partial(
+    BluetoothServiceInfoBleak.__new__, BluetoothServiceInfoBleak
+)
