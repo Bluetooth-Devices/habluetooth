@@ -28,7 +28,7 @@ cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     cdef public object _advertisement
     cdef public bint connectable
     cdef public double time
-    cdef public object tx_power
+    cdef public int tx_power
 
     cdef _cython_init(
         self,
@@ -43,5 +43,5 @@ cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         object _advertisement,
         bint connectable,
         double time,
-        object tx_power
+        int tx_power
     )
