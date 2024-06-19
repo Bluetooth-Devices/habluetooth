@@ -18,8 +18,7 @@ cdef object APPLE_MFR_ID
 
 @cython.locals(uuids=set)
 cdef _dispatch_bleak_callback(
-    object callback,
-    dict filters,
+    BleakCallback bleak_callback,
     object device,
     object advertisement_data
 )
@@ -50,6 +49,7 @@ cdef class BluetoothManager:
     cdef public bint shutdown
     cdef public object _loop
     cdef public object _adapter_refresh_future
+    cdef public object _recovery_lock
 
     @cython.locals(stale_seconds=float)
     cdef bint _prefer_previous_adv_from_different_source(

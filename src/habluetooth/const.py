@@ -9,6 +9,7 @@ CALLBACK_TYPE = Callable[[], None]
 SOURCE_LOCAL: Final = "local"
 
 START_TIMEOUT = 15
+STOP_TIMEOUT = 5
 
 # The maximum time between advertisements for a device to be considered
 # stale when the advertisement tracker cannot determine the interval.
@@ -48,3 +49,6 @@ SCANNER_WATCHDOG_INTERVAL: Final = timedelta(seconds=30)
 
 
 UNAVAILABLE_TRACK_SECONDS: Final = 60 * 5
+
+
+FAILED_ADAPTER_MAC = "00:00:00:00:00:00"

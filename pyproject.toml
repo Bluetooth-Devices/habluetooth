@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "habluetooth"
-version = "2.4.2"
+version = "3.1.1"
 description = "High availability Bluetooth"
 authors = ["J. Nick Koston <bluetooth@koston.org>"]
 license = "Apache Software License 2.0"
@@ -27,16 +27,18 @@ script = "build_ext.py"
 "Changelog" = "https://github.com/bluetooth-devices/habluetooth/blob/main/CHANGELOG.md"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.13"
+python = ">=3.11,<3.13"
 bleak = ">=0.21.1"
 bleak-retry-connector = ">=3.3.0"
 bluetooth-data-tools = ">=1.16.0"
 bluetooth-adapters = ">=0.16.1"
 bluetooth-auto-recovery = ">=1.2.3"
+async-interrupt = ">=1.1.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0"
 pytest-cov = "^3.0"
+pytest-asyncio = "^0.23.6"
 
 [tool.poetry.group.docs]
 optional = true
@@ -74,6 +76,8 @@ prerelease = true
 [tool.pytest.ini_options]
 addopts = "-v -Wdefault --cov=habluetooth --cov-report=term-missing:skip-covered"
 pythonpath = ["src"]
+log_cli="true"
+log_level="NOTSET"
 
 [tool.coverage.run]
 branch = true

@@ -24,12 +24,14 @@ from .advertisement_tracker import (
 )
 from .const import (
     CALLBACK_TYPE,
+    FAILED_ADAPTER_MAC,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .models import BluetoothServiceInfoBleak
 from .scanner_device import BluetoothScannerDevice
 from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catcher
+from .util import async_reset_adapter
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
@@ -58,25 +60,20 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _dispatch_bleak_callback(
-    callback: AdvertisementDataCallback | None,
-    filters: dict[str, set[str]],
+    bleak_callback: BleakCallback,
     device: BLEDevice,
     advertisement_data: AdvertisementData,
 ) -> None:
     """Dispatch the callback."""
-    if not callback:
-        # Callback destroyed right before being called, ignore
-        return
-
-    if (uuids := filters.get(FILTER_UUIDS)) is not None and not uuids.intersection(
-        advertisement_data.service_uuids
-    ):
+    if (
+        uuids := bleak_callback.filters.get(FILTER_UUIDS)
+    ) is not None and not uuids.intersection(advertisement_data.service_uuids):
         return
 
     try:
-        callback(device, advertisement_data)
+        bleak_callback.callback(device, advertisement_data)
     except Exception:  # pylint: disable=broad-except
-        _LOGGER.exception("Error in callback: %s", callback)
+        _LOGGER.exception("Error in callback: %s", bleak_callback.callback)
 
 
 class BleakCallback:
@@ -115,6 +112,7 @@ class BluetoothManager:
         "shutdown",
         "_loop",
         "_adapter_refresh_future",
+        "_recovery_lock",
     )
 
     def __init__(
@@ -149,6 +147,7 @@ class BluetoothManager:
         self.shutdown = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._adapter_refresh_future: asyncio.Future[None] | None = None
+        self._recovery_lock: asyncio.Lock = asyncio.Lock()
 
     @property
     def supports_passive_scan(self) -> bool:
@@ -226,6 +225,31 @@ class BluetoothManager:
             return adapter
         await self._async_refresh_adapters()
         return self._find_adapter_by_address(address)
+
+    async def async_get_adapter_from_address_or_recover(
+        self, address: str
+    ) -> str | None:
+        """Get adapter from address or recover."""
+        if adapter := self._find_adapter_by_address(address):
+            return adapter
+        await self._async_recover_failed_adapters()
+        return self._find_adapter_by_address(address)
+
+    async def _async_recover_failed_adapters(self) -> None:
+        """Recover failed adapters."""
+        if self._recovery_lock.locked():
+            # Already recovering, no need to
+            # start another recovery
+            return
+        async with self._recovery_lock:
+            adapters = await self.async_get_bluetooth_adapters()
+            for adapter in [
+                adapter
+                for adapter, details in adapters.items()
+                if details[ADAPTER_ADDRESS] == FAILED_ADAPTER_MAC
+            ]:
+                await async_reset_adapter(adapter, FAILED_ADAPTER_MAC)
+            await self._async_refresh_adapters()
 
     async def async_setup(self) -> None:
         """Set up the bluetooth manager."""
@@ -425,9 +449,10 @@ class BluetoothManager:
             return
 
         address = service_info.address
-        old_connectable_service_info = None
         if connectable := service_info.connectable:
             old_connectable_service_info = self._connectable_history.get(address)
+        else:
+            old_connectable_service_info = None
         source = service_info.source
         # This logic is complex due to the many combinations of scanners
         # that are supported.
@@ -535,9 +560,10 @@ class BluetoothManager:
                 service_info.service_uuids,
                 source,
                 service_info.device,
-                service_info.advertisement,
+                service_info._advertisement,
                 True,
                 service_info.time,
+                service_info.tx_power,
             )
 
         if (connectable or old_connectable_service_info is not None) and (
@@ -547,12 +573,7 @@ class BluetoothManager:
             device = service_info.device
             advertisement_data = service_info.advertisement
             for bleak_callback in bleak_callbacks:
-                _dispatch_bleak_callback(
-                    bleak_callback.callback,
-                    bleak_callback.filters,
-                    device,
-                    advertisement_data,
-                )
+                _dispatch_bleak_callback(bleak_callback, device, advertisement_data)
 
         self._discover_service_info(service_info)
 
@@ -680,7 +701,7 @@ class BluetoothManager:
         # or we are in passive mode
         for history in self._connectable_history.values():
             _dispatch_bleak_callback(
-                callback, filters, history.device, history.advertisement
+                callback_entry, history.device, history.advertisement
             )
 
         return partial(self._bleak_callbacks.remove, callback_entry)

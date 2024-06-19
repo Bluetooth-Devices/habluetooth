@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Final, TypeVar
 from bleak import BaseBleakClient
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from bleak_retry_connector import NO_RSSI_VALUE
 
 if TYPE_CHECKING:
     from .manager import BluetoothManager
@@ -127,6 +128,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     advertisement: AdvertisementData
     connectable: bool
     time: _float
+    tx_power: _int | None
 
     def as_dict(self) -> dict[str, Any]:
         """
@@ -147,6 +149,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             "device": self.device,
             "connectable": self.connectable,
             "time": self.time,
+            "tx_power": self.tx_power,
         }
 
     @classmethod
@@ -171,6 +174,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             advertisement_data,
             connectable,
             monotonic_time,
+            advertisement_data.tx_power,
         )
 
     @classmethod
@@ -195,4 +199,5 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             advertisement_data,
             connectable,
             time,
+            advertisement_data.tx_power,
         )

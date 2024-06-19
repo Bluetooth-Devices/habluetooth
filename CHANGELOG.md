@@ -1,5 +1,77 @@
 # Changelog
 
+## v3.1.1 (2024-05-23)
+
+### Fix
+
+- Missing classmethod decorator on find_device_by_address (#47) ([`aa08b13`](https://github.com/Bluetooth-Devices/habluetooth/commit/aa08b136660cddea7c356274c21f20b6d0eef1fa))
+
+## v3.1.0 (2024-05-22)
+
+### Feature
+
+- Speed up dispatching bleak callbacks (#46) ([`cbc8b26`](https://github.com/Bluetooth-Devices/habluetooth/commit/cbc8b26f90b9ea4f2a8569c0625b527dd37ef180))
+
+## v3.0.1 (2024-05-03)
+
+### Fix
+
+- Ensure lazy advertisement uses none when name is not present (#44) ([`c300f73`](https://github.com/Bluetooth-Devices/habluetooth/commit/c300f73ba82d3549ea4c156ef11023e9478c8b6c))
+
+## v3.0.0 (2024-05-02)
+
+### Breaking
+
+- Make generation of advertisementdata lazy (#42) ([`25f8437`](https://github.com/Bluetooth-Devices/habluetooth/commit/25f843795927ad663a1d5ef1fa9472ec366b9da5))
+
+## v2.8.1 (2024-05-02)
+
+### Fix
+
+- Add missing find_device_by_address mapping (#43) ([`cc8e57e`](https://github.com/Bluetooth-Devices/habluetooth/commit/cc8e57eef7b97a6f2a30488a64d156cb5023c6c6))
+
+## v2.8.0 (2024-04-17)
+
+### Feature
+
+- Add support for recovering failed adapters after reboot (#40) ([`04948c3`](https://github.com/Bluetooth-Devices/habluetooth/commit/04948c337adf0f7b291e4e33618a7eae6dc4ebc2))
+
+## v2.7.0 (2024-04-17)
+
+### Feature
+
+- Improve fallback to passive mode when active mode fails (#39) ([`17ecc01`](https://github.com/Bluetooth-Devices/habluetooth/commit/17ecc012e096bec0113efea9ceb6a21bb50023fe))
+
+## v2.6.0 (2024-04-17)
+
+### Feature
+
+- Speed up stopping the scanner when its stuck setting up (#37) ([`bba8b51`](https://github.com/Bluetooth-Devices/habluetooth/commit/bba8b514490d98dca1020bbfefd9dc1e6a79af5f))
+
+## v2.5.3 (2024-04-17)
+
+### Fix
+
+- Ensure scanner is stopped on cancellation (#36) ([`a21d70a`](https://github.com/Bluetooth-Devices/habluetooth/commit/a21d70a1ac88135eade61c0abc8912c5b04a6b8b))
+
+## v2.5.2 (2024-04-16)
+
+### Fix
+
+- Ensure discovered_devices returns an empty list for offline scanners (#35) ([`2350543`](https://github.com/Bluetooth-Devices/habluetooth/commit/23505437c98529f692ab2dc0f5c3bdb5c9b7e3bd))
+
+## v2.5.1 (2024-04-16)
+
+### Fix
+
+- Wheel builds (#34) ([`5bd671a`](https://github.com/Bluetooth-Devices/habluetooth/commit/5bd671a159292dffe30a69639411926d0bc28123))
+
+## v2.5.0 (2024-04-16)
+
+### Feature
+
+- Fallback to passive scanning if active cannot start (#33) ([`3fae981`](https://github.com/Bluetooth-Devices/habluetooth/commit/3fae98162e6b0279375823a3b6e60ee51b87c1bb))
+
 ## v2.4.2 (2024-02-29)
 
 ### Fix

@@ -27,6 +27,7 @@ cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     """BluetoothServiceInfo with bleak data."""
 
     cdef public object device
-    cdef public object advertisement
     cdef public bint connectable
+    cdef public object _advertisement
     cdef public double time
+    cdef public object tx_power
