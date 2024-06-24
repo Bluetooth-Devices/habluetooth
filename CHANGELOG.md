@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.1.2 (2024-06-24)
+
+### Fix
+
+- Fix license classifier (#49) ([`04aaaa1`](https://github.com/Bluetooth-Devices/habluetooth/commit/04aaaa186c755b869c8d75678f563f6a9c089829))
+
 ## v3.1.1 (2024-05-23)
 
 ### Fix
