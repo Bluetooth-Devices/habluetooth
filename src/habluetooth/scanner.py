@@ -28,7 +28,7 @@ from .const import (
     START_TIMEOUT,
     STOP_TIMEOUT,
 )
-from .models import _NEW_SERVICE_INFO, BluetoothScanningMode, BluetoothServiceInfoBleak
+from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
 
 SYSTEM = platform.system()
@@ -241,7 +241,7 @@ class HaScanner(BaseHaScanner):
         tx_power = advertisement_data.tx_power
         if tx_power is not None and type(tx_power) is not int:
             tx_power = int(tx_power)
-        service_info: BluetoothServiceInfoBleak = _NEW_SERVICE_INFO()
+        service_info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
         service_info._cython_init(
             name,
             device.address,

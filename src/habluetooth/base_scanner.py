@@ -20,7 +20,7 @@ from .const import (
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
 )
-from .models import _NEW_SERVICE_INFO, BluetoothServiceInfoBleak, HaBluetoothConnector
+from .models import BluetoothServiceInfoBleak, HaBluetoothConnector
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
@@ -423,7 +423,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # pylint: disable-next=protected-access
             device._rssi = rssi  # deprecated, will be removed in newer bleak
 
-        service_info: BluetoothServiceInfoBleak = _NEW_SERVICE_INFO()
+        service_info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
         service_info._cython_init(
             local_name or address,
             address,

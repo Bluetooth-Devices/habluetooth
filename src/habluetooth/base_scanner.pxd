@@ -10,8 +10,6 @@ cdef object AdvertisementData
 cdef object BLEDevice
 cdef bint TYPE_CHECKING
 
-cdef object _NEW_SERVICE_INFO
-
 cdef class BaseHaScanner:
 
     cdef public str adapter
