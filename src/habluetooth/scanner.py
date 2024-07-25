@@ -1,5 +1,6 @@
 # cython: profile=True
 """A local bleak scanner."""
+
 from __future__ import annotations
 
 import asyncio

@@ -34,9 +34,11 @@ def test_create_scanner():
     class MockScanner(BaseHaScanner):
         pass
 
+        @property
         def discovered_devices_and_advertisement_data(self):
             return []
 
+        @property
         def discovered_devices(self):
             return []
 

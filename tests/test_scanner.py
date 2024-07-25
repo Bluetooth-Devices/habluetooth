@@ -212,10 +212,13 @@ async def test_dbus_broken_pipe(caplog: pytest.LogCaptureFixture) -> None:
 @pytest.mark.skipif("platform.system() != 'Linux'")
 async def test_invalid_dbus_message(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle invalid dbus message."""
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner.start",
-        side_effect=InvalidMessageError,
-    ), pytest.raises(ScannerStartError, match="Invalid DBus message received"):
+    with (
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner.start",
+            side_effect=InvalidMessageError,
+        ),
+        pytest.raises(ScannerStartError, match="Invalid DBus message received"),
+    ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         await scanner.async_start()

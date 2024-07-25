@@ -1,4 +1,5 @@
 """Base classes for HA Bluetooth scanners for bluetooth."""
+
 from __future__ import annotations
 
 import asyncio
