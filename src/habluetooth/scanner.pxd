@@ -7,6 +7,7 @@ from .models cimport BluetoothServiceInfoBleak
 cdef object NO_RSSI_VALUE
 cdef object AdvertisementData
 cdef object BLEDevice
+
 cdef bint TYPE_CHECKING
 
 
