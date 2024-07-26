@@ -225,12 +225,11 @@ class HaScanner(BaseHaScanner):
         """
         callback_time = monotonic_time_coarse()
         address = device.address
-        if (
-            (local_name := advertisement_data.local_name)
-            or (manufacturer_data := advertisement_data.manufacturer_data)
-            or (service_data := advertisement_data.service_data)
-            or (service_uuids := advertisement_data.service_uuids)
-        ):
+        local_name = advertisement_data.local_name
+        manufacturer_data = advertisement_data.manufacturer_data
+        service_data = advertisement_data.service_data
+        service_uuids = advertisement_data.service_uuids
+        if local_name or manufacturer_data or service_data or service_uuids:
             # Don't count empty advertisements
             # as the adapter is in a failure
             # state if all the data is empty.
