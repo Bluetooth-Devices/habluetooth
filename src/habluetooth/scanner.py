@@ -224,17 +224,18 @@ class HaScanner(BaseHaScanner):
         central manager.
         """
         callback_time = monotonic_time_coarse()
+        address = device.address
         if (
-            advertisement_data.local_name
-            or advertisement_data.manufacturer_data
-            or advertisement_data.service_data
-            or advertisement_data.service_uuids
+            (local_name := advertisement_data.local_name)
+            or (manufacturer_data := advertisement_data.manufacturer_data)
+            or (service_data := advertisement_data.service_data)
+            or (service_uuids := advertisement_data.service_uuids)
         ):
             # Don't count empty advertisements
             # as the adapter is in a failure
             # state if all the data is empty.
             self._last_detection = callback_time
-        name = advertisement_data.local_name or device.name or device.address
+        name = local_name or device.name or address
         if name is not None and type(name) is not str:
             name = str(name)
         tx_power = advertisement_data.tx_power
@@ -243,11 +244,11 @@ class HaScanner(BaseHaScanner):
         self._manager.scanner_adv_received(
             BluetoothServiceInfoBleak(
                 name,
-                device.address,
+                address,
                 advertisement_data.rssi,
-                advertisement_data.manufacturer_data,
-                advertisement_data.service_data,
-                advertisement_data.service_uuids,
+                manufacturer_data,
+                service_data,
+                service_uuids,
                 self.source,
                 device,
                 advertisement_data,
