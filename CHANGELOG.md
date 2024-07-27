@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.2.0 (2024-07-27)
+
+### Feature
+
+- Small speed ups to scanner detection callback (#55) ([`7a5129a`](https://github.com/Bluetooth-Devices/habluetooth/commit/7a5129a40a12382c089453880210c41bb0f28a32))
+
 ## v3.1.3 (2024-06-24)
 
 ### Fix
