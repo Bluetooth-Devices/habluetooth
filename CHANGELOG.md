@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.3.1 (2024-08-20)
+
+### Fix
+
+- Bump cibuildwheel to fix wheel builds (#63) ([`68d838a`](https://github.com/Bluetooth-Devices/habluetooth/commit/68d838a1d2adab9efe1fb5eba65e81b5dcc9a351))
+
 ## v3.3.0 (2024-08-20)
 
 ### Fix
