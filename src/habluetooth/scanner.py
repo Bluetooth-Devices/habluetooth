@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
-from typing import Any, Coroutine, Iterable
+from typing import Any, Coroutine, Iterable, no_type_check
 
 import async_interrupt
 import bleak
@@ -35,20 +35,35 @@ IS_LINUX = SYSTEM == "Linux"
 IS_MACOS = SYSTEM == "Darwin"
 
 if IS_LINUX:
-    from bleak.backends.bluezdbus.advertisement_monitor import OrPattern
+    from bleak.backends.bluezdbus import advertisement_monitor
     from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
+    from dbus_fast.service import method
 
     # or_patterns is a workaround for the fact that passive scanning
     # needs at least one matcher to be set. The below matcher
     # will match all devices.
     PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
         or_patterns=[
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
+            advertisement_monitor.OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
+            advertisement_monitor.OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
+            advertisement_monitor.OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
         ]
     )
 
+    class HaAdvertisementMonitor(advertisement_monitor.AdvertisementMonitor):
+        """Implementation of the org.bluez.AdvertisementMonitor1 D-Bus interface."""
+
+        @method()
+        @no_type_check
+        def DeviceFound(self, device: "o"):  # noqa: UP037, F821
+            """Device found."""
+
+        @method()
+        @no_type_check
+        def DeviceLost(self, device: "o"):  # noqa: UP037, F821
+            """Device lost."""
+
+    advertisement_monitor.AdvertisementMonitor = HaAdvertisementMonitor
 
 OriginalBleakScanner = bleak.BleakScanner
 
