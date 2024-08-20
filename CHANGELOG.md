@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.3.0 (2024-08-20)
+
+### Fix
+
+- Cleanup advertisementmonitor mapper (#61) ([`7d3483d`](https://github.com/Bluetooth-Devices/habluetooth/commit/7d3483d87d3e03c19cf528a1838acce5b194533e))
+
+### Feature
+
+- Override devicefound and devicelost for passive monitoring (#60) ([`a802859`](https://github.com/Bluetooth-Devices/habluetooth/commit/a8028596bf3576a35750ae8575f173c75f918f28))
+
 ## v3.2.0 (2024-07-27)
 
 ### Feature
