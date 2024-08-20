@@ -35,7 +35,10 @@ IS_LINUX = SYSTEM == "Linux"
 IS_MACOS = SYSTEM == "Darwin"
 
 if IS_LINUX:
-    from bleak.backends.bluezdbus import advertisement_monitor
+    from bleak.backends.bluezdbus.advertisement_monitor import (
+        AdvertisementMonitor,
+        OrPattern,
+    )
     from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
     from dbus_fast.service import method
 
@@ -44,13 +47,13 @@ if IS_LINUX:
     # will match all devices.
     PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
         or_patterns=[
-            advertisement_monitor.OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
-            advertisement_monitor.OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
-            advertisement_monitor.OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
+            OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
+            OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
+            OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
         ]
     )
 
-    class HaAdvertisementMonitor(advertisement_monitor.AdvertisementMonitor):
+    class HaAdvertisementMonitor(AdvertisementMonitor):
         """Implementation of the org.bluez.AdvertisementMonitor1 D-Bus interface."""
 
         @method()
@@ -63,12 +66,8 @@ if IS_LINUX:
         def DeviceLost(self, device: "o"):  # noqa: UP037, F821
             """Device lost."""
 
-    advertisement_monitor.AdvertisementMonitor.DeviceFound = (
-        HaAdvertisementMonitor.DeviceFound
-    )
-    advertisement_monitor.AdvertisementMonitor.DeviceLost = (
-        HaAdvertisementMonitor.DeviceLost
-    )
+    AdvertisementMonitor.DeviceFound = HaAdvertisementMonitor.DeviceFound
+    AdvertisementMonitor.DeviceLost = HaAdvertisementMonitor.DeviceLost
 
 OriginalBleakScanner = bleak.BleakScanner
 
