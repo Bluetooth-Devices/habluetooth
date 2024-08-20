@@ -63,7 +63,12 @@ if IS_LINUX:
         def DeviceLost(self, device: "o"):  # noqa: UP037, F821
             """Device lost."""
 
-    advertisement_monitor.AdvertisementMonitor = HaAdvertisementMonitor
+    advertisement_monitor.AdvertisementMonitor.DeviceFound = (
+        HaAdvertisementMonitor.DeviceFound
+    )
+    advertisement_monitor.AdvertisementMonitor.DeviceLost = (
+        HaAdvertisementMonitor.DeviceLost
+    )
 
 OriginalBleakScanner = bleak.BleakScanner
 
