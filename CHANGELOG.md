@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.3.2 (2024-08-20)
+
+### Fix
+
+- Disable 3.13 wheels (#64) ([`9e8bbff`](https://github.com/Bluetooth-Devices/habluetooth/commit/9e8bbff6179e08bd6e05341ff48fff3adc5c6157))
+
 ## v3.3.1 (2024-08-20)
 
 ### Fix
