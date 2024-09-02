@@ -261,20 +261,18 @@ class HaScanner(BaseHaScanner):
         if tx_power is not None and type(tx_power) is not int:
             tx_power = int(tx_power)
         service_info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
-        service_info._cython_init(
-            name,
-            address,
-            advertisement_data.rssi,
-            manufacturer_data,
-            service_data,
-            service_uuids,
-            self.source,
-            device,
-            advertisement_data,
-            True,
-            callback_time,
-            tx_power,
-        )
+        service_info.name = name
+        service_info.address = address
+        service_info.rssi = advertisement_data.rssi
+        service_info.manufacturer_data = manufacturer_data
+        service_info.service_data = service_data
+        service_info.service_uuids = service_uuids
+        service_info.source = self.source
+        service_info.device = device
+        service_info._advertisement = advertisement_data
+        service_info.connectable = True
+        service_info.time = callback_time
+        service_info.tx_power = tx_power
         self._manager.scanner_adv_received(service_info)
 
     async def async_start(self) -> None:

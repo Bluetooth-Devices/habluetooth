@@ -174,35 +174,6 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         self.time = time
         self.tx_power = tx_power
 
-    def _cython_init(
-        self,
-        name: _str,  # may be a pyobjc object
-        address: _str,  # may be a pyobjc object
-        rssi: _int,  # may be a pyobjc object
-        manufacturer_data: dict[_int, bytes],
-        service_data: dict[_str, bytes],
-        service_uuids: list[_str],
-        source: _str,
-        device: BLEDevice,
-        advertisement: AdvertisementData | None,
-        connectable: bool,
-        time: _float,
-        tx_power: _int | None,
-    ) -> None:
-        """Initialize the cython properties."""
-        self.name = name
-        self.address = address
-        self.rssi = rssi
-        self.manufacturer_data = manufacturer_data
-        self.service_data = service_data
-        self.service_uuids = service_uuids
-        self.source = source
-        self.device = device
-        self._advertisement = advertisement
-        self.connectable = connectable
-        self.time = time
-        self.tx_power = tx_power
-
     def __repr__(self) -> str:
         """Return the representation of the object."""
         return (
