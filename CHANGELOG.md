@@ -1,5 +1,33 @@
 # Changelog
 
+## v3.3.2 (2024-08-20)
+
+### Fix
+
+- Disable 3.13 wheels (#64) ([`9e8bbff`](https://github.com/Bluetooth-Devices/habluetooth/commit/9e8bbff6179e08bd6e05341ff48fff3adc5c6157))
+
+## v3.3.1 (2024-08-20)
+
+### Fix
+
+- Bump cibuildwheel to fix wheel builds (#63) ([`68d838a`](https://github.com/Bluetooth-Devices/habluetooth/commit/68d838a1d2adab9efe1fb5eba65e81b5dcc9a351))
+
+## v3.3.0 (2024-08-20)
+
+### Fix
+
+- Cleanup advertisementmonitor mapper (#61) ([`7d3483d`](https://github.com/Bluetooth-Devices/habluetooth/commit/7d3483d87d3e03c19cf528a1838acce5b194533e))
+
+### Feature
+
+- Override devicefound and devicelost for passive monitoring (#60) ([`a802859`](https://github.com/Bluetooth-Devices/habluetooth/commit/a8028596bf3576a35750ae8575f173c75f918f28))
+
+## v3.2.0 (2024-07-27)
+
+### Feature
+
+- Small speed ups to scanner detection callback (#55) ([`7a5129a`](https://github.com/Bluetooth-Devices/habluetooth/commit/7a5129a40a12382c089453880210c41bb0f28a32))
+
 ## v3.1.3 (2024-06-24)
 
 ### Fix
