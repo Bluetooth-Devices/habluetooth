@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.4.0 (2024-09-02)
+
+### Feature
+
+- Add a fast cython init path for bluetoothserviceinfobleak (#48) ([`f532ed2`](https://github.com/Bluetooth-Devices/habluetooth/commit/f532ed215b429f0bbd14dacc30f87c53f22af245))
+
 ## v3.3.2 (2024-08-20)
 
 ### Fix
