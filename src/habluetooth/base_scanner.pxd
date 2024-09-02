@@ -13,13 +13,13 @@ cdef bint TYPE_CHECKING
 cdef class BaseHaScanner:
 
     cdef public str adapter
-    cdef public object connectable
+    cdef public bint connectable
     cdef public str source
     cdef public object connector
     cdef public unsigned int _connecting
     cdef public str name
     cdef public bint scanning
-    cdef public object _last_detection
+    cdef public double _last_detection
     cdef public object _start_time
     cdef public object _cancel_watchdog
     cdef public object _loop
@@ -45,19 +45,20 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         has_service_data=bint,
         has_service_uuids=bint,
         prev_details=dict,
+        service_info=BluetoothServiceInfoBleak,
         prev_service_info=BluetoothServiceInfoBleak
     )
     cpdef void _async_on_advertisement(
         self,
-        object address,
-        object rssi,
+        str address,
+        int rssi,
         str local_name,
         list service_uuids,
         dict service_data,
         dict manufacturer_data,
         object tx_power,
         dict details,
-        object advertisement_monotonic_time
+        double advertisement_monotonic_time
     )
 
     @cython.locals(now=float, timestamp=float, service_info=BluetoothServiceInfoBleak)

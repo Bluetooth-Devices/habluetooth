@@ -10,6 +10,7 @@ cdef object BLEDevice
 
 cdef bint TYPE_CHECKING
 
+cdef object _NEW_SERVICE_INFO
 
 cdef class HaScanner(BaseHaScanner):
 
@@ -21,6 +22,7 @@ cdef class HaScanner(BaseHaScanner):
     cdef public object _start_future
     cdef public object current_mode
 
+    @cython.locals(service_info=BluetoothServiceInfoBleak)
     cpdef void _async_detection_callback(
         self,
         object device,

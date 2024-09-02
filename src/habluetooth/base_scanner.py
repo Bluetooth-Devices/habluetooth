@@ -423,20 +423,19 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # pylint: disable-next=protected-access
             device._rssi = rssi  # deprecated, will be removed in newer bleak
 
-        service_info = BluetoothServiceInfoBleak(
-            local_name or address,
-            address,
-            rssi,
-            manufacturer_data,
-            service_data,
-            service_uuids,
-            self.source,
-            device,
-            None,
-            self.connectable,
-            advertisement_monotonic_time,
-            tx_power,
-        )
+        service_info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
+        service_info.name = local_name or address
+        service_info.address = address
+        service_info.rssi = rssi
+        service_info.manufacturer_data = manufacturer_data
+        service_info.service_data = service_data
+        service_info.service_uuids = service_uuids
+        service_info.source = self.source
+        service_info.device = device
+        service_info._advertisement = None
+        service_info.connectable = self.connectable
+        service_info.time = advertisement_monotonic_time
+        service_info.tx_power = tx_power
         self._previous_service_info[address] = service_info
         self._manager.scanner_adv_received(service_info)
 
