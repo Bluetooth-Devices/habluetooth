@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.4.1 (2024-09-22)
+
+### Fix
+
+- Ensure build system required cython 3 (#69) ([`dc85d2f`](https://github.com/Bluetooth-Devices/habluetooth/commit/dc85d2fd1b8c8e4d8eb4515aa60af06782fc8722))
+
 ## v3.4.0 (2024-09-02)
 
 ### Feature
