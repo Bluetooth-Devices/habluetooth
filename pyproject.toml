@@ -27,7 +27,7 @@ script = "build_ext.py"
 "Changelog" = "https://github.com/bluetooth-devices/habluetooth/blob/main/CHANGELOG.md"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.13"
+python = ">=3.11,<3.14"
 bleak = ">=0.21.1"
 bleak-retry-connector = ">=3.3.0"
 bluetooth-data-tools = ">=1.16.0"
