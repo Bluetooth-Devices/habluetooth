@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.5.0 (2024-10-05)
+
+### Feature
+
+- Add support for python 3.13 (#71) ([`b8a4783`](https://github.com/Bluetooth-Devices/habluetooth/commit/b8a4783a43f6e771321974d2c085e5e0dda9e195))
+
 ## v3.4.1 (2024-09-22)
 
 ### Fix
