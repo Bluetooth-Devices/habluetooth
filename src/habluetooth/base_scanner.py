@@ -414,7 +414,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
 
             if (
                 not service_data
-                or service_data.items() <= prev_service_info.service_data.items()
+                or service_data.items() in prev_service_info.service_data.items()
             ):
                 service_info.service_data = prev_service_info.service_data
             else:
@@ -426,7 +426,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             if (
                 not manufacturer_data
                 or manufacturer_data.items()
-                <= prev_service_info.manufacturer_data.items()
+                in prev_service_info.manufacturer_data.items()
             ):
                 service_info.manufacturer_data = prev_service_info.manufacturer_data
             else:
