@@ -126,6 +126,132 @@ def test__async_on_advertisement():
     assert device_adv[1] == adv
 
 
+def test__async_on_advertisement_first():
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+
+    scanner = BaseHaRemoteScanner("any", "any", connector, True)
+    details = scanner._details | {}
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        ["service_uuid"],
+        {"service_uuid": b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b"},
+        {32: b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b"},
+        -88,
+        details,
+        1.0,
+    )
+    device_adv = scanner.get_discovered_device_advertisement_data("AA:BB:CC:DD:EE:FF")
+    assert device_adv is not None
+    device, adv = device_adv
+    assert device is not None
+    assert adv is not None
+    assert device.address == "AA:BB:CC:DD:EE:FF"
+    assert adv.rssi == -88
+    assert adv.service_uuids == ["service_uuid"]
+    assert adv.service_data == {
+        "service_uuid": b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b"
+    }
+    assert adv.manufacturer_data == {
+        32: b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b"
+    }
+    assert adv.service_uuids == ANY
+    assert adv.tx_power == -88
+    assert adv.rssi == -88
+    assert adv.platform_data == ()
+    assert device.name == "name"
+    assert device.details == details
+
+
+def test__async_on_advertisement_keeps_order():
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+
+    scanner = BaseHaRemoteScanner("any", "any", connector, True)
+    details = scanner._details | {}
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        [],
+        {},
+        {},
+        -88,
+        details,
+        1.0,
+    )
+    device_adv = scanner.get_discovered_device_advertisement_data("AA:BB:CC:DD:EE:FF")
+    assert device_adv is not None
+    device, adv = device_adv
+    assert device is not None
+    assert adv is not None
+    assert device.address == "AA:BB:CC:DD:EE:FF"
+    assert adv.rssi == -88
+    assert adv.service_uuids == []
+    assert adv.service_data == {}
+    assert adv.manufacturer_data == {}
+    assert adv.service_uuids == ANY
+    assert adv.tx_power == -88
+    assert adv.rssi == -88
+    assert adv.platform_data == ()
+    assert device.name == "name"
+    assert device.details == details
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        ["new_service_uuid"],
+        {"new_service_uuid": b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b"},
+        {85: b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b"},
+        -88,
+        details,
+        1.0,
+    )
+    device_adv = scanner.get_discovered_device_advertisement_data("AA:BB:CC:DD:EE:FF")
+    assert device_adv is not None
+    device, adv = device_adv
+    assert device is not None
+    assert adv is not None
+    assert device.address == "AA:BB:CC:DD:EE:FF"
+    assert adv.rssi == -88
+    assert adv.service_uuids == ["new_service_uuid"]
+    assert adv.service_data == {
+        "new_service_uuid": b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b"
+    }
+    assert adv.manufacturer_data == {
+        85: b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b"
+    }
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        ["new_service_uuid2", "new_service_uuid3"],
+        {},
+        {},
+        -88,
+        details,
+        1.0,
+    )
+    device_adv = scanner.get_discovered_device_advertisement_data("AA:BB:CC:DD:EE:FF")
+    assert device_adv is not None
+    device, adv = device_adv
+    assert device is not None
+    assert adv is not None
+    assert device.address == "AA:BB:CC:DD:EE:FF"
+    assert adv.rssi == -88
+    assert adv.service_uuids == [
+        "new_service_uuid",
+        "new_service_uuid2",
+        "new_service_uuid3",
+    ]
+    assert adv.service_data == {
+        "new_service_uuid": b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b"
+    }
+    assert adv.manufacturer_data == {
+        85: b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b"
+    }
+
+
 def test_create_ha_scanner():
     scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
     assert isinstance(scanner, HaScanner)
