@@ -402,6 +402,12 @@ class BaseHaRemoteScanner(BaseHaScanner):
             if not service_uuids or service_uuids == prev_service_info.service_uuids:
                 service_info.service_uuids = prev_service_info.service_uuids
             else:
+                _LOGGER.warning(
+                    "%s: Merging service_uuids old: %s with new: %s",
+                    address,
+                    prev_service_info,
+                    service_info,
+                )
                 new_service_uuids = list(prev_service_info.service_uuids)
                 for service_uuid in service_uuids:
                     if service_uuid not in new_service_uuids:
@@ -411,6 +417,12 @@ class BaseHaRemoteScanner(BaseHaScanner):
             if not service_data or service_data == prev_service_info.service_data:
                 service_info.service_data = prev_service_info.service_data
             else:
+                _LOGGER.warning(
+                    "%s: Merging service_data old: %s with new: %s",
+                    address,
+                    prev_service_info.service_data,
+                    service_data,
+                )
                 service_info.service_data = {
                     **prev_service_info.service_data,
                     **service_data,
@@ -422,6 +434,12 @@ class BaseHaRemoteScanner(BaseHaScanner):
             ):
                 service_info.manufacturer_data = prev_service_info.manufacturer_data
             else:
+                _LOGGER.warning(
+                    "%s: Merging manufacturer_data old: %s with new: %s",
+                    address,
+                    prev_service_info.manufacturer_data,
+                    manufacturer_data,
+                )
                 service_info.manufacturer_data = {
                     **prev_service_info.manufacturer_data,
                     **manufacturer_data,
