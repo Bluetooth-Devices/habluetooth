@@ -399,7 +399,11 @@ class BaseHaRemoteScanner(BaseHaScanner):
             if prev_name and (not local_name or len(prev_name) > len(local_name)):
                 local_name = prev_name
 
-            if not service_uuids or service_uuids == prev_service_info.service_uuids:
+            if (
+                not service_uuids
+                or len(service_uuids) == 1
+                and service_uuids[0] in prev_service_info.service_uuids
+            ):
                 service_info.service_uuids = prev_service_info.service_uuids
             else:
                 _LOGGER.warning(
