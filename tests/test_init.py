@@ -252,6 +252,67 @@ def test__async_on_advertisement_keeps_order():
     }
 
 
+def test__async_on_advertisement_prefers_longest_local_name():
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+
+    scanner = BaseHaRemoteScanner("any", "any", connector, True)
+    details = scanner._details | {}
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "shortname",
+        [],
+        {},
+        {},
+        -88,
+        details,
+        1.0,
+    )
+    device_adv = scanner.get_discovered_device_advertisement_data("AA:BB:CC:DD:EE:FF")
+    assert device_adv is not None
+    device, adv = device_adv
+    assert device is not None
+    assert adv is not None
+    assert device.name == "shortname"
+    assert adv.local_name == "shortname"
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "tinyname",
+        [],
+        {},
+        {},
+        -88,
+        details,
+        1.0,
+    )
+    device_adv = scanner.get_discovered_device_advertisement_data("AA:BB:CC:DD:EE:FF")
+    assert device_adv is not None
+    device, adv = device_adv
+    assert device is not None
+    assert adv is not None
+    assert device.name == "shortname"
+    assert adv.local_name == "shortname"
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "longername",
+        [],
+        {},
+        {},
+        -88,
+        details,
+        1.0,
+    )
+    device_adv = scanner.get_discovered_device_advertisement_data("AA:BB:CC:DD:EE:FF")
+    assert device_adv is not None
+    device, adv = device_adv
+    assert device is not None
+    assert adv is not None
+    assert device.name == "longername"
+    assert adv.local_name == "longername"
+
+
 def test_create_ha_scanner():
     scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
     assert isinstance(scanner, HaScanner)
