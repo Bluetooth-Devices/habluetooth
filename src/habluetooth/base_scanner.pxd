@@ -36,14 +36,7 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
     cdef public dict _previous_service_info
 
     @cython.locals(
-        prev_service_uuids=list,
-        prev_service_data=dict,
-        prev_manufacturer_data=dict,
         prev_name=str,
-        prev_discovery=tuple,
-        has_manufacturer_data=bint,
-        has_service_data=bint,
-        has_service_uuids=bint,
         prev_details=dict,
         service_info=BluetoothServiceInfoBleak,
         prev_service_info=BluetoothServiceInfoBleak
