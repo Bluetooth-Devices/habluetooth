@@ -412,28 +412,46 @@ class BaseHaRemoteScanner(BaseHaScanner):
                         new_service_uuids.append(service_uuid)
                 service_info.service_uuids = new_service_uuids
 
-            if (
-                not service_data
-                or service_data.items() in prev_service_info.service_data.items()
-            ):
+            num_service_data = len(service_data)
+            if not num_service_data:
                 service_info.service_data = prev_service_info.service_data
+            elif num_service_data == 1:
+                service_data_key = next(iter(service_data))
+                if service_data[service_data_key] == prev_service_info.service_data.get(
+                    service_data_key
+                ):
+                    service_info.service_data = prev_service_info.service_data
+                else:
+                    service_info.service_data = {
+                        **prev_service_info.service_data,
+                        **service_data,
+                    }
             else:
                 service_info.service_data = {
                     **prev_service_info.service_data,
                     **service_data,
                 }
 
-            if (
-                not manufacturer_data
-                or manufacturer_data.items()
-                in prev_service_info.manufacturer_data.items()
-            ):
+            num_service_data = len(manufacturer_data)
+            if not num_service_data:
                 service_info.manufacturer_data = prev_service_info.manufacturer_data
+            elif num_service_data == 1:
+                manufacturer_data_key = next(iter(manufacturer_data))
+                if manufacturer_data[
+                    manufacturer_data_key
+                ] == prev_service_info.manufacturer_data.get(manufacturer_data_key):
+                    service_info.manufacturer_data = prev_service_info.manufacturer_data
+                else:
+                    service_info.manufacturer_data = {
+                        **prev_service_info.manufacturer_data,
+                        **manufacturer_data,
+                    }
             else:
                 service_info.manufacturer_data = {
                     **prev_service_info.manufacturer_data,
                     **manufacturer_data,
                 }
+
             #
             # Bleak updates the BLEDevice via create_or_update_device.
             # We need to do the same to ensure integrations that already

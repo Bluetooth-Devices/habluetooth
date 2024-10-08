@@ -38,6 +38,9 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
     @cython.locals(
         prev_name=str,
         prev_details=dict,
+        num_service_uuids=Py_ssize_t,
+        num_service_data=Py_ssize_t,
+        num_manufacturer_data=Py_ssize_t,
         service_info=BluetoothServiceInfoBleak,
         prev_service_info=BluetoothServiceInfoBleak
     )
