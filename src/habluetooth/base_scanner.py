@@ -405,7 +405,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 new_service_uuids = list(prev_service_info.service_uuids)
                 for service_uuid in service_uuids:
                     if service_uuid not in new_service_uuids:
-                        service_uuids.append(service_uuid)
+                        new_service_uuids.append(service_uuid)
                 service_info.service_uuids = new_service_uuids
 
             if not service_data or service_data == prev_service_info.service_data:
