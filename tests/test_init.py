@@ -225,7 +225,7 @@ def test__async_on_advertisement_keeps_order():
         "AA:BB:CC:DD:EE:FF",
         -88,
         "name",
-        ["new_service_uuid2", "new_service_uuid3"],
+        ["new_service_uuid2", "new_service_uuid", "new_service_uuid3"],
         {},
         {},
         -88,
@@ -250,6 +250,29 @@ def test__async_on_advertisement_keeps_order():
     assert adv.manufacturer_data == {
         85: b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b"
     }
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        [],
+        {},
+        {},
+        -88,
+        details,
+        1.0,
+    )
+    device_adv = scanner.get_discovered_device_advertisement_data("AA:BB:CC:DD:EE:FF")
+    assert device_adv is not None
+    device, adv = device_adv
+    assert device is not None
+    assert adv is not None
+    assert device.address == "AA:BB:CC:DD:EE:FF"
+    assert adv.rssi == -88
+    assert adv.service_uuids == [
+        "new_service_uuid",
+        "new_service_uuid2",
+        "new_service_uuid3",
+    ]
 
 
 def test__async_on_advertisement_prefers_longest_local_name():
