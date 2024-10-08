@@ -368,16 +368,28 @@ class BaseHaRemoteScanner(BaseHaScanner):
         """Call the registered callback."""
         self.scanning = not self._connecting
         self._last_detection = advertisement_monotonic_time
+        service_info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
+        service_info.address = address
+        service_info.rssi = rssi
+        service_info.connectable = self.connectable
+        service_info.time = advertisement_monotonic_time
+        service_info._advertisement = None
+        service_info.tx_power = tx_power
+        service_info.source = self.source
+
         if (prev_service_info := self._previous_service_info.get(address)) is None:
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
-            device = BLEDevice(
+            service_info.device = BLEDevice(
                 address,
                 local_name,
                 {**self._details, **details},
                 rssi,  # deprecated, will be removed in newer bleak
             )
+            service_info.manufacturer_data = manufacturer_data
+            service_info.service_data = service_data
+            service_info.service_uuids = service_uuids
         else:
             # Merge the new data with the old data
             # to function the same as BlueZ which
@@ -388,26 +400,29 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 local_name = prev_name
 
             if not service_uuids or service_uuids == prev_service_info.service_uuids:
-                service_uuids = prev_service_info.service_uuids
+                service_info.service_uuids = prev_service_info.service_uuids
             else:
                 new_service_uuids = list(prev_service_info.service_uuids)
                 for service_uuid in service_uuids:
                     if service_uuid not in new_service_uuids:
                         service_uuids.append(service_uuid)
-                service_uuids = new_service_uuids
+                service_info.service_uuids = new_service_uuids
 
             if not service_data or service_data == prev_service_info.service_data:
-                service_data = prev_service_info.service_data
+                service_info.service_data = prev_service_info.service_data
             else:
-                service_data = {**prev_service_info.service_data, **service_data}
+                service_info.service_data = {
+                    **prev_service_info.service_data,
+                    **service_data,
+                }
 
             if (
                 not manufacturer_data
                 or manufacturer_data == prev_service_info.manufacturer_data
             ):
-                manufacturer_data = prev_service_info.manufacturer_data
+                service_info.manufacturer_data = prev_service_info.manufacturer_data
             else:
-                manufacturer_data = {
+                service_info.manufacturer_data = {
                     **prev_service_info.manufacturer_data,
                     **manufacturer_data,
                 }
@@ -424,20 +439,9 @@ class BaseHaRemoteScanner(BaseHaScanner):
             prev_details.update(details)
             # pylint: disable-next=protected-access
             device._rssi = rssi  # deprecated, will be removed in newer bleak
+            service_info.device = device
 
-        service_info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
         service_info.name = local_name or address
-        service_info.address = address
-        service_info.rssi = rssi
-        service_info.manufacturer_data = manufacturer_data
-        service_info.service_data = service_data
-        service_info.service_uuids = service_uuids
-        service_info.source = self.source
-        service_info.device = device
-        service_info._advertisement = None
-        service_info.connectable = self.connectable
-        service_info.time = advertisement_monotonic_time
-        service_info.tx_power = tx_power
         self._previous_service_info[address] = service_info
         self._manager.scanner_adv_received(service_info)
 
