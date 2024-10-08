@@ -399,9 +399,8 @@ class BaseHaRemoteScanner(BaseHaScanner):
             if prev_name and (not local_name or len(prev_name) > len(local_name)):
                 local_name = prev_name
 
-            if (
-                not service_uuids
-                or len(service_uuids) == 1
+            if not service_uuids or (
+                len(service_uuids) == 1
                 and service_uuids[0] in prev_service_info.service_uuids
             ):
                 service_info.service_uuids = prev_service_info.service_uuids
@@ -412,46 +411,28 @@ class BaseHaRemoteScanner(BaseHaScanner):
                         new_service_uuids.append(service_uuid)
                 service_info.service_uuids = new_service_uuids
 
-            num_service_data = len(service_data)
-            if not num_service_data:
+            if (
+                not service_data
+                or service_data.items() <= prev_service_info.service_data.items()
+            ):
                 service_info.service_data = prev_service_info.service_data
-            elif num_service_data == 1:
-                service_data_key = next(iter(service_data))
-                if service_data[service_data_key] == prev_service_info.service_data.get(
-                    service_data_key
-                ):
-                    service_info.service_data = prev_service_info.service_data
-                else:
-                    service_info.service_data = {
-                        **prev_service_info.service_data,
-                        **service_data,
-                    }
             else:
                 service_info.service_data = {
                     **prev_service_info.service_data,
                     **service_data,
                 }
 
-            num_service_data = len(manufacturer_data)
-            if not num_service_data:
+            if (
+                not manufacturer_data
+                or manufacturer_data.items()
+                <= prev_service_info.manufacturer_data.items()
+            ):
                 service_info.manufacturer_data = prev_service_info.manufacturer_data
-            elif num_service_data == 1:
-                manufacturer_data_key = next(iter(manufacturer_data))
-                if manufacturer_data[
-                    manufacturer_data_key
-                ] == prev_service_info.manufacturer_data.get(manufacturer_data_key):
-                    service_info.manufacturer_data = prev_service_info.manufacturer_data
-                else:
-                    service_info.manufacturer_data = {
-                        **prev_service_info.manufacturer_data,
-                        **manufacturer_data,
-                    }
             else:
                 service_info.manufacturer_data = {
                     **prev_service_info.manufacturer_data,
                     **manufacturer_data,
                 }
-
             #
             # Bleak updates the BLEDevice via create_or_update_device.
             # We need to do the same to ensure integrations that already
