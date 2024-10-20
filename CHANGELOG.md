@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.6.0 (2024-10-20)
+
+### Feature
+
+- Speed up creation of advertisementdata namedtuple (#75) ([`28f7e60`](https://github.com/Bluetooth-Devices/habluetooth/commit/28f7e6093c3985da16e537bc9d989d839ad80c56))
+
 ## v3.5.0 (2024-10-05)
 
 ### Feature
