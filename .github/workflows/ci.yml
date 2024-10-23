@@ -82,6 +82,8 @@ jobs:
     permissions:
       id-token: write
       contents: write
+    outputs:
+      released: ${{ steps.release.outputs.released }}
 
     steps:
       - uses: actions/checkout@v4
@@ -116,6 +118,7 @@ jobs:
 
   build_wheels:
     needs: [release]
+    if: needs.release.outputs.released == 'true'
 
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
