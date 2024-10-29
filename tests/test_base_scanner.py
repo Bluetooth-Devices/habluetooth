@@ -348,7 +348,7 @@ async def test_scanner_stops_responding() -> None:
 
     assert scanner.scanning is False
 
-    bparasite_device = generate_ble_device(
+    bparasite_device = generate_ble_device(  # type: ignore[unreachable]
         "44:44:33:11:23:45",
         "bparasite",
         {},
