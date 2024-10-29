@@ -1,6 +1,7 @@
 """Tests for the Bluetooth integration scanners."""
 
 import asyncio
+import platform
 import time
 from datetime import timedelta
 from typing import Any
@@ -32,6 +33,8 @@ from . import (
     utcnow,
 )
 
+UNPATCHED_SYSTEM = platform.system()
+IS_WINDOWS = UNPATCHED_SYSTEM == "Windows"
 # or_patterns is a workaround for the fact that passive scanning
 # needs at least one matcher to be set. The below matcher
 # will match all devices.
@@ -226,7 +229,7 @@ async def test_invalid_dbus_message(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() == 'Windows'")
+@pytest.mark.skipif(IS_WINDOWS)
 @pytest.mark.parametrize("error", NEED_RESET_ERRORS)
 async def test_adapter_needs_reset_at_start(
     caplog: pytest.LogCaptureFixture, error: str
@@ -280,7 +283,7 @@ async def test_adapter_needs_reset_at_start(
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() == 'Windows'")
+@pytest.mark.skipif(IS_WINDOWS)
 async def test_recovery_from_dbus_restart() -> None:
     """Test we can recover when DBus gets restarted out from under us."""
     called_start = 0
@@ -362,7 +365,7 @@ async def test_recovery_from_dbus_restart() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() == 'Windows'")
+@pytest.mark.skipif(IS_WINDOWS)
 async def test_adapter_recovery() -> None:
     """Test we can recover when the adapter stops responding."""
     called_start = 0
@@ -453,7 +456,7 @@ async def test_adapter_recovery() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() == 'Windows'")
+@pytest.mark.skipif(IS_WINDOWS)
 async def test_adapter_scanner_fails_to_start_first_time() -> None:
     """
     Test we can recover when the adapter stops responding.
