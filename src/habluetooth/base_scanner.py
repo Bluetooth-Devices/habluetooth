@@ -62,7 +62,7 @@ class BaseHaScanner:
         self._connecting = 0
         self.adapter = adapter
         self.name = adapter_human_name(adapter, source) if adapter != source else source
-        self.scanning = True
+        self.scanning: bool = True
         self._last_detection = 0.0
         self._start_time = 0.0
         self._cancel_watchdog: asyncio.TimerHandle | None = None

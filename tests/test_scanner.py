@@ -32,6 +32,9 @@ from . import (
     utcnow,
 )
 
+IS_WINDOWS = 'os.name == "nt"'
+IS_POSIX = 'os.name == "posix"'
+NOT_POSIX = 'os.name != "posix"'
 # or_patterns is a workaround for the fact that passive scanning
 # needs at least one matcher to be set. The below matcher
 # will match all devices.
@@ -65,7 +68,7 @@ async def test_empty_data_no_scanner() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() != 'Linux'")
+@pytest.mark.skipif(NOT_POSIX)
 async def test_dbus_socket_missing_in_container(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -92,7 +95,7 @@ async def test_dbus_socket_missing_in_container(
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() != 'Linux'")
+@pytest.mark.skipif(NOT_POSIX)
 async def test_dbus_socket_missing(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle dbus being missing."""
     with (
@@ -117,7 +120,7 @@ async def test_dbus_socket_missing(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() != 'Linux'")
+@pytest.mark.skipif(NOT_POSIX)
 async def test_handle_cancellation(caplog: pytest.LogCaptureFixture) -> None:
     """Test cancellation stops."""
     with (
@@ -138,7 +141,7 @@ async def test_handle_cancellation(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() != 'Linux'")
+@pytest.mark.skipif(NOT_POSIX)
 async def test_handle_stop_while_starting(caplog: pytest.LogCaptureFixture) -> None:
     """Test stop while starting."""
 
@@ -165,7 +168,7 @@ async def test_handle_stop_while_starting(caplog: pytest.LogCaptureFixture) -> N
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() != 'Linux'")
+@pytest.mark.skipif(NOT_POSIX)
 async def test_dbus_broken_pipe_in_container(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle dbus broken pipe in the container."""
     with (
@@ -187,7 +190,7 @@ async def test_dbus_broken_pipe_in_container(caplog: pytest.LogCaptureFixture) -
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() != 'Linux'")
+@pytest.mark.skipif(NOT_POSIX)
 async def test_dbus_broken_pipe(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle dbus broken pipe."""
     with (
@@ -209,7 +212,7 @@ async def test_dbus_broken_pipe(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() != 'Linux'")
+@pytest.mark.skipif(NOT_POSIX)
 async def test_invalid_dbus_message(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle invalid dbus message."""
     with (
@@ -226,7 +229,7 @@ async def test_invalid_dbus_message(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() == 'Windows'")
+@pytest.mark.skipif(IS_WINDOWS)
 @pytest.mark.parametrize("error", NEED_RESET_ERRORS)
 async def test_adapter_needs_reset_at_start(
     caplog: pytest.LogCaptureFixture, error: str
@@ -280,7 +283,7 @@ async def test_adapter_needs_reset_at_start(
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() == 'Windows'")
+@pytest.mark.skipif(IS_WINDOWS)
 async def test_recovery_from_dbus_restart() -> None:
     """Test we can recover when DBus gets restarted out from under us."""
     called_start = 0
@@ -362,7 +365,7 @@ async def test_recovery_from_dbus_restart() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() == 'Windows'")
+@pytest.mark.skipif(IS_WINDOWS)
 async def test_adapter_recovery() -> None:
     """Test we can recover when the adapter stops responding."""
     called_start = 0
@@ -453,7 +456,7 @@ async def test_adapter_recovery() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() == 'Windows'")
+@pytest.mark.skipif(IS_WINDOWS)
 async def test_adapter_scanner_fails_to_start_first_time() -> None:
     """
     Test we can recover when the adapter stops responding.
