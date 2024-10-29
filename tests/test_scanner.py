@@ -1,7 +1,6 @@
 """Tests for the Bluetooth integration scanners."""
 
 import asyncio
-import platform
 import time
 from datetime import timedelta
 from typing import Any
@@ -33,8 +32,7 @@ from . import (
     utcnow,
 )
 
-UNPATCHED_SYSTEM = platform.system()
-IS_WINDOWS = 'UNPATCHED_SYSTEM == "Windows"'
+IS_WINDOWS = 'os.name() == "nt"'
 # or_patterns is a workaround for the fact that passive scanning
 # needs at least one matcher to be set. The below matcher
 # will match all devices.
