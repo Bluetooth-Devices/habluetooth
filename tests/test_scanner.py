@@ -68,7 +68,7 @@ async def test_empty_data_no_scanner() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif("platform.system() != 'Linux'")
+@pytest.mark.skipif(NOT_POSIX)
 async def test_dbus_socket_missing_in_container(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
