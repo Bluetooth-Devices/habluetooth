@@ -34,7 +34,7 @@ from . import (
 )
 
 UNPATCHED_SYSTEM = platform.system()
-IS_WINDOWS = UNPATCHED_SYSTEM == "Windows"
+IS_WINDOWS = 'UNPATCHED_SYSTEM == "Windows"'
 # or_patterns is a workaround for the fact that passive scanning
 # needs at least one matcher to be set. The below matcher
 # will match all devices.
