@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "habluetooth"
-version = "3.5.0"
+version = "3.6.0"
 description = "High availability Bluetooth"
 authors = ["J. Nick Koston <bluetooth@koston.org>"]
 readme = "README.md"
@@ -39,6 +39,7 @@ async-interrupt = ">=1.1.1"
 pytest = "^7.0"
 pytest-cov = "^3.0"
 pytest-asyncio = "^0.23.6"
+pytest-codspeed = "^2.2.1"
 
 [tool.poetry.group.docs]
 optional = true

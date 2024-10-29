@@ -87,3 +87,7 @@ def async_fire_time_changed(utc_datetime: datetime) -> None:
         if mock_seconds_into_future >= future_seconds:
             task._run()
             task.cancel()
+
+
+class MockBleakClient:
+    pass

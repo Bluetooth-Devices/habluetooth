@@ -194,14 +194,17 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     def advertisement(self) -> AdvertisementData:
         """Get the advertisement data."""
         if self._advertisement is None:
-            self._advertisement = AdvertisementData(
-                None if self.name == "" or self.name == self.address else self.name,
-                self.manufacturer_data,
-                self.service_data,
-                self.service_uuids,
-                NO_RSSI_VALUE if self.tx_power is None else self.tx_power,
-                self.rssi,
-                (),
+            self._advertisement = tuple.__new__(
+                AdvertisementData,
+                (
+                    None if self.name == "" or self.name == self.address else self.name,
+                    self.manufacturer_data,
+                    self.service_data,
+                    self.service_uuids,
+                    NO_RSSI_VALUE if self.tx_power is None else self.tx_power,
+                    self.rssi,
+                    (),
+                ),
             )
         return self._advertisement
 

@@ -70,6 +70,25 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+      - uses: snok/install-poetry@v1.3.4
+      - name: Install Dependencies
+        run: |
+          REQUIRE_CYTHON=1 poetry install --only=main,dev
+        shell: bash
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v3
+        with:
+          token: ${{ secrets.CODSPEED_TOKEN }}
+          run: poetry run pytest --no-cov -vvvvv --codspeed
+
   release:
     needs:
       - test
@@ -82,6 +101,8 @@ jobs:
     permissions:
       id-token: write
       contents: write
+    outputs:
+      released: ${{ steps.release.outputs.released }}
 
     steps:
       - uses: actions/checkout@v4
@@ -116,6 +137,7 @@ jobs:
 
   build_wheels:
     needs: [release]
+    if: needs.release.outputs.released == 'true'
 
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
