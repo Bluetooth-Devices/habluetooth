@@ -400,22 +400,28 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 local_name = prev_name
 
             has_service_uuids = bool(service_uuids)
-            if has_service_uuids and service_uuids != prev_service_uuids:
-                service_uuids = list({*service_uuids, *prev_service_uuids})
+            if has_service_uuids and service_uuids != prev_service_info.service_uuids:
+                service_uuids = list({*service_uuids, *prev_service_info.service_uuids})
             elif not has_service_uuids:
-                service_uuids = prev_service_uuids
+                service_uuids = prev_service_info.service_uuids
 
             has_service_data = bool(service_data)
-            if has_service_data and service_data != prev_service_data:
-                service_data = {**prev_service_data, **service_data}
+            if has_service_data and service_data != prev_service_info.service_data:
+                service_data = {**prev_service_info.service_data, **service_data}
             elif not has_service_data:
-                service_data = prev_service_data
+                service_data = prev_service_info.service_data
 
             has_manufacturer_data = bool(manufacturer_data)
-            if has_manufacturer_data and manufacturer_data != prev_manufacturer_data:
-                manufacturer_data = {**prev_manufacturer_data, **manufacturer_data}
+            if (
+                has_manufacturer_data
+                and manufacturer_data != prev_service_info.manufacturer_data
+            ):
+                manufacturer_data = {
+                    **prev_service_info.manufacturer_data,
+                    **manufacturer_data,
+                }
             elif not has_manufacturer_data:
-                manufacturer_data = prev_manufacturer_data
+                manufacturer_data = prev_service_info.manufacturer_data
             #
             # Bleak updates the BLEDevice via create_or_update_device.
             # We need to do the same to ensure integrations that already
