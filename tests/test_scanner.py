@@ -32,7 +32,7 @@ from . import (
     utcnow,
 )
 
-IS_WINDOWS = 'os.name() == "nt"'
+IS_WINDOWS = 'os.name == "nt"'
 # or_patterns is a workaround for the fact that passive scanning
 # needs at least one matcher to be set. The below matcher
 # will match all devices.
