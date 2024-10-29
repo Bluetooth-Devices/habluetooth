@@ -399,33 +399,23 @@ class BaseHaRemoteScanner(BaseHaScanner):
             if prev_name and (not local_name or len(prev_name) > len(local_name)):
                 local_name = prev_name
 
-            if not service_uuids or (
-                len(service_uuids) == 1
-                and service_uuids[0] in prev_service_info.service_uuids
-            ):
-                service_info.service_uuids = prev_service_info.service_uuids
-            else:
-                new_service_uuids = list(prev_service_info.service_uuids)
-                for service_uuid in service_uuids:
-                    if service_uuid not in new_service_uuids:
-                        new_service_uuids.append(service_uuid)
-                service_info.service_uuids = new_service_uuids
+            has_service_uuids = bool(service_uuids)
+            if has_service_uuids and service_uuids != prev_service_uuids:
+                service_uuids = list({*service_uuids, *prev_service_uuids})
+            elif not has_service_uuids:
+                service_uuids = prev_service_uuids
 
-            if not service_data:
-                service_info.service_data = prev_service_info.service_data
-            else:
-                service_info.service_data = {
-                    **prev_service_info.service_data,
-                    **service_data,
-                }
+            has_service_data = bool(service_data)
+            if has_service_data and service_data != prev_service_data:
+                service_data = {**prev_service_data, **service_data}
+            elif not has_service_data:
+                service_data = prev_service_data
 
-            if not manufacturer_data:
-                service_info.manufacturer_data = prev_service_info.manufacturer_data
-            else:
-                service_info.manufacturer_data = {
-                    **prev_service_info.manufacturer_data,
-                    **manufacturer_data,
-                }
+            has_manufacturer_data = bool(manufacturer_data)
+            if has_manufacturer_data and manufacturer_data != prev_manufacturer_data:
+                manufacturer_data = {**prev_manufacturer_data, **manufacturer_data}
+            elif not has_manufacturer_data:
+                manufacturer_data = prev_manufacturer_data
             #
             # Bleak updates the BLEDevice via create_or_update_device.
             # We need to do the same to ensure integrations that already
