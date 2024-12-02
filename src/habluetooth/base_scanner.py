@@ -35,18 +35,18 @@ class BaseHaScanner:
     """Base class for high availability BLE scanners."""
 
     __slots__ = (
-        "adapter",
-        "connectable",
-        "source",
-        "connector",
-        "_connecting",
-        "name",
-        "scanning",
-        "_last_detection",
-        "_start_time",
         "_cancel_watchdog",
+        "_connecting",
+        "_last_detection",
         "_loop",
         "_manager",
+        "_start_time",
+        "adapter",
+        "connectable",
+        "connector",
+        "name",
+        "scanning",
+        "source",
     )
 
     def __init__(
@@ -197,9 +197,9 @@ class BaseHaRemoteScanner(BaseHaScanner):
     """Base class for a high availability remote BLE scanner."""
 
     __slots__ = (
+        "_cancel_track",
         "_details",
         "_expire_seconds",
-        "_cancel_track",
         "_previous_service_info",
     )
 

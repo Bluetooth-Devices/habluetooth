@@ -20,7 +20,7 @@ _str = str
 class AdvertisementTracker:
     """Tracker to determine the interval that a device is advertising."""
 
-    __slots__ = ("intervals", "fallback_intervals", "sources", "_timings")
+    __slots__ = ("_timings", "fallback_intervals", "intervals", "sources")
 
     def __init__(self) -> None:
         """Initialize the tracker."""

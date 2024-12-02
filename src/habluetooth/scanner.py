@@ -59,12 +59,12 @@ if IS_LINUX:
 
         @method()
         @no_type_check
-        def DeviceFound(self, device: "o"):  # noqa: UP037, F821
+        def DeviceFound(self, device: "o"):
             """Device found."""
 
         @method()
         @no_type_check
-        def DeviceLost(self, device: "o"):  # noqa: UP037, F821
+        def DeviceLost(self, device: "o"):
             """Device lost."""
 
     AdvertisementMonitor.DeviceFound = HaAdvertisementMonitor.DeviceFound
