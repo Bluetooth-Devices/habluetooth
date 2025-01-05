@@ -38,7 +38,7 @@ jobs:
         python-version:
           - "3.11"
           - "3.12"
-          - "3.13-dev"
+          - "3.13"
         os:
           - ubuntu-latest
           - macOS-latest
