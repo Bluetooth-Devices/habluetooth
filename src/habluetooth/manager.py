@@ -105,6 +105,7 @@ class BluetoothManager:
         "_connectable_scanners",
         "_connectable_unavailable_callbacks",
         "_debug",
+        "_disappeared_callbacks",
         "_fallback_intervals",
         "_intervals",
         "_loop",
@@ -149,6 +150,7 @@ class BluetoothManager:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._adapter_refresh_future: asyncio.Future[None] | None = None
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
+        self._disappeared_callbacks: set[Callable[[str], None]] = set()
 
     @property
     def supports_passive_scan(self) -> bool:
@@ -194,6 +196,19 @@ class BluetoothManager:
     def async_scanner_by_source(self, source: str) -> BaseHaScanner | None:
         """Return the scanner for a source."""
         return self._sources.get(source)
+
+    def async_register_disappeared_callback(
+        self, callback: Callable[[str], None]
+    ) -> CALLBACK_TYPE:
+        """Register a callback to be called when an address disappears."""
+        self._disappeared_callbacks.add(callback)
+        return partial(self._async_remove_disappeared_callback, callback)
+
+    def _async_remove_disappeared_callback(
+        self, callback: Callable[[str], None]
+    ) -> None:
+        """Remove a disappeared callback."""
+        self._disappeared_callbacks.discard(callback)
 
     async def _async_refresh_adapters(self) -> None:
         """Refresh the adapters."""
@@ -359,6 +374,11 @@ class BluetoothManager:
                     # available for both connectable and non-connectable
                     tracker.async_remove_fallback_interval(address)
                     tracker.async_remove_address(address)
+                    for disappear_callback in self._disappeared_callbacks:
+                        try:
+                            disappear_callback(address)
+                        except Exception:
+                            _LOGGER.exception("Error in disappeared callback")
                     self._address_disappeared(address)
 
                 service_info = history.pop(address)

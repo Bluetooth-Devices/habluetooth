@@ -50,6 +50,7 @@ cdef class BluetoothManager:
     cdef public object _loop
     cdef public object _adapter_refresh_future
     cdef public object _recovery_lock
+    cdef public set _disappeared_callbacks
 
     @cython.locals(stale_seconds=float)
     cdef bint _prefer_previous_adv_from_different_source(

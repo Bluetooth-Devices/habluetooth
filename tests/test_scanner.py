@@ -10,7 +10,6 @@ import pytest
 from bleak import BleakError
 from bleak.backends.scanner import AdvertisementDataCallback
 from bleak_retry_connector import BleakSlotManager
-from bluetooth_adapters import BluetoothAdapters
 from dbus_fast import InvalidMessageError
 
 from habluetooth import (
@@ -31,6 +30,7 @@ from . import (
     patch_bluetooth_time,
     utcnow,
 )
+from .conftest import FakeBluetoothAdapters
 
 IS_WINDOWS = 'os.name == "nt"'
 IS_POSIX = 'os.name == "posix"'
@@ -51,7 +51,7 @@ NEED_RESET_ERRORS = [
 @pytest.fixture(autouse=True, scope="module")
 def manager():
     """Return the BluetoothManager instance."""
-    adapters = BluetoothAdapters()
+    adapters = FakeBluetoothAdapters()
     slot_manager = BleakSlotManager()
     manager = BluetoothManager(adapters, slot_manager)
     set_manager(manager)
