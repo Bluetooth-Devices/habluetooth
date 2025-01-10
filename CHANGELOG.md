@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.8.0 (2025-01-10)
+
+### Feature
+
+
+- Add async_register_disappeared_callback (#102) ([`ec1d445`](https://github.com/Bluetooth-Devices/habluetooth/commit/ec1d4456ca15c6fca3248f2e5d73fcb1ba9d36c6))
+
+
 ## v3.7.0 (2025-01-05)
 
 ### Fix
