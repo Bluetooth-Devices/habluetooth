@@ -8,6 +8,9 @@ from unittest.mock import patch
 
 from bleak.backends.scanner import AdvertisementData, BLEDevice
 
+from habluetooth import get_manager
+from habluetooth.models import BluetoothServiceInfoBleak
+
 utcnow = partial(datetime.now, timezone.utc)
 
 
@@ -91,3 +94,59 @@ def async_fire_time_changed(utc_datetime: datetime) -> None:
 
 class MockBleakClient:
     pass
+
+
+def inject_advertisement(device: BLEDevice, adv: AdvertisementData) -> None:
+    """Inject an advertisement into the manager."""
+    return inject_advertisement_with_source(device, adv, "local")
+
+
+def inject_advertisement_with_source(
+    device: BLEDevice, adv: AdvertisementData, source: str
+) -> None:
+    """Inject an advertisement into the manager from a specific source."""
+    inject_advertisement_with_time_and_source(device, adv, time.monotonic(), source)
+
+
+def inject_advertisement_with_time_and_source(
+    device: BLEDevice,
+    adv: AdvertisementData,
+    time: float,
+    source: str,
+) -> None:
+    """Inject an advertisement into the manager from a specific source at a time."""
+    inject_advertisement_with_time_and_source_connectable(
+        device, adv, time, source, True
+    )
+
+
+def inject_advertisement_with_time_and_source_connectable(
+    device: BLEDevice,
+    adv: AdvertisementData,
+    time: float,
+    source: str,
+    connectable: bool,
+) -> None:
+    """
+    Inject an advertisement into the manager from a specific source at a time.
+
+    As well as and connectable status.
+    """
+    manager = get_manager()
+
+    manager.scanner_adv_received(
+        BluetoothServiceInfoBleak(
+            name=adv.local_name or device.name or device.address,
+            address=device.address,
+            rssi=adv.rssi,
+            manufacturer_data=adv.manufacturer_data,
+            service_data=adv.service_data,
+            service_uuids=adv.service_uuids,
+            source=source,
+            device=device,
+            advertisement=adv,
+            connectable=connectable,
+            time=time,
+            tx_power=adv.tx_power,
+        )
+    )

@@ -1,17 +1,25 @@
 """Tests for the manager."""
 
+import time
+from datetime import timedelta
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 from bleak_retry_connector import BleakSlotManager
-from bluetooth_adapters import BluetoothAdapters
 from bluetooth_adapters.systems.linux import LinuxAdapters
+from freezegun import freeze_time
 
-from habluetooth import (
-    BluetoothManager,
-    set_manager,
+from habluetooth import BluetoothManager, get_manager, set_manager
+
+from . import (
+    async_fire_time_changed,
+    generate_advertisement_data,
+    generate_ble_device,
+    inject_advertisement_with_source,
+    utcnow,
 )
+from .conftest import FakeBluetoothAdapters
 
 
 @pytest.mark.asyncio
@@ -124,8 +132,79 @@ async def test_async_recover_failed_adapters() -> None:
 @pytest.mark.asyncio
 async def test_create_manager() -> None:
     """Return the BluetoothManager instance."""
-    adapters = BluetoothAdapters()
+    adapters = FakeBluetoothAdapters()
     slot_manager = BleakSlotManager()
     manager = BluetoothManager(adapters, slot_manager)
     set_manager(manager)
     assert manager
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_async_register_disappeared_callback(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Test bluetooth async_register_disappeared_callback handles failures."""
+    manager = get_manager()
+    assert manager._loop is not None
+
+    address = "44:44:33:11:23:12"
+
+    switchbot_device_signal_100 = generate_ble_device(
+        address, "wohand_signal_100", rssi=-100
+    )
+    switchbot_adv_signal_100 = generate_advertisement_data(
+        local_name="wohand_signal_100", service_uuids=[]
+    )
+    inject_advertisement_with_source(
+        switchbot_device_signal_100, switchbot_adv_signal_100, "hci0"
+    )
+
+    failed_disappeared: list[str] = []
+
+    def _failing_callback(_address: str) -> None:
+        """Failing callback."""
+        failed_disappeared.append(_address)
+        raise ValueError("This is a test")
+
+    ok_disappeared: list[str] = []
+
+    def _ok_callback(_address: str) -> None:
+        """Ok callback."""
+        ok_disappeared.append(_address)
+
+    cancel1 = manager.async_register_disappeared_callback(_failing_callback)
+    # Make sure the second callback still works if the first one fails and
+    # raises an exception
+    cancel2 = manager.async_register_disappeared_callback(_ok_callback)
+
+    switchbot_adv_signal_100 = generate_advertisement_data(
+        local_name="wohand_signal_100",
+        manufacturer_data={123: b"abc"},
+        service_uuids=[],
+        rssi=-80,
+    )
+    inject_advertisement_with_source(
+        switchbot_device_signal_100, switchbot_adv_signal_100, "hci1"
+    )
+
+    future_time = utcnow() + timedelta(seconds=3600)
+    future_monotonic_time = time.monotonic() + 3600
+    with (
+        freeze_time(future_time),
+        patch(
+            "habluetooth.manager.monotonic_time_coarse",
+            return_value=future_monotonic_time,
+        ),
+    ):
+        manager._async_check_unavailable()
+        async_fire_time_changed(future_time)
+
+    assert len(ok_disappeared) == 1
+    assert ok_disappeared[0] == address
+    assert len(failed_disappeared) == 1
+    assert failed_disappeared[0] == address
+
+    cancel1()
+    cancel2()
