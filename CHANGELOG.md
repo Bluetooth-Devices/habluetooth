@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.9.0 (2025-01-17)
+
+### Feature
+
+
+- Switch to native arm runners for wheel builds (#106) ([`bf7e98b`](https://github.com/Bluetooth-Devices/habluetooth/commit/bf7e98b099597916bb7566eb03472023f8acef97))
+
+
 ## v3.8.0 (2025-01-10)
 
 ### Feature
