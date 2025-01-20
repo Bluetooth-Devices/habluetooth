@@ -53,3 +53,11 @@ UNAVAILABLE_TRACK_SECONDS: Final = 60 * 5
 
 
 FAILED_ADAPTER_MAC = "00:00:00:00:00:00"
+
+
+ADV_RSSI_SWITCH_THRESHOLD: Final = 10
+# The switch threshold for the rssi value
+# to switch to a different adapter for advertisements
+# Note that this does not affect the connection
+# selection that uses RSSI_SWITCH_THRESHOLD from
+# bleak_retry_connector
