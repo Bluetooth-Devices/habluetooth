@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.9.1 (2025-01-20)
+
+### Fix
+
+
+- Increase rssi switch threshold for advertisements (#110) ([`297c269`](https://github.com/Bluetooth-Devices/habluetooth/commit/297c2693f9a2c007f0e70175c24416c8bb7da099))
+
+
 ## v3.9.0 (2025-01-17)
 
 ### Feature
