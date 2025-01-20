@@ -10,7 +10,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Final
 
 from bleak.backends.scanner import AdvertisementDataCallback
-from bleak_retry_connector import NO_RSSI_VALUE, RSSI_SWITCH_THRESHOLD, BleakSlotManager
+from bleak_retry_connector import NO_RSSI_VALUE, BleakSlotManager
 from bluetooth_adapters import (
     ADAPTER_ADDRESS,
     ADAPTER_PASSIVE_SCAN,
@@ -24,6 +24,7 @@ from .advertisement_tracker import (
     AdvertisementTracker,
 )
 from .const import (
+    ADV_RSSI_SWITCH_THRESHOLD,
     CALLBACK_TYPE,
     FAILED_ADAPTER_MAC,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
@@ -430,10 +431,10 @@ class BluetoothManager:
                     stale_seconds,
                 )
             return False
-        if (new.rssi or NO_RSSI_VALUE) - RSSI_SWITCH_THRESHOLD > (
+        if (new.rssi or NO_RSSI_VALUE) - ADV_RSSI_SWITCH_THRESHOLD > (
             old.rssi or NO_RSSI_VALUE
         ):
-            # If new advertisement is RSSI_SWITCH_THRESHOLD more,
+            # If new advertisement is ADV_RSSI_SWITCH_THRESHOLD more,
             # the new one is preferred.
             if self._debug:
                 _LOGGER.debug(
@@ -446,7 +447,7 @@ class BluetoothManager:
                     self._async_describe_source(old),
                     self._async_describe_source(new),
                     new.rssi,
-                    RSSI_SWITCH_THRESHOLD,
+                    ADV_RSSI_SWITCH_THRESHOLD,
                     old.rssi,
                 )
             return False
