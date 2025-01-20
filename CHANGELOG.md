@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.9.2 (2025-01-20)
+
+### Fix
+
+
+- Increase rssi switch value to 16 (#111) ([`db367db`](https://github.com/Bluetooth-Devices/habluetooth/commit/db367dbef3fa883348a72cf17e29d9c26a09de53))
+
+
 ## v3.9.1 (2025-01-20)
 
 ### Fix
