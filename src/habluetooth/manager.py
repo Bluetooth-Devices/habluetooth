@@ -760,14 +760,15 @@ class BluetoothManager:
 
     def _async_slot_manager_changed(self, event: AllocationChangeEvent) -> None:
         """Handle slot manager changes."""
-        allocations = self.slot_manager.get_allocations(event.adapter)
-        self.async_on_allocation_changed(allocations)
+        self.async_on_allocation_changed(
+            self.slot_manager.get_allocations(event.adapter)
+        )
 
     def async_on_allocation_changed(self, allocations: Allocations) -> None:
         """Call allocation callbacks."""
-        for callback in self._allocations_callbacks:
+        for callback_ in self._allocations_callbacks:
             try:
-                callback(allocations)
+                callback_(allocations)
             except Exception:
                 _LOGGER.exception("Error in allocation callback")
 
