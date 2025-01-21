@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from bleak_retry_connector import Allocations, BleakSlotManager
+from bleak_retry_connector import AllocationChange, Allocations, BleakSlotManager
 from bluetooth_adapters.systems.linux import LinuxAdapters
 from freezegun import freeze_time
 
@@ -283,6 +283,12 @@ async def test_async_register_allocation_callback(
         4,
         ["44:44:33:11:23:12"],
     )
+
+    manager.slot_manager._allocations_by_adapter["hci0"] = {}
+    manager.slot_manager._call_callbacks(
+        AllocationChange.ALLOCATED, "/org/bluez/hci0/dev_44_44_33_11_23_12"
+    )
+    assert len(ok_allocations) == 2
 
     cancel1()
     cancel2()
