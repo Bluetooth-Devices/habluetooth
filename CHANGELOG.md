@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.10.0 (2025-01-21)
+
+### Feature
+
+
+- Add support for getting callbacks when adapter allocations change (#115) ([`c6fd2ba`](https://github.com/Bluetooth-Devices/habluetooth/commit/c6fd2babf0c6438ff85220edef95df3d3b4fae9c))
+
+
 ## v3.9.2 (2025-01-20)
 
 ### Fix
