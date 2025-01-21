@@ -10,7 +10,12 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Final
 
 from bleak.backends.scanner import AdvertisementDataCallback
-from bleak_retry_connector import NO_RSSI_VALUE, BleakSlotManager
+from bleak_retry_connector import (
+    NO_RSSI_VALUE,
+    AllocationChangeEvent,
+    Allocations,
+    BleakSlotManager,
+)
 from bluetooth_adapters import (
     ADAPTER_ADDRESS,
     ADAPTER_PASSIVE_SCAN,
@@ -99,8 +104,10 @@ class BluetoothManager:
         "_adapters",
         "_advertisement_tracker",
         "_all_history",
+        "_allocations_callbacks",
         "_bleak_callbacks",
         "_bluetooth_adapters",
+        "_cancel_allocation_callbacks",
         "_cancel_unavailable_tracking",
         "_connectable_history",
         "_connectable_scanners",
@@ -146,12 +153,18 @@ class BluetoothManager:
         self._sources: dict[str, BaseHaScanner] = {}
         self._bluetooth_adapters = bluetooth_adapters
         self.slot_manager = slot_manager
+        self._cancel_allocation_callbacks = (
+            self.slot_manager.register_allocation_callback(
+                self._async_slot_manager_changed
+            )
+        )
         self._debug = _LOGGER.isEnabledFor(logging.DEBUG)
         self.shutdown = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._adapter_refresh_future: asyncio.Future[None] | None = None
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
         self._disappeared_callbacks: set[Callable[[str], None]] = set()
+        self._allocations_callbacks: set[Callable[[Allocations], None]] = set()
 
     @property
     def supports_passive_scan(self) -> bool:
@@ -203,13 +216,7 @@ class BluetoothManager:
     ) -> CALLBACK_TYPE:
         """Register a callback to be called when an address disappears."""
         self._disappeared_callbacks.add(callback)
-        return partial(self._async_remove_disappeared_callback, callback)
-
-    def _async_remove_disappeared_callback(
-        self, callback: Callable[[str], None]
-    ) -> None:
-        """Remove a disappeared callback."""
-        self._disappeared_callbacks.discard(callback)
+        return partial(self._disappeared_callbacks.discard, callback)
 
     async def _async_refresh_adapters(self) -> None:
         """Refresh the adapters."""
@@ -283,6 +290,7 @@ class BluetoothManager:
             self._cancel_unavailable_tracking.cancel()
             self._cancel_unavailable_tracking = None
         uninstall_multiple_bleak_catcher()
+        self._cancel_allocation_callbacks()
 
     def async_scanner_devices_by_address(
         self, address: str, connectable: bool
@@ -749,3 +757,24 @@ class BluetoothManager:
     ) -> None:
         """Override the fallback availability timeout for a MAC address."""
         self._fallback_intervals[address] = interval
+
+    def _async_slot_manager_changed(self, event: AllocationChangeEvent) -> None:
+        """Handle slot manager changes."""
+        self.async_on_allocation_changed(
+            self.slot_manager.get_allocations(event.adapter)
+        )
+
+    def async_on_allocation_changed(self, allocations: Allocations) -> None:
+        """Call allocation callbacks."""
+        for callback_ in self._allocations_callbacks:
+            try:
+                callback_(allocations)
+            except Exception:
+                _LOGGER.exception("Error in allocation callback")
+
+    def async_register_allocation_callback(
+        self, callback: Callable[[str], None]
+    ) -> CALLBACK_TYPE:
+        """Register a callback to be called when an allocations change."""
+        self._allocations_callbacks.add(callback)
+        return partial(self._allocations_callbacks.discard, callback)

@@ -57,7 +57,9 @@ class FakeScanner(FakeScannerMixin, BaseHaScanner):
 def manager():
     slot_manager = BleakSlotManager()
     bluetooth_adapters = FakeBluetoothAdapters()
-    set_manager(BluetoothManager(bluetooth_adapters, slot_manager))
+    manager = BluetoothManager(bluetooth_adapters, slot_manager)
+    set_manager(manager)
+    manager.async_stop()
 
 
 @pytest_asyncio.fixture(name="enable_bluetooth")

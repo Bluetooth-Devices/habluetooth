@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from bleak_retry_connector import BleakSlotManager
+from bleak_retry_connector import AllocationChange, Allocations, BleakSlotManager
 from bluetooth_adapters.systems.linux import LinuxAdapters
 from freezegun import freeze_time
 
@@ -205,6 +205,90 @@ async def test_async_register_disappeared_callback(
     assert ok_disappeared[0] == address
     assert len(failed_disappeared) == 1
     assert failed_disappeared[0] == address
+
+    cancel1()
+    cancel2()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_async_register_allocation_callback(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Test bluetooth async_register_allocation_callback handles failures."""
+    manager = get_manager()
+    assert manager._loop is not None
+
+    address = "44:44:33:11:23:12"
+
+    switchbot_device_signal_100 = generate_ble_device(
+        address, "wohand_signal_100", rssi=-100
+    )
+    switchbot_adv_signal_100 = generate_advertisement_data(
+        local_name="wohand_signal_100", service_uuids=[]
+    )
+    inject_advertisement_with_source(
+        switchbot_device_signal_100, switchbot_adv_signal_100, "hci0"
+    )
+
+    failed_allocations: list[Allocations] = []
+
+    def _failing_callback(allocations: Allocations) -> None:
+        """Failing callback."""
+        failed_allocations.append(allocations)
+        raise ValueError("This is a test")
+
+    ok_allocations: list[Allocations] = []
+
+    def _ok_callback(allocations: Allocations) -> None:
+        """Ok callback."""
+        ok_allocations.append(allocations)
+
+    cancel1 = manager.async_register_allocation_callback(_failing_callback)
+    # Make sure the second callback still works if the first one fails and
+    # raises an exception
+    cancel2 = manager.async_register_allocation_callback(_ok_callback)
+
+    switchbot_adv_signal_100 = generate_advertisement_data(
+        local_name="wohand_signal_100",
+        manufacturer_data={123: b"abc"},
+        service_uuids=[],
+        rssi=-80,
+    )
+    inject_advertisement_with_source(
+        switchbot_device_signal_100, switchbot_adv_signal_100, "hci1"
+    )
+
+    manager.async_on_allocation_changed(
+        Allocations(
+            "hci0",
+            5,
+            4,
+            ["44:44:33:11:23:12"],
+        )
+    )
+
+    assert len(ok_allocations) == 1
+    assert ok_allocations[0] == Allocations(
+        "hci0",
+        5,
+        4,
+        ["44:44:33:11:23:12"],
+    )
+    assert len(failed_allocations) == 1
+    assert failed_allocations[0] == Allocations(
+        "hci0",
+        5,
+        4,
+        ["44:44:33:11:23:12"],
+    )
+
+    manager.slot_manager._allocations_by_adapter["hci0"] = {}
+    manager.slot_manager._call_callbacks(
+        AllocationChange.ALLOCATED, "/org/bluez/hci0/dev_44_44_33_11_23_12"
+    )
+    assert len(ok_allocations) == 2
 
     cancel1()
     cancel2()
