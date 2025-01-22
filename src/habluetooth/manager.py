@@ -35,7 +35,7 @@ from .const import (
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
 )
-from .models import BluetoothServiceInfoBleak
+from .models import BluetoothServiceInfoBleak, HaBluetoothSlotAllocations
 from .scanner_device import BluetoothScannerDevice
 from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catcher
 from .util import async_reset_adapter
@@ -101,9 +101,11 @@ class BluetoothManager:
 
     __slots__ = (
         "_adapter_refresh_future",
+        "_adapter_sources",
         "_adapters",
         "_advertisement_tracker",
         "_all_history",
+        "_allocations",
         "_allocations_callbacks",
         "_bleak_callbacks",
         "_bluetooth_adapters",
@@ -150,6 +152,8 @@ class BluetoothManager:
         self._non_connectable_scanners: set[BaseHaScanner] = set()
         self._connectable_scanners: set[BaseHaScanner] = set()
         self._adapters: dict[str, AdapterDetails] = {}
+        self._adapter_sources: dict[str, str] = {}
+        self._allocations: dict[str, HaBluetoothSlotAllocations] = {}
         self._sources: dict[str, BaseHaScanner] = {}
         self._bluetooth_adapters = bluetooth_adapters
         self.slot_manager = slot_manager
@@ -164,7 +168,9 @@ class BluetoothManager:
         self._adapter_refresh_future: asyncio.Future[None] | None = None
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
         self._disappeared_callbacks: set[Callable[[str], None]] = set()
-        self._allocations_callbacks: set[Callable[[Allocations], None]] = set()
+        self._allocations_callbacks: set[
+            Callable[[HaBluetoothSlotAllocations], None]
+        ] = set()
 
     @property
     def supports_passive_scan(self) -> bool:
@@ -698,6 +704,8 @@ class BluetoothManager:
         self._advertisement_tracker.async_remove_source(scanner.source)
         scanners.remove(scanner)
         del self._sources[scanner.source]
+        del self._adapter_sources[scanner.adapter]
+        self._allocations.pop(scanner.source, None)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
 
@@ -714,6 +722,7 @@ class BluetoothManager:
             scanners = self._non_connectable_scanners
         scanners.add(scanner)
         self._sources[scanner.source] = scanner
+        self._adapter_sources[scanner.adapter] = scanner.source
         if connection_slots:
             self.slot_manager.register_adapter(scanner.adapter, connection_slots)
         return partial(
@@ -766,14 +775,32 @@ class BluetoothManager:
 
     def async_on_allocation_changed(self, allocations: Allocations) -> None:
         """Call allocation callbacks."""
+        source = self._adapter_sources.get(allocations.adapter, allocations.adapter)
+        ha_slot_allocations = HaBluetoothSlotAllocations(
+            source=source,
+            slots=allocations.slots,
+            free=allocations.free,
+            allocated=allocations.allocated,
+        )
+        self._allocations[source] = ha_slot_allocations
         for callback_ in self._allocations_callbacks:
             try:
-                callback_(allocations)
+                callback_(ha_slot_allocations)
             except Exception:
                 _LOGGER.exception("Error in allocation callback")
 
+    def async_current_allocations(
+        self, source: str | None
+    ) -> list[HaBluetoothSlotAllocations] | None:
+        """Return the current allocations."""
+        if source:
+            if allocations := self._allocations.get(source):
+                return [allocations]
+            return []
+        return list(self._allocations.values())
+
     def async_register_allocation_callback(
-        self, callback: Callable[[str], None]
+        self, callback: Callable[[HaBluetoothSlotAllocations], None]
     ) -> CALLBACK_TYPE:
         """Register a callback to be called when an allocations change."""
         self._allocations_callbacks.add(callback)
