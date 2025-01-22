@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.11.1 (2025-01-22)
+
+### Fix
+
+
+- Re-release due to failed github action (#118) ([`90e2192`](https://github.com/Bluetooth-Devices/habluetooth/commit/90e2192ff75c13ccf610fd06a61e64d60dfd1a18))
+
+
 ## v3.11.0 (2025-01-22)
 
 ### Feature
