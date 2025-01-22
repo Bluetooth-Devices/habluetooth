@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.11.2 (2025-01-22)
+
+### Fix
+
+
+- Re-release again for failed arm runners (#119) ([`af2bb50`](https://github.com/Bluetooth-Devices/habluetooth/commit/af2bb50879713378a32339e490a57b56083a4fa7))
+
+
 ## v3.11.1 (2025-01-22)
 
 ### Fix
