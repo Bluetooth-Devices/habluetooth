@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.11.0 (2025-01-22)
+
+### Feature
+
+
+- Add api for getting current slot allocations (#116) ([`0a9bef9`](https://github.com/Bluetooth-Devices/habluetooth/commit/0a9bef927c5f29c3e724fb60aa06706b6d896f82))
+
+
 ## v3.10.0 (2025-01-21)
 
 ### Feature
