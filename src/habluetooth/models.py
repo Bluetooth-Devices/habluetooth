@@ -48,6 +48,16 @@ def set_manager(manager: BluetoothManager) -> None:
 
 
 @dataclass(slots=True)
+class HaBluetoothSlotAllocations:
+    """Data for how to allocate slots for BLEDevice connections."""
+
+    source: str  # Adapter MAC
+    slots: int  # Number of slots
+    free: int  # Number of free slots
+    allocated: list[str]  # Addresses of connected devices
+
+
+@dataclass(slots=True)
 class HaBluetoothConnector:
     """Data for how to connect a BLEDevice from a given scanner."""
 

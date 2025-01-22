@@ -18,6 +18,7 @@ from .models import (
     BluetoothServiceInfo,
     BluetoothServiceInfoBleak,
     HaBluetoothConnector,
+    HaBluetoothSlotAllocations,
 )
 from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
 from .scanner_device import BluetoothScannerDevice
@@ -41,6 +42,7 @@ __all__ = [
     "HaBleakClientWrapper",
     "HaBleakScannerWrapper",
     "HaBluetoothConnector",
+    "HaBluetoothSlotAllocations",
     "HaScanner",
     "ScannerStartError",
     "get_manager",

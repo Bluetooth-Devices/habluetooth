@@ -53,12 +53,14 @@ class FakeScanner(FakeScannerMixin, BaseHaScanner):
         return {}
 
 
-@pytest.fixture(scope="session", autouse=True)
-def manager():
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def manager() -> AsyncGenerator[None, None]:
     slot_manager = BleakSlotManager()
     bluetooth_adapters = FakeBluetoothAdapters()
     manager = BluetoothManager(bluetooth_adapters, slot_manager)
     set_manager(manager)
+    await manager.async_setup()
+    yield
     manager.async_stop()
 
 
@@ -158,9 +160,9 @@ def two_adapters_fixture():
 @pytest.fixture
 def register_hci0_scanner() -> Generator[None, None, None]:
     """Register an hci0 scanner."""
-    hci0_scanner = FakeScanner("hci0", "hci0")
+    hci0_scanner = FakeScanner("AA:BB:CC:DD:EE:00", "hci0")
     manager = get_manager()
-    cancel = manager.async_register_scanner(hci0_scanner)
+    cancel = manager.async_register_scanner(hci0_scanner, connection_slots=5)
     yield
     cancel()
 
@@ -168,8 +170,8 @@ def register_hci0_scanner() -> Generator[None, None, None]:
 @pytest.fixture
 def register_hci1_scanner() -> Generator[None, None, None]:
     """Register an hci1 scanner."""
-    hci1_scanner = FakeScanner("hci1", "hci1")
+    hci1_scanner = FakeScanner("AA:BB:CC:DD:EE:11", "hci1")
     manager = get_manager()
-    cancel = manager.async_register_scanner(hci1_scanner)
+    cancel = manager.async_register_scanner(hci1_scanner, connection_slots=5)
     yield
     cancel()
