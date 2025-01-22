@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.12.0 (2025-01-22)
+
+### Feature
+
+
+- Add support for connection allocations for non-connectable scanners (#120) ([`d76b7c9`](https://github.com/Bluetooth-Devices/habluetooth/commit/d76b7c9624b6c4e6beedc1bd56dd1a3c0df70eec))
+
+
 ## v3.11.2 (2025-01-22)
 
 ### Fix
