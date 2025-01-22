@@ -314,3 +314,21 @@ async def test_async_register_allocation_callback(
     ]
     cancel1()
     cancel2()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_async_register_allocation_callback_non_connectable(
+    register_non_connectable_scanner: None,
+) -> None:
+    """Test async_current_allocations for a non-connectable scanner."""
+    manager = get_manager()
+    assert manager._loop is not None
+    assert manager.async_current_allocations() == [
+        HaBluetoothSlotAllocations(
+            source="AA:BB:CC:DD:EE:FF",
+            slots=0,
+            free=0,
+            allocated=[],
+        ),
+    ]
