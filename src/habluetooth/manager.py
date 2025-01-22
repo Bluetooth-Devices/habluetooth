@@ -105,7 +105,6 @@ class BluetoothManager:
         "_adapters",
         "_advertisement_tracker",
         "_all_history",
-        "_allocations",
         "_allocations_callbacks",
         "_bleak_callbacks",
         "_bluetooth_adapters",
