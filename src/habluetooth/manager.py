@@ -102,6 +102,7 @@ class BluetoothManager:
     __slots__ = (
         "_adapter_refresh_future",
         "_adapter_sources",
+        "_allocations",
         "_adapters",
         "_advertisement_tracker",
         "_all_history",
