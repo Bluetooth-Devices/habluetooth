@@ -47,7 +47,7 @@ def set_manager(manager: BluetoothManager) -> None:
     CentralBluetoothManager.manager = manager
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class HaBluetoothSlotAllocations:
     """Data for how to allocate slots for BLEDevice connections."""
 

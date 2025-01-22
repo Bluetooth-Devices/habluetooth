@@ -9,6 +9,7 @@ from bleak_retry_connector import BleakSlotManager
 from bluetooth_adapters import AdapterDetails, BluetoothAdapters
 
 from habluetooth import (
+    BaseHaRemoteScanner,
     BaseHaScanner,
     BluetoothManager,
     get_manager,
@@ -161,6 +162,7 @@ def two_adapters_fixture():
 def register_hci0_scanner() -> Generator[None, None, None]:
     """Register an hci0 scanner."""
     hci0_scanner = FakeScanner("AA:BB:CC:DD:EE:00", "hci0")
+    hci0_scanner.connectable = True
     manager = get_manager()
     cancel = manager.async_register_scanner(hci0_scanner, connection_slots=5)
     yield
@@ -171,7 +173,20 @@ def register_hci0_scanner() -> Generator[None, None, None]:
 def register_hci1_scanner() -> Generator[None, None, None]:
     """Register an hci1 scanner."""
     hci1_scanner = FakeScanner("AA:BB:CC:DD:EE:11", "hci1")
+    hci1_scanner.connectable = True
     manager = get_manager()
     cancel = manager.async_register_scanner(hci1_scanner, connection_slots=5)
+    yield
+    cancel()
+
+
+@pytest.fixture
+def register_non_connectable_scanner() -> Generator[None, None, None]:
+    """Register an non connectable remote scanner."""
+    remote_scanner = BaseHaRemoteScanner(
+        "AA:BB:CC:DD:EE:FF", "non connectable", None, False
+    )
+    manager = get_manager()
+    cancel = manager.async_register_scanner(remote_scanner)
     yield
     cancel()

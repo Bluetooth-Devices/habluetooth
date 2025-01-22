@@ -720,6 +720,9 @@ class BluetoothManager:
             scanners = self._connectable_scanners
         else:
             scanners = self._non_connectable_scanners
+            self._allocations[scanner.source] = HaBluetoothSlotAllocations(
+                source=scanner.source, slots=0, free=0, allocated=[]
+            )
         scanners.add(scanner)
         self._sources[scanner.source] = scanner
         self._adapter_sources[scanner.adapter] = scanner.source
