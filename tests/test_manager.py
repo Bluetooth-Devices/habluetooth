@@ -10,7 +10,12 @@ from bleak_retry_connector import AllocationChange, Allocations, BleakSlotManage
 from bluetooth_adapters.systems.linux import LinuxAdapters
 from freezegun import freeze_time
 
-from habluetooth import BluetoothManager, get_manager, set_manager
+from habluetooth import (
+    BluetoothManager,
+    HaBluetoothSlotAllocations,
+    get_manager,
+    set_manager,
+)
 
 from . import (
     async_fire_time_changed,
@@ -232,16 +237,16 @@ async def test_async_register_allocation_callback(
         switchbot_device_signal_100, switchbot_adv_signal_100, "hci0"
     )
 
-    failed_allocations: list[Allocations] = []
+    failed_allocations: list[HaBluetoothSlotAllocations] = []
 
-    def _failing_callback(allocations: Allocations) -> None:
+    def _failing_callback(allocations: HaBluetoothSlotAllocations) -> None:
         """Failing callback."""
         failed_allocations.append(allocations)
         raise ValueError("This is a test")
 
-    ok_allocations: list[Allocations] = []
+    ok_allocations: list[HaBluetoothSlotAllocations] = []
 
-    def _ok_callback(allocations: Allocations) -> None:
+    def _ok_callback(allocations: HaBluetoothSlotAllocations) -> None:
         """Ok callback."""
         ok_allocations.append(allocations)
 
@@ -260,9 +265,10 @@ async def test_async_register_allocation_callback(
         switchbot_device_signal_100, switchbot_adv_signal_100, "hci1"
     )
 
+    assert manager.async_current_allocations() == []
     manager.async_on_allocation_changed(
         Allocations(
-            "hci0",
+            "AA:BB:CC:DD:EE:00",
             5,
             4,
             ["44:44:33:11:23:12"],
@@ -270,25 +276,41 @@ async def test_async_register_allocation_callback(
     )
 
     assert len(ok_allocations) == 1
-    assert ok_allocations[0] == Allocations(
-        "hci0",
+    assert ok_allocations[0] == HaBluetoothSlotAllocations(
+        "AA:BB:CC:DD:EE:00",
         5,
         4,
         ["44:44:33:11:23:12"],
     )
     assert len(failed_allocations) == 1
-    assert failed_allocations[0] == Allocations(
-        "hci0",
+    assert failed_allocations[0] == HaBluetoothSlotAllocations(
+        "AA:BB:CC:DD:EE:00",
         5,
         4,
         ["44:44:33:11:23:12"],
     )
 
-    manager.slot_manager._allocations_by_adapter["hci0"] = {}
-    manager.slot_manager._call_callbacks(
-        AllocationChange.ALLOCATED, "/org/bluez/hci0/dev_44_44_33_11_23_12"
-    )
+    with patch.object(
+        manager.slot_manager,
+        "get_allocations",
+        return_value=Allocations(
+            adapter="hci0",
+            slots=5,
+            free=4,
+            allocated=["44:44:33:11:23:12"],
+        ),
+    ):
+        manager.slot_manager._call_callbacks(
+            AllocationChange.ALLOCATED, "/org/bluez/hci0/dev_44_44_33_11_23_12"
+        )
+
     assert len(ok_allocations) == 2
 
+    assert manager.async_current_allocations() == [
+        HaBluetoothSlotAllocations("AA:BB:CC:DD:EE:00", 5, 4, ["44:44:33:11:23:12"])
+    ]
+    assert manager.async_current_allocations("AA:BB:CC:DD:EE:00") == [
+        HaBluetoothSlotAllocations("AA:BB:CC:DD:EE:00", 5, 4, ["44:44:33:11:23:12"])
+    ]
     cancel1()
     cancel2()

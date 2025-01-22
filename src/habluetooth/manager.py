@@ -102,10 +102,10 @@ class BluetoothManager:
     __slots__ = (
         "_adapter_refresh_future",
         "_adapter_sources",
-        "_allocations",
         "_adapters",
         "_advertisement_tracker",
         "_all_history",
+        "_allocations",
         "_allocations_callbacks",
         "_bleak_callbacks",
         "_bluetooth_adapters",
@@ -168,9 +168,9 @@ class BluetoothManager:
         self._adapter_refresh_future: asyncio.Future[None] | None = None
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
         self._disappeared_callbacks: set[Callable[[str], None]] = set()
-        self._allocations_callbacks: set[
-            Callable[[HaBluetoothSlotAllocations], None]
-        ] = set()
+        self._allocations_callbacks: dict[
+            str | None, set[Callable[[HaBluetoothSlotAllocations], None]]
+        ] = {}
 
     @property
     def supports_passive_scan(self) -> bool:
@@ -783,14 +783,19 @@ class BluetoothManager:
             allocated=allocations.allocated,
         )
         self._allocations[source] = ha_slot_allocations
-        for callback_ in self._allocations_callbacks:
-            try:
-                callback_(ha_slot_allocations)
-            except Exception:
-                _LOGGER.exception("Error in allocation callback")
+        for source_key in (source, None):
+            if not (
+                allocation_callbacks := self._allocations_callbacks.get(source_key)
+            ):
+                continue
+            for callback_ in allocation_callbacks:
+                try:
+                    callback_(ha_slot_allocations)
+                except Exception:
+                    _LOGGER.exception("Error in allocation callback")
 
     def async_current_allocations(
-        self, source: str | None
+        self, source: str | None = None
     ) -> list[HaBluetoothSlotAllocations] | None:
         """Return the current allocations."""
         if source:
@@ -800,8 +805,18 @@ class BluetoothManager:
         return list(self._allocations.values())
 
     def async_register_allocation_callback(
-        self, callback: Callable[[HaBluetoothSlotAllocations], None]
+        self,
+        callback: Callable[[HaBluetoothSlotAllocations], None],
+        source: str | None = None,
     ) -> CALLBACK_TYPE:
         """Register a callback to be called when an allocations change."""
-        self._allocations_callbacks.add(callback)
-        return partial(self._allocations_callbacks.discard, callback)
+        self._allocations_callbacks.setdefault(source, set()).add(callback)
+        return partial(self._async_unregister_allocation_callback, callback, source)
+
+    def _async_unregister_allocation_callback(
+        self, callback: Callable[[HaBluetoothSlotAllocations], None], source: str | None
+    ) -> None:
+        if (callbacks := self._allocations_callbacks.get(source)) is not None:
+            callbacks.discard(callback)
+            if not callbacks:
+                del self._allocations_callbacks[source]
