@@ -35,7 +35,12 @@ from .const import (
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
 )
-from .models import BluetoothServiceInfoBleak, HaBluetoothSlotAllocations
+from .models import (
+    BluetoothServiceInfoBleak,
+    HaBluetoothSlotAllocations,
+    HaScannerRegistration,
+    HaScannerRegistrationEvent,
+)
 from .scanner_device import BluetoothScannerDevice
 from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catcher
 from .util import async_reset_adapter
@@ -121,6 +126,7 @@ class BluetoothManager:
         "_loop",
         "_non_connectable_scanners",
         "_recovery_lock",
+        "_scanner_registration_callbacks",
         "_sources",
         "_unavailable_callbacks",
         "shutdown",
@@ -170,6 +176,9 @@ class BluetoothManager:
         self._disappeared_callbacks: set[Callable[[str], None]] = set()
         self._allocations_callbacks: dict[
             str | None, set[Callable[[HaBluetoothSlotAllocations], None]]
+        ] = {}
+        self._scanner_registration_callbacks: dict[
+            str | None, set[Callable[[HaScannerRegistration], None]]
         ] = {}
 
     @property
@@ -708,6 +717,7 @@ class BluetoothManager:
         self._allocations.pop(scanner.source, None)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
+        self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.REMOVED)
 
     def async_register_scanner(
         self,
@@ -728,6 +738,7 @@ class BluetoothManager:
         self._adapter_sources[scanner.adapter] = scanner.source
         if connection_slots:
             self.slot_manager.register_adapter(scanner.adapter, connection_slots)
+        self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.ADDED)
         return partial(
             self._async_unregister_scanner_internal, scanners, scanner, connection_slots
         )
@@ -797,6 +808,23 @@ class BluetoothManager:
                 except Exception:
                     _LOGGER.exception("Error in allocation callback")
 
+    def _async_on_scanner_registration(
+        self, scanner: BaseHaScanner, event: HaScannerRegistrationEvent
+    ) -> None:
+        """Call scanner callbacks."""
+        for source_key in (scanner.source, None):
+            if not (
+                scanner_callbacks := self._scanner_registration_callbacks.get(
+                    source_key
+                )
+            ):
+                continue
+            for callback_ in scanner_callbacks:
+                try:
+                    callback_(HaScannerRegistration(event, scanner))
+                except Exception:
+                    _LOGGER.exception("Error in scanner callback")
+
     def async_current_allocations(
         self, source: str | None = None
     ) -> list[HaBluetoothSlotAllocations] | None:
@@ -823,3 +851,24 @@ class BluetoothManager:
             callbacks.discard(callback)
             if not callbacks:
                 del self._allocations_callbacks[source]
+
+    def async_register_scanner_registration_callback(
+        self, callback: Callable[[HaScannerRegistration], None], source: str | None
+    ) -> CALLBACK_TYPE:
+        """Register a callback to be called when a scanner is added or removed."""
+        self._scanner_registration_callbacks.setdefault(source, set()).add(callback)
+        return partial(
+            self._async_unregister_scanner_registration_callback, callback, source
+        )
+
+    def _async_unregister_scanner_registration_callback(
+        self, callback: Callable[[HaScannerRegistration], None], source: str | None
+    ) -> None:
+        if (callbacks := self._scanner_registration_callbacks.get(source)) is not None:
+            callbacks.discard(callback)
+            if not callbacks:
+                del self._scanner_registration_callbacks[source]
+
+    def async_current_scanners(self) -> list[BaseHaScanner]:
+        """Return the current scanners."""
+        return list(self._sources.values())

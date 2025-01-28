@@ -11,7 +11,12 @@ from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bluetooth_data_tools import monotonic_time_coarse
 
-from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector, get_manager
+from habluetooth import (
+    BaseHaRemoteScanner,
+    HaBluetoothConnector,
+    HaScannerDetails,
+    get_manager,
+)
 from habluetooth.const import (
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
@@ -103,6 +108,13 @@ async def test_remote_scanner(name_2: str | None) -> None:
         MockBleakClient, "mock_bleak_client", lambda: False
     )
     scanner = FakeScanner("esp32", "esp32", connector, True)
+    details = scanner.details
+    assert details == HaScannerDetails(
+        source=scanner.source,
+        connectable=scanner.connectable,
+        name=scanner.name,
+        adapter=scanner.adapter,
+    )
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 

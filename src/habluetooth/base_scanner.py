@@ -20,7 +20,7 @@ from .const import (
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
 )
-from .models import BluetoothServiceInfoBleak, HaBluetoothConnector
+from .models import BluetoothServiceInfoBleak, HaBluetoothConnector, HaScannerDetails
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ class BaseHaScanner:
         "adapter",
         "connectable",
         "connector",
+        "details",
         "name",
         "scanning",
         "source",
@@ -54,9 +55,10 @@ class BaseHaScanner:
         source: str,
         adapter: str,
         connector: HaBluetoothConnector | None = None,
+        connectable: bool = False,
     ) -> None:
         """Initialize the scanner."""
-        self.connectable = False
+        self.connectable = connectable
         self.source = source
         self.connector = connector
         self._connecting = 0
@@ -68,6 +70,12 @@ class BaseHaScanner:
         self._cancel_watchdog: asyncio.TimerHandle | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._manager = get_manager()
+        self.details = HaScannerDetails(
+            source=self.source,
+            connectable=self.connectable,
+            name=self.name,
+            adapter=self.adapter,
+        )
 
     def async_setup(self) -> CALLBACK_TYPE:
         """Set up the scanner."""
@@ -211,8 +219,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         connectable: bool,
     ) -> None:
         """Initialize the scanner."""
-        super().__init__(scanner_id, name, connector)
-        self.connectable = connectable
+        super().__init__(scanner_id, name, connector, connectable)
         self._details: dict[str, str | HaBluetoothConnector] = {"source": scanner_id}
         # Scanners only care about connectable devices. The manager
         # will handle taking care of availability for non-connectable devices
