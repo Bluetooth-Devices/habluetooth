@@ -6,6 +6,7 @@ import asyncio
 import itertools
 import logging
 from collections.abc import Callable, Iterable
+from dataclasses import asdict
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final
 
@@ -205,6 +206,10 @@ class BluetoothManager:
         return {
             "adapters": self._adapters,
             "slot_manager": self.slot_manager.diagnostics(),
+            "allocations": {
+                source: asdict(allocations)
+                for source, allocations in self._allocations.items()
+            },
             "scanners": scanner_diagnostics,
             "connectable_history": [
                 service_info.as_dict()

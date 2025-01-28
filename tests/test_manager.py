@@ -3,7 +3,7 @@
 import time
 from datetime import timedelta
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 from bleak_retry_connector import AllocationChange, Allocations, BleakSlotManager
@@ -390,3 +390,51 @@ async def test_async_register_scanner_registration_callback(
     )
     cancel1()
     cancel2()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_diagnostics(register_hci0_scanner: None) -> None:
+    """Test bluetooth diagnostics."""
+    manager = get_manager()
+    assert manager._loop is not None
+    manager.async_on_allocation_changed(
+        Allocations(
+            "AA:BB:CC:DD:EE:00",
+            5,
+            4,
+            ["44:44:33:11:23:12"],
+        )
+    )
+    diagnostics = await manager.async_diagnostics()
+    assert diagnostics == {
+        "adapters": {},
+        "advertisement_tracker": ANY,
+        "all_history": ANY,
+        "allocations": {
+            "AA:BB:CC:DD:EE:00": {
+                "allocated": ["44:44:33:11:23:12"],
+                "free": 4,
+                "slots": 5,
+                "source": "AA:BB:CC:DD:EE:00",
+            }
+        },
+        "connectable_history": ANY,
+        "scanners": [
+            {
+                "discovered_devices_and_advertisement_data": [],
+                "last_detection": 0.0,
+                "monotonic_time": ANY,
+                "name": "hci0 (AA:BB:CC:DD:EE:00)",
+                "scanning": True,
+                "source": "AA:BB:CC:DD:EE:00",
+                "start_time": 0.0,
+                "type": "FakeScanner",
+            }
+        ],
+        "slot_manager": {
+            "adapter_slots": {"hci0": 5},
+            "allocations_by_adapter": {"hci0": []},
+            "manager": False,
+        },
+    }
