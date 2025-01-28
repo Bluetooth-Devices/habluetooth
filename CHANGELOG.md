@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.13.0 (2025-01-28)
+
+### Feature
+
+
+- Add async_register_scanner_registration_callback and async_current_scanners to the manager (#125) ([`99fcb46`](https://github.com/Bluetooth-Devices/habluetooth/commit/99fcb46a73ea6cb8f01817263d01a342365be78f))
+
+
 ## v3.12.0 (2025-01-22)
 
 ### Feature
