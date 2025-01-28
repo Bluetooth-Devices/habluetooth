@@ -13,6 +13,8 @@ from freezegun import freeze_time
 from habluetooth import (
     BluetoothManager,
     HaBluetoothSlotAllocations,
+    HaScannerRegistration,
+    HaScannerRegistrationEvent,
     get_manager,
     set_manager,
 )
@@ -24,7 +26,7 @@ from . import (
     inject_advertisement_with_source,
     utcnow,
 )
-from .conftest import FakeBluetoothAdapters
+from .conftest import FakeBluetoothAdapters, FakeScanner
 
 
 @pytest.mark.asyncio
@@ -332,3 +334,59 @@ async def test_async_register_allocation_callback_non_connectable(
             allocated=[],
         ),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_async_register_scanner_registration_callback(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Test bluetooth async_register_scanner_registration_callback handles failures."""
+    manager = get_manager()
+    assert manager._loop is not None
+
+    scanners = manager.async_current_scanners()
+    assert len(scanners) == 2
+    sources = {scanner.source for scanner in scanners}
+    assert sources == {"AA:BB:CC:DD:EE:00", "AA:BB:CC:DD:EE:11"}
+
+    failed_scanner_callbacks: list[HaScannerRegistration] = []
+
+    def _failing_callback(scanner_registration: HaScannerRegistration) -> None:
+        """Failing callback."""
+        failed_scanner_callbacks.append(scanner_registration)
+        raise ValueError("This is a test")
+
+    ok_scanner_callbacks: list[HaScannerRegistration] = []
+
+    def _ok_callback(scanner_registration: HaScannerRegistration) -> None:
+        """Ok callback."""
+        ok_scanner_callbacks.append(scanner_registration)
+
+    cancel1 = manager.async_register_scanner_registration_callback(
+        _failing_callback, None
+    )
+    # Make sure the second callback still works if the first one fails and
+    # raises an exception
+    cancel2 = manager.async_register_scanner_registration_callback(_ok_callback, None)
+
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    manager = get_manager()
+    cancel = manager.async_register_scanner(hci3_scanner, connection_slots=5)
+
+    assert len(ok_scanner_callbacks) == 1
+    assert ok_scanner_callbacks[0] == HaScannerRegistration(
+        HaScannerRegistrationEvent.ADDED, hci3_scanner
+    )
+    assert len(failed_scanner_callbacks) == 1
+
+    cancel()
+
+    assert len(ok_scanner_callbacks) == 2
+    assert ok_scanner_callbacks[1] == HaScannerRegistration(
+        HaScannerRegistrationEvent.REMOVED, hci3_scanner
+    )
+    cancel1()
+    cancel2()

@@ -13,6 +13,7 @@ from bleak.backends.scanner import AdvertisementData
 from bleak_retry_connector import NO_RSSI_VALUE
 
 if TYPE_CHECKING:
+    from .base_scanner import BaseHaScanner
     from .manager import BluetoothManager
 
 _BluetoothServiceInfoSelfT = TypeVar(
@@ -57,6 +58,22 @@ class HaBluetoothSlotAllocations:
     allocated: list[str]  # Addresses of connected devices
 
 
+class HaScannerRegistrationEvent(Enum):
+    """Events for scanner registration."""
+
+    ADDED = "added"
+    REMOVED = "removed"
+    UPDATED = "updated"
+
+
+@dataclass(slots=True, frozen=True)
+class HaScannerRegistration:
+    """Data for a scanner event."""
+
+    event: HaScannerRegistrationEvent
+    scanner: BaseHaScanner
+
+
 @dataclass(slots=True)
 class HaBluetoothConnector:
     """Data for how to connect a BLEDevice from a given scanner."""
@@ -64,6 +81,16 @@ class HaBluetoothConnector:
     client: type[BaseBleakClient]
     source: str
     can_connect: Callable[[], bool]
+
+
+@dataclass(slots=True, frozen=True)
+class HaScannerDetails:
+    """Details for a scanner."""
+
+    source: str
+    connectable: bool
+    name: str
+    adapter: str
 
 
 class BluetoothScanningMode(Enum):
