@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.14.0 (2025-01-29)
+
+### Feature
+
+
+- Add allocations to diagnostics (#126) ([`aa41088`](https://github.com/Bluetooth-Devices/habluetooth/commit/aa4108872478720ab4cbcf52c5add015441fe72d))
+
+
 ## v3.13.0 (2025-01-28)
 
 ### Feature
