@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.16.0 (2025-01-31)
+
+### Feature
+
+
+- Allow bluetoothmanager to be created with defaults (#129) ([`70b2f69`](https://github.com/Bluetooth-Devices/habluetooth/commit/70b2f6952fbd3ecd499a4c66ec305869158a428e))
+
+
 ## v3.15.0 (2025-01-31)
 
 ### Feature
