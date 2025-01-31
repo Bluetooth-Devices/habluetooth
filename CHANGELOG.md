@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.17.1 (2025-01-31)
+
+### Fix
+
+
+- Ensure allocations are available if the adapter never makes any connections (#131) ([`b3dfa48`](https://github.com/Bluetooth-Devices/habluetooth/commit/b3dfa48dba2482c16f61fceaf9a0f58ea55df982))
+
+
 ## v3.17.0 (2025-01-31)
 
 ### Feature
