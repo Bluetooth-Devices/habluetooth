@@ -750,6 +750,9 @@ class BluetoothManager:
         self._adapter_sources[scanner.adapter] = scanner.source
         if connection_slots:
             self.slot_manager.register_adapter(scanner.adapter, connection_slots)
+            self.async_on_allocation_changed(
+                self.slot_manager.get_allocations(scanner.adapter)
+            )
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.ADDED)
         return partial(
             self._async_unregister_scanner_internal, scanners, scanner, connection_slots
