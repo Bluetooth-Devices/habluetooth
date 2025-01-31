@@ -267,7 +267,14 @@ async def test_async_register_allocation_callback(
         switchbot_device_signal_100, switchbot_adv_signal_100, "hci1"
     )
 
-    assert manager.async_current_allocations() == []
+    assert manager.async_current_allocations() == [
+        HaBluetoothSlotAllocations(
+            source="AA:BB:CC:DD:EE:00", slots=5, free=5, allocated=[]
+        ),
+        HaBluetoothSlotAllocations(
+            source="AA:BB:CC:DD:EE:11", slots=5, free=5, allocated=[]
+        ),
+    ]
     manager.async_on_allocation_changed(
         Allocations(
             "AA:BB:CC:DD:EE:00",
@@ -309,10 +316,13 @@ async def test_async_register_allocation_callback(
     assert len(ok_allocations) == 2
 
     assert manager.async_current_allocations() == [
-        HaBluetoothSlotAllocations("AA:BB:CC:DD:EE:00", 5, 4, ["44:44:33:11:23:12"])
+        HaBluetoothSlotAllocations("AA:BB:CC:DD:EE:00", 5, 4, ["44:44:33:11:23:12"]),
+        HaBluetoothSlotAllocations(
+            source="AA:BB:CC:DD:EE:11", slots=5, free=5, allocated=[]
+        ),
     ]
     assert manager.async_current_allocations("AA:BB:CC:DD:EE:00") == [
-        HaBluetoothSlotAllocations("AA:BB:CC:DD:EE:00", 5, 4, ["44:44:33:11:23:12"])
+        HaBluetoothSlotAllocations("AA:BB:CC:DD:EE:00", 5, 4, ["44:44:33:11:23:12"]),
     ]
     cancel1()
     cancel2()
@@ -393,16 +403,13 @@ async def test_async_register_scanner_registration_callback(
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("enable_bluetooth")
 async def test_async_register_scanner_with_connection_slots() -> None:
     """Test registering a scanner with connection slots."""
     manager = get_manager()
     assert manager._loop is not None
 
     scanners = manager.async_current_scanners()
-    assert len(scanners) == 2
-    sources = {scanner.source for scanner in scanners}
-    assert sources == {"AA:BB:CC:DD:EE:00", "AA:BB:CC:DD:EE:11"}
+    assert len(scanners) == 0
 
     hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
     hci3_scanner.connectable = True
