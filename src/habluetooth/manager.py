@@ -22,6 +22,7 @@ from bluetooth_adapters import (
     ADAPTER_PASSIVE_SCAN,
     AdapterDetails,
     BluetoothAdapters,
+    get_adapters,
 )
 from bluetooth_data_tools import monotonic_time_coarse
 
@@ -138,8 +139,8 @@ class BluetoothManager:
 
     def __init__(
         self,
-        bluetooth_adapters: BluetoothAdapters,
-        slot_manager: BleakSlotManager,
+        bluetooth_adapters: BluetoothAdapters | None = None,
+        slot_manager: BleakSlotManager | None = None,
     ) -> None:
         """Init bluetooth manager."""
         self._cancel_unavailable_tracking: asyncio.TimerHandle | None = None
@@ -164,8 +165,8 @@ class BluetoothManager:
         self._adapter_sources: dict[str, str] = {}
         self._allocations: dict[str, HaBluetoothSlotAllocations] = {}
         self._sources: dict[str, BaseHaScanner] = {}
-        self._bluetooth_adapters = bluetooth_adapters
-        self.slot_manager = slot_manager
+        self._bluetooth_adapters = bluetooth_adapters or get_adapters()
+        self.slot_manager = slot_manager or BleakSlotManager()
         self._cancel_allocation_callbacks = (
             self.slot_manager.register_allocation_callback(
                 self._async_slot_manager_changed
