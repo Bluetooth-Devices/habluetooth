@@ -300,6 +300,10 @@ class BluetoothManager:
 
     async def async_setup(self) -> None:
         """Set up the bluetooth manager."""
+        from .central_manager import CentralBluetoothManager
+
+        if CentralBluetoothManager.manager is None:
+            CentralBluetoothManager.manager = self
         self._loop = asyncio.get_running_loop()
         await self._async_refresh_adapters()
         install_multiple_bleak_catcher()
