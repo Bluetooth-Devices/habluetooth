@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.15.0 (2025-01-31)
+
+### Feature
+
+
+- Include findmy packets in wanted adverts (#127) ([`5217850`](https://github.com/Bluetooth-Devices/habluetooth/commit/5217850934bfed5d8e70f8b43c84cd97cf53cdac))
+
+
 ## v3.14.0 (2025-01-29)
 
 ### Feature

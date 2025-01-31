@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "habluetooth"
-version = "3.14.0"
+version = "3.15.0"
 description = "High availability Bluetooth"
 authors = ["J. Nick Koston <bluetooth@koston.org>"]
 readme = "README.md"
