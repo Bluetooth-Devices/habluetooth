@@ -381,9 +381,6 @@ async def test_async_register_scanner_registration_callback(
         HaScannerRegistrationEvent.ADDED, hci3_scanner
     )
     assert len(failed_scanner_callbacks) == 1
-    assert manager.async_current_allocations(hci3_scanner.source) == [
-        HaBluetoothSlotAllocations(hci3_scanner.source, 5, 5, [])
-    ]
 
     cancel()
 
@@ -393,6 +390,29 @@ async def test_async_register_scanner_registration_callback(
     )
     cancel1()
     cancel2()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_async_register_scanner_with_connection_slots() -> None:
+    """Test registering a scanner with connection slots."""
+    manager = get_manager()
+    assert manager._loop is not None
+
+    scanners = manager.async_current_scanners()
+    assert len(scanners) == 2
+    sources = {scanner.source for scanner in scanners}
+    assert sources == {"AA:BB:CC:DD:EE:00", "AA:BB:CC:DD:EE:11"}
+
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    manager = get_manager()
+    cancel = manager.async_register_scanner(hci3_scanner, connection_slots=5)
+    assert manager.async_current_allocations(hci3_scanner.source) == [
+        HaBluetoothSlotAllocations(hci3_scanner.source, 5, 5, [])
+    ]
+
+    cancel()
 
 
 @pytest.mark.asyncio
