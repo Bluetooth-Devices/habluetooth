@@ -381,6 +381,9 @@ async def test_async_register_scanner_registration_callback(
         HaScannerRegistrationEvent.ADDED, hci3_scanner
     )
     assert len(failed_scanner_callbacks) == 1
+    assert manager.async_current_allocations(hci3_scanner.source) == [
+        HaBluetoothSlotAllocations(hci3_scanner.source, 5, 5, [])
+    ]
 
     cancel()
 
