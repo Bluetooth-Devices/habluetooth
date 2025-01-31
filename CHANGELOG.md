@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.17.0 (2025-01-31)
+
+### Feature
+
+
+- Remove the need to call set_manager to set up (#130) ([`1312bf7`](https://github.com/Bluetooth-Devices/habluetooth/commit/1312bf7d978ff585e66d99bde766e85773fce006))
+
+
 ## v3.16.0 (2025-01-31)
 
 ### Feature
