@@ -381,7 +381,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
-            device = BLEDevice(
+            service_info.device = BLEDevice(
                 address,
                 local_name,
                 {**self._details, **details},
@@ -394,7 +394,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # Merge the new data with the old data
             # to function the same as BlueZ which
             # merges the dicts on PropertiesChanged
-            prev_device = prev_service_info.device
+            service_info.device = prev_service_info.device
             #
             # Bleak updates the BLEDevice via create_or_update_device.
             # We need to do the same to ensure integrations that already
@@ -403,13 +403,15 @@ class BaseHaRemoteScanner(BaseHaScanner):
             #
             # https://github.com/hbldh/bleak/blob/222618b7747f0467dbb32bd3679f8cfaa19b1668/bleak/backends/scanner.py#L203
             #
-            prev_details: dict[str, Any] = prev_device.details
+            prev_details: dict[str, Any] = service_info.device.details
             prev_details.update(details)
             # pylint: disable-next=protected-access
-            prev_device._rssi = rssi  # deprecated, will be removed in newer bleak
-            prev_name = prev_device.name
+            service_info.device._rssi = (
+                rssi  # deprecated, will be removed in newer bleak
+            )
+            prev_name = service_info.device.name
             if not prev_name or (local_name and len(local_name) > len(prev_name)):
-                prev_device.name = local_name
+                service_info.device.name = local_name
 
             has_service_uuids = bool(service_uuids)
             if has_service_uuids and service_uuids != prev_service_info.service_uuids:
@@ -418,6 +420,8 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 )
             elif not has_service_uuids:
                 service_info.service_uuids = prev_service_info.service_uuids
+            else:
+                service_info.service_uuids = service_uuids
 
             has_service_data = bool(service_data)
             if has_service_data and service_data != prev_service_info.service_data:
@@ -427,6 +431,8 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 }
             elif not has_service_data:
                 service_info.service_data = prev_service_info.service_data
+            else:
+                service_info.service_data = service_data
 
             has_manufacturer_data = bool(manufacturer_data)
             if (
@@ -439,12 +445,13 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 }
             elif not has_manufacturer_data:
                 service_info.manufacturer_data = prev_service_info.manufacturer_data
+            else:
+                service_info.manufacturer_data = manufacturer_data
 
         service_info.name = local_name or address
         service_info.address = address
         service_info.rssi = rssi
         service_info.source = self.source
-        service_info.device = device
         service_info._advertisement = None
         service_info.connectable = self.connectable
         service_info.time = advertisement_monotonic_time
