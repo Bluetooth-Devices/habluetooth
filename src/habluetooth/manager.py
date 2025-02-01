@@ -510,7 +510,6 @@ class BluetoothManager:
             old_connectable_service_info = self._connectable_history.get(address)
         else:
             old_connectable_service_info = None
-        source = service_info.source
         # This logic is complex due to the many combinations of scanners
         # that are supported.
         #
@@ -529,8 +528,8 @@ class BluetoothManager:
         #
         if (
             (old_service_info := self._all_history.get(address)) is not None
-            and source != (old_source := old_service_info.source)
-            and (scanner := self._sources.get(old_source)) is not None
+            and service_info.source != old_service_info.source
+            and (scanner := self._sources.get(old_service_info.source)) is not None
             and scanner.scanning
             and self._prefer_previous_adv_from_different_source(
                 address, old_service_info, service_info
@@ -549,11 +548,10 @@ class BluetoothManager:
                     # source, we need to check it as well to see if we prefer
                     # the old connectable advertisement
                     or (
-                        (old_connectable_source := old_connectable_service_info.source)
-                        != source
+                        old_connectable_service_info.source != service_info.source
                         and (
                             connectable_scanner := self._sources.get(
-                                old_connectable_source
+                                old_connectable_service_info.source
                             )
                         )
                         is not None
@@ -576,14 +574,13 @@ class BluetoothManager:
 
         # Track advertisement intervals to determine when we need to
         # switch adapters or mark a device as unavailable
-        tracker = self._advertisement_tracker
         if (
-            last_source := tracker.sources.get(address)
-        ) is not None and last_source != source:
+            last_source := self._advertisement_tracker.sources.get(address)
+        ) is not None and last_source != service_info.source:
             # Source changed, remove the old address from the tracker
-            tracker.async_remove_address(address)
-        if address not in tracker.intervals:
-            tracker.async_collect(service_info)
+            self._advertisement_tracker.async_remove_address(address)
+        if address not in self._advertisement_tracker.intervals:
+            self._advertisement_tracker.async_collect(service_info)
 
         # If the advertisement data is the same as the last time we saw it, we
         # don't need to do anything else unless its connectable and we are missing
@@ -615,7 +612,7 @@ class BluetoothManager:
                 service_info.manufacturer_data,
                 service_info.service_data,
                 service_info.service_uuids,
-                source,
+                service_info.source,
                 service_info.device,
                 service_info._advertisement,
                 True,
