@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.19.0 (2025-02-01)
+
+### Feature
+
+
+- Reduce overhead to convert non-connectable bluetoothserviceinfobleak to connectable (#135) ([`37fc839`](https://github.com/Bluetooth-Devices/habluetooth/commit/37fc839d5fc73ff6f784ec8041606be82d58322b))
+
+
 ## v3.18.0 (2025-02-01)
 
 ### Feature
