@@ -45,6 +45,8 @@ def build(setup_kwargs: Any) -> None:
         setup_kwargs["exclude_package_data"] = {
             pkg: ["*.c"] for pkg in setup_kwargs["packages"]
         }
+        if os.environ.get("ENABLE_CYTHON_TRACING"):
+            setup_kwargs["define_macros"] = [("CYTHON_TRACE_NOGIL", "1")]
     except Exception:
         if os.environ.get("REQUIRE_CYTHON"):
             raise
