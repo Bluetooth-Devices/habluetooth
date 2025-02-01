@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.20.0 (2025-02-01)
+
+### Feature
+
+
+- Reduce adv tracker overhead (#137) ([`69168a6`](https://github.com/Bluetooth-Devices/habluetooth/commit/69168a64572ab3fba696d2afedeb015953afb0cc))
+
+
 ## v3.19.0 (2025-02-01)
 
 ### Feature
