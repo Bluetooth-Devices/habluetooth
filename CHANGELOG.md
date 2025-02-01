@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.20.1 (2025-02-01)
+
+### Fix
+
+
+- Remove unused centralbluetoothmanager in models (#138) ([`7466034`](https://github.com/Bluetooth-Devices/habluetooth/commit/74660343b30fec50b927fdddd92e72eacb4da6cf))
+
+
+- Precision loss when comparing advs from different sources (#136) ([`02279a9`](https://github.com/Bluetooth-Devices/habluetooth/commit/02279a95ca5b590768bd631bf39ee507a64db7ad))
+
+
 ## v3.20.0 (2025-02-01)
 
 ### Feature
