@@ -2,6 +2,8 @@ import cython
 
 from .models cimport BluetoothServiceInfoBleak
 
+cdef unsigned int _ADVERTISING_TIMES_NEEDED
+
 cdef class AdvertisementTracker:
 
     cdef public dict intervals

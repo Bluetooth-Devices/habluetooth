@@ -7,6 +7,7 @@ from typing import Any
 from .models import BluetoothServiceInfoBleak
 
 ADVERTISING_TIMES_NEEDED = 16
+_ADVERTISING_TIMES_NEEDED = ADVERTISING_TIMES_NEEDED
 
 # Each scanner may buffer incoming packets so
 # we need to give a bit of leeway before we
@@ -46,11 +47,12 @@ class AdvertisementTracker:
         caller to check if the device already has an interval set or
         the source has changed before calling this function.
         """
-        address = service_info.address
-        self.sources[address] = service_info.source
-        timings = self._timings.setdefault(address, [])
+        self.sources[service_info.address] = service_info.source
+        if not (timings := self._timings.get(service_info.address)):
+            self._timings[service_info.address] = [service_info.time]
+            return
         timings.append(service_info.time)
-        if len(timings) != ADVERTISING_TIMES_NEEDED:
+        if len(timings) != _ADVERTISING_TIMES_NEEDED:
             return
 
         max_time_between_advertisements = timings[1] - timings[0]
@@ -60,8 +62,8 @@ class AdvertisementTracker:
                 max_time_between_advertisements = time_between_advertisements
 
         # We now know the maximum time between advertisements
-        self.intervals[address] = max_time_between_advertisements
-        del self._timings[address]
+        self.intervals[service_info.address] = max_time_between_advertisements
+        del self._timings[service_info.address]
 
     def async_remove_address(self, address: _str) -> None:
         """Remove the tracker."""
