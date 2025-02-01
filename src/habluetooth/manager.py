@@ -605,20 +605,7 @@ class BluetoothManager:
             # route any connection attempts to the connectable path, we
             # mark the service_info as connectable so that the callbacks
             # will be called and the device can be discovered.
-            service_info = BluetoothServiceInfoBleak(
-                service_info.name,
-                address,
-                service_info.rssi,
-                service_info.manufacturer_data,
-                service_info.service_data,
-                service_info.service_uuids,
-                service_info.source,
-                service_info.device,
-                service_info._advertisement,
-                True,
-                service_info.time,
-                service_info.tx_power,
-            )
+            service_info = service_info._as_connectable()
 
         if (connectable or old_connectable_service_info is not None) and (
             bleak_callbacks := self._bleak_callbacks
