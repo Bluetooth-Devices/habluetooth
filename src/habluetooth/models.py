@@ -14,7 +14,6 @@ from bleak_retry_connector import NO_RSSI_VALUE
 
 if TYPE_CHECKING:
     from .base_scanner import BaseHaScanner
-    from .manager import BluetoothManager
 
 _BluetoothServiceInfoSelfT = TypeVar(
     "_BluetoothServiceInfoSelfT", bound="BluetoothServiceInfo"
@@ -28,24 +27,6 @@ SOURCE_LOCAL: Final = "local"
 _float = float  # avoid cython conversion since we always want a pyfloat
 _str = str  # avoid cython conversion since we always want a pystr
 _int = int  # avoid cython conversion since we always want a pyint
-
-
-class CentralBluetoothManager:
-    """Central Bluetooth Manager."""
-
-    manager: BluetoothManager | None = None
-
-
-def get_manager() -> BluetoothManager:
-    """Get the BluetoothManager."""
-    if TYPE_CHECKING:
-        assert CentralBluetoothManager.manager is not None
-    return CentralBluetoothManager.manager
-
-
-def set_manager(manager: BluetoothManager) -> None:
-    """Set the BluetoothManager."""
-    CentralBluetoothManager.manager = manager
 
 
 @dataclass(slots=True, frozen=True)
