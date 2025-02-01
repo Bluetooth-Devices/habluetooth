@@ -395,6 +395,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # to function the same as BlueZ which
             # merges the dicts on PropertiesChanged
             service_info.device = prev_service_info.device
+            prev_name = prev_service_info.device.name
             #
             # Bleak updates the BLEDevice via create_or_update_device.
             # We need to do the same to ensure integrations that already
@@ -409,7 +410,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
             service_info.device._rssi = (
                 rssi  # deprecated, will be removed in newer bleak
             )
-            prev_name = service_info.device.name
             if not prev_name or (local_name and len(local_name) > len(prev_name)):
                 service_info.device.name = local_name
 
