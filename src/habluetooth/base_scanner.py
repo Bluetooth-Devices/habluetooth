@@ -390,6 +390,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             service_info.manufacturer_data = manufacturer_data
             service_info.service_data = service_data
             service_info.service_uuids = service_uuids
+            service_info.name = local_name or address
         else:
             # Merge the new data with the old data
             # to function the same as BlueZ which
@@ -406,12 +407,14 @@ class BaseHaRemoteScanner(BaseHaScanner):
             #
             prev_details: dict[str, Any] = service_info.device.details
             prev_details.update(details)
+            # _rssi is deprecated, will be removed in newer bleak
             # pylint: disable-next=protected-access
-            service_info.device._rssi = (
-                rssi  # deprecated, will be removed in newer bleak
-            )
-            if not prev_name or (local_name and len(local_name) > len(prev_name)):
+            service_info.device._rssi = rssi
+            if prev_name and (not local_name or len(prev_name) > len(local_name)):
+                service_info.name = prev_name
+            else:
                 service_info.device.name = local_name
+                service_info.name = local_name or address
 
             has_service_uuids = bool(service_uuids)
             if has_service_uuids and service_uuids != prev_service_info.service_uuids:
@@ -448,7 +451,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
             else:
                 service_info.manufacturer_data = manufacturer_data
 
-        service_info.name = local_name or address
         service_info.address = address
         service_info.rssi = rssi
         service_info.source = self.source
