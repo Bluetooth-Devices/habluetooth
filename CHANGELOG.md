@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.18.0 (2025-02-01)
+
+### Feature
+
+
+- Refactor scanner_adv_received to reduce ref counting (#134) ([`a1945ce`](https://github.com/Bluetooth-Devices/habluetooth/commit/a1945cedc2373082814e8f4b4426a50c79788305))
+
+
 ## v3.17.1 (2025-01-31)
 
 ### Fix
