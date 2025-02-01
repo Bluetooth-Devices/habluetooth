@@ -316,3 +316,20 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             time,
             advertisement_data.tx_power,
         )
+
+    def _as_connectable(self) -> BluetoothServiceInfoBleak:
+        """Return a connectable version of this object."""
+        new_obj = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
+        new_obj.name = self.name
+        new_obj.address = self.address
+        new_obj.rssi = self.rssi
+        new_obj.manufacturer_data = self.manufacturer_data
+        new_obj.service_data = self.service_data
+        new_obj.service_uuids = self.service_uuids
+        new_obj.source = self.source
+        new_obj.device = self.device
+        new_obj._advertisement = self._advertisement
+        new_obj.connectable = True
+        new_obj.time = self.time
+        new_obj.tx_power = self.tx_power
+        return new_obj
