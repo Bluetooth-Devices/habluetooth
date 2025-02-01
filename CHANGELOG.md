@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.21.0 (2025-02-01)
+
+### Feature
+
+
+- Reduce remote scanner adv processing overhead (#140) ([`7bf302b`](https://github.com/Bluetooth-Devices/habluetooth/commit/7bf302bac3855cf7e229dd2744acce513b2e2ee4))
+
+
 ## v3.20.1 (2025-02-01)
 
 ### Fix
