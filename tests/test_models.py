@@ -238,3 +238,40 @@ def test_pyobjc_compat():
         "time": now,
         "tx_power": 1,
     }
+
+
+def test_as_connectable():
+    switchbot_device = BLEDevice("44:44:33:11:23:45", "wohand", {}, -127)
+    switchbot_adv = generate_advertisement_data(
+        local_name="wohand", service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
+    )
+    now = time.monotonic()
+    service_info = BluetoothServiceInfoBleak(
+        name="wohand",
+        address="44:44:33:11:23:45",
+        rssi=-127,
+        manufacturer_data=switchbot_adv.manufacturer_data,
+        service_data=switchbot_adv.service_data,
+        service_uuids=switchbot_adv.service_uuids,
+        source=SOURCE_LOCAL,
+        device=switchbot_device,
+        advertisement=switchbot_adv,
+        connectable=False,
+        time=now,
+        tx_power=1,
+    )
+    connectable_service_info = service_info._as_connectable()
+    assert connectable_service_info.connectable is True
+    assert service_info.connectable is False
+    assert connectable_service_info is not service_info
+    assert service_info.name == connectable_service_info.name
+    assert service_info.address == connectable_service_info.address
+    assert service_info.rssi == connectable_service_info.rssi
+    assert service_info.manufacturer_data == connectable_service_info.manufacturer_data
+    assert service_info.service_data == connectable_service_info.service_data
+    assert service_info.service_uuids == connectable_service_info.service_uuids
+    assert service_info.source == connectable_service_info.source
+    assert service_info.device == connectable_service_info.device
+    assert service_info.advertisement == connectable_service_info.advertisement
+    assert service_info.time == connectable_service_info.time
+    assert service_info.tx_power == connectable_service_info.tx_power

@@ -32,4 +32,4 @@ cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     cdef public object tx_power
 
     @cython.locals(new_obj=BluetoothServiceInfoBleak)
-    cdef BluetoothServiceInfoBleak _as_connectable(self)
+    cpdef BluetoothServiceInfoBleak _as_connectable(self)
