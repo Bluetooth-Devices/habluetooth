@@ -27,6 +27,9 @@ def build(setup_kwargs: Any) -> None:
     try:
         from Cython.Build import cythonize
 
+        compiler_directives: dict[str, Any] = {"language_level": "3"}  # Python 3
+        if os.environ.get("ENABLE_CYTHON_TRACING"):
+            compiler_directives["linetrace"] = True
         setup_kwargs.update(
             {
                 "ext_modules": cythonize(
@@ -37,7 +40,7 @@ def build(setup_kwargs: Any) -> None:
                         "src/habluetooth/models.py",
                         "src/habluetooth/scanner.py",
                     ],
-                    compiler_directives={"language_level": "3"},  # Python 3
+                    compiler_directives=compiler_directives,
                 ),
                 "cmdclass": {"build_ext": BuildExt},
             }
@@ -45,8 +48,6 @@ def build(setup_kwargs: Any) -> None:
         setup_kwargs["exclude_package_data"] = {
             pkg: ["*.c"] for pkg in setup_kwargs["packages"]
         }
-        if os.environ.get("ENABLE_CYTHON_TRACING"):
-            setup_kwargs["define_macros"] = [("CYTHON_TRACE_NOGIL", "1")]
     except Exception:
         if os.environ.get("REQUIRE_CYTHON"):
             raise
