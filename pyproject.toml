@@ -1,18 +1,25 @@
-[tool.poetry]
+[project]
 name = "habluetooth"
 version = "3.21.0"
+license.text = "Apache-2.0"
 description = "High availability Bluetooth"
-authors = ["J. Nick Koston <bluetooth@koston.org>"]
+authors = [{ name = "J. Nick Koston", email = "bluetooth@koston.org" }]
 readme = "README.md"
-repository = "https://github.com/bluetooth-devices/habluetooth"
-documentation = "https://habluetooth.readthedocs.io"
+requires-python = ">=3.11"
+
+[project.urls]
+"Repository" = "https://github.com/bluetooth-devices/habluetooth"
+"Documentation" = "https://habluetooth.readthedocs.io"
+"Bug Tracker" = "https://github.com/bluetooth-devices/habluetooth/issues"
+"Changelog" = "https://github.com/bluetooth-devices/habluetooth/blob/main/CHANGELOG.md"
+
+[tool.poetry]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Topic :: Software Development :: Libraries",
-    "License :: OSI Approved :: Apache Software License",
 ]
 packages = [
     { include = "habluetooth", from = "src" },
@@ -21,10 +28,6 @@ packages = [
 [tool.poetry.build]
 generate-setup-file = true
 script = "build_ext.py"
-
-[tool.poetry.urls]
-"Bug Tracker" = "https://github.com/bluetooth-devices/habluetooth/issues"
-"Changelog" = "https://github.com/bluetooth-devices/habluetooth/blob/main/CHANGELOG.md"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
@@ -53,7 +56,7 @@ furo = ">=2023.5.20"
 sphinx-autobuild = ">=2021.3.14"
 
 [tool.semantic_release]
-version_toml = ["pyproject.toml:tool.poetry.version"]
+version_toml = ["pyproject.toml:project.version"]
 version_variables = [
     "src/habluetooth/__init__.py:__version__",
     "docs/conf.py:release",
@@ -159,5 +162,5 @@ module = "docs.*"
 ignore_errors = true
 
 [build-system]
-requires = ['setuptools>=65.4.1', 'Cython>=3', "poetry-core>=1.0.0"]
+requires = ['setuptools>=75.8.0', 'Cython>=3', "poetry-core>=2.0.0"]
 build-backend = "poetry.core.masonry.api"

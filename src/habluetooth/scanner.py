@@ -326,8 +326,9 @@ class HaScanner(BaseHaScanner):
         self._log_start_attempt(attempt)
         self._start_future = self._loop.create_future()
         try:
-            async with asyncio.timeout(START_TIMEOUT), async_interrupt.interrupt(
-                self._start_future, _AbortStartError, None
+            async with (
+                asyncio.timeout(START_TIMEOUT),
+                async_interrupt.interrupt(self._start_future, _AbortStartError, None),
             ):
                 await self.scanner.start()
         except _AbortStartError as ex:
