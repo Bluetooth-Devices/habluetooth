@@ -54,11 +54,3 @@ repos:
     hooks:
       - id: mypy
         additional_dependencies: []
-  - repo: https://github.com/ariebovenberg/slotscheck
-    rev: v0.19.0
-    hooks:
-      - id: slotscheck
-        entry: env PYTHONPATH=src slotscheck --verbose
-        files: \.py$
-        exclude: "^(test)/"
-#        stages: [manual]

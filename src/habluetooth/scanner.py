@@ -170,10 +170,8 @@ class HaScanner(BaseHaScanner):
         "_background_tasks",
         "_start_future",
         "_start_stop_lock",
-        "connectable",
         "mac_address",
         "scanner",
-        "scanning",
     )
 
     def __init__(
