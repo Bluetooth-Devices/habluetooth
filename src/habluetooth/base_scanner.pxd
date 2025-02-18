@@ -25,6 +25,8 @@ cdef class BaseHaScanner:
     cdef public object _loop
     cdef BluetoothManager _manager
     cdef public object details
+    cdef public object current_mode
+    cdef public object requested_mode
 
     cpdef tuple get_discovered_device_advertisement_data(self, str address)
 
