@@ -453,6 +453,9 @@ async def test_diagnostics(register_hci0_scanner: None) -> None:
         "scanners": [
             {
                 "discovered_devices_and_advertisement_data": [],
+                "connectable": True,
+                "current_mode": None,
+                "requested_mode": None,
                 "last_detection": 0.0,
                 "monotonic_time": ANY,
                 "name": "hci0 (AA:BB:CC:DD:EE:00)",
