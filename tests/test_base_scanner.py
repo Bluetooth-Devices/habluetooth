@@ -13,6 +13,7 @@ from bluetooth_data_tools import monotonic_time_coarse
 
 from habluetooth import (
     BaseHaRemoteScanner,
+    BluetoothScanningMode,
     HaBluetoothConnector,
     HaScannerDetails,
     get_manager,
@@ -340,7 +341,14 @@ async def test_scanner_stops_responding() -> None:
     connector = HaBluetoothConnector(
         MockBleakClient, "mock_bleak_client", lambda: False
     )
-    scanner = FakeScanner("esp32", "esp32", connector, True)
+    scanner = FakeScanner(
+        "esp32",
+        "esp32",
+        connector,
+        True,
+        current_mode=BluetoothScanningMode.ACTIVE,
+        requested_mode=BluetoothScanningMode.ACTIVE,
+    )
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
@@ -382,6 +390,8 @@ async def test_scanner_stops_responding() -> None:
 
     # As soon as we get a detection, we know the scanner is working again
     assert scanner.scanning is True
+    assert scanner.requested_mode == BluetoothScanningMode.ACTIVE
+    assert scanner.current_mode == BluetoothScanningMode.ACTIVE
 
     cancel()
     unsetup()
