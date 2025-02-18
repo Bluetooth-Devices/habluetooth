@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.22.0 (2025-02-18)
+
+### Features
+
+
+- Allow remote scanners to set current and requested mode (#151) ([`a39ba18`](https://github.com/Bluetooth-Devices/habluetooth/commit/a39ba184e0d01f983133534e4fd7c1b6202210fb))
+
+
 ## v3.21.1 (2025-02-04)
 
 ### Bug fixes
