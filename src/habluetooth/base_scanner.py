@@ -20,7 +20,12 @@ from .const import (
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
 )
-from .models import BluetoothServiceInfoBleak, HaBluetoothConnector, HaScannerDetails
+from .models import (
+    BluetoothScanningMode,
+    BluetoothServiceInfoBleak,
+    HaBluetoothConnector,
+    HaScannerDetails,
+)
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
@@ -44,8 +49,10 @@ class BaseHaScanner:
         "adapter",
         "connectable",
         "connector",
+        "current_mode",
         "details",
         "name",
+        "requested_mode",
         "scanning",
         "source",
     )
@@ -56,6 +63,8 @@ class BaseHaScanner:
         adapter: str,
         connector: HaBluetoothConnector | None = None,
         connectable: bool = False,
+        requested_mode: BluetoothScanningMode | None = None,
+        current_mode: BluetoothScanningMode | None = None,
     ) -> None:
         """Initialize the scanner."""
         self.connectable = connectable
@@ -65,6 +74,8 @@ class BaseHaScanner:
         self.adapter = adapter
         self.name = adapter_human_name(adapter, source) if adapter != source else source
         self.scanning: bool = True
+        self.requested_mode = requested_mode
+        self.current_mode = current_mode
         self._last_detection = 0.0
         self._start_time = 0.0
         self._cancel_watchdog: asyncio.TimerHandle | None = None
@@ -182,9 +193,12 @@ class BaseHaScanner:
         device_adv_datas = self.discovered_devices_and_advertisement_data.values()
         return {
             "name": self.name,
+            "connectable": self.connectable,
             "start_time": self._start_time,
             "source": self.source,
             "scanning": self.scanning,
+            "requested_mode": self.requested_mode,
+            "current_mode": self.current_mode,
             "type": self.__class__.__name__,
             "last_detection": self._last_detection,
             "monotonic_time": monotonic_time_coarse(),
@@ -217,9 +231,13 @@ class BaseHaRemoteScanner(BaseHaScanner):
         name: str,
         connector: HaBluetoothConnector | None,
         connectable: bool,
+        requested_mode: BluetoothScanningMode | None = None,
+        current_mode: BluetoothScanningMode | None = None,
     ) -> None:
         """Initialize the scanner."""
-        super().__init__(scanner_id, name, connector, connectable)
+        super().__init__(
+            scanner_id, name, connector, connectable, requested_mode, current_mode
+        )
         self._details: dict[str, str | HaBluetoothConnector] = {"source": scanner_id}
         # Scanners only care about connectable devices. The manager
         # will handle taking care of availability for non-connectable devices
@@ -467,7 +485,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
         now = monotonic_time_coarse()
         discovered_device_timestamps = self._discovered_device_timestamps
         return await super().async_diagnostics() | {
-            "connectable": self.connectable,
             "discovered_device_timestamps": discovered_device_timestamps,
             "time_since_last_device_detection": {
                 address: now - timestamp

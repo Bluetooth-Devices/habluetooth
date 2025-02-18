@@ -166,6 +166,16 @@ class HaScanner(BaseHaScanner):
     over ethernet, usb over ethernet, etc.
     """
 
+    __slots__ = (
+        "_background_tasks",
+        "_start_future",
+        "_start_stop_lock",
+        "connectable",
+        "mac_address",
+        "scanner",
+        "scanning",
+    )
+
     def __init__(
         self,
         mode: BluetoothScanningMode,
@@ -175,15 +185,13 @@ class HaScanner(BaseHaScanner):
         """Init bluetooth discovery."""
         self.mac_address = address
         source = address if address != DEFAULT_ADDRESS else adapter or SOURCE_LOCAL
-        super().__init__(source, adapter)
+        super().__init__(source, adapter, requested_mode=mode)
         self.connectable = True
-        self.requested_mode = mode
         self._start_stop_lock = asyncio.Lock()
         self.scanning = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.scanner: bleak.BleakScanner | None = None
         self._start_future: asyncio.Future[None] | None = None
-        self.current_mode: BluetoothScanningMode | None = None
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
@@ -226,11 +234,7 @@ class HaScanner(BaseHaScanner):
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""
         base_diag = await super().async_diagnostics()
-        return base_diag | {
-            "adapter": self.adapter,
-            "requested_mode": self.requested_mode,
-            "current_mode": self.current_mode,
-        }
+        return base_diag | {"adapter": self.adapter}
 
     def _async_detection_callback(
         self,
@@ -320,6 +324,7 @@ class HaScanner(BaseHaScanner):
             )
             self.current_mode = BluetoothScanningMode.PASSIVE
 
+        assert self.current_mode is not None  # noqa: S101
         self.scanner = create_bleak_scanner(
             self._async_detection_callback, self.current_mode, self.adapter
         )
