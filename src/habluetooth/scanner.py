@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
-from typing import Any, Coroutine, Iterable, no_type_check
+from typing import Any, Callable, Coroutine, Iterable, no_type_check
 
 import async_interrupt
 import bleak
@@ -42,6 +42,8 @@ if IS_LINUX:
     )
     from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
     from dbus_fast.service import method
+
+    from .bleak_aioblescan_scanner_adapter import start_aioble_scan
 
     # or_patterns is a workaround for the fact that passive scanning
     # needs at least one matcher to be set. The below matcher
@@ -88,7 +90,7 @@ NEED_RESET_ERRORS = [
 WAIT_FOR_ADAPTER_TO_INIT_ERRORS = ["org.freedesktop.DBus.Error.UnknownObject"]
 ADAPTER_INIT_TIME = 1.5
 
-START_ATTEMPTS = 4
+START_ATTEMPTS = 5
 
 SCANNING_MODE_TO_BLEAK = {
     BluetoothScanningMode.ACTIVE: "active",
@@ -170,6 +172,7 @@ class HaScanner(BaseHaScanner):
         "_background_tasks",
         "_start_future",
         "_start_stop_lock",
+        "_stop_aioble_scanner",
         "mac_address",
         "scanner",
     )
@@ -190,6 +193,7 @@ class HaScanner(BaseHaScanner):
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.scanner: bleak.BleakScanner | None = None
         self._start_future: asyncio.Future[None] | None = None
+        self._stop_aioble_scanner: Callable[[], Coroutine[Any, Any, None]] | None = None
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
@@ -306,7 +310,8 @@ class HaScanner(BaseHaScanner):
         # 1st attempt - no auto reset
         # 2nd attempt - try to reset the adapter and wait a bit
         # 3th attempt - no auto reset
-        # 4th attempt - fallback to passive if available
+        # 4th attempt - use aioblescan since dbus is not working (linux only)
+        # 5th attempt - fallback to passive if available
 
         if (
             IS_LINUX
@@ -333,7 +338,12 @@ class HaScanner(BaseHaScanner):
                 asyncio.timeout(START_TIMEOUT),
                 async_interrupt.interrupt(self._start_future, _AbortStartError, None),
             ):
-                await self.scanner.start()
+                if START_ATTEMPTS == 4 and IS_LINUX:
+                    self._stop_aioble_scanner = await start_aioble_scan(
+                        self.scanner, self.adapter
+                    )
+                else:
+                    await self.scanner.start()
         except _AbortStartError as ex:
             await self._async_stop_scanner()
             self._raise_for_abort_start(ex)
@@ -346,6 +356,9 @@ class HaScanner(BaseHaScanner):
         except FileNotFoundError as ex:
             await self._async_stop_scanner()
             self._raise_for_file_not_found_error(ex)
+        except OSError as ex:
+            await self._async_stop_scanner()
+            self._raise_for_oserror(ex)
         except asyncio.TimeoutError as ex:
             await self._async_stop_scanner()
             if attempt == 2:
@@ -479,6 +492,15 @@ class HaScanner(BaseHaScanner):
             )
         raise ScannerStartError(msg) from ex
 
+    def _raise_for_oserror(self, ex: OSError) -> None:
+        """Raise a ScannerStartError for a OSError."""
+        _LOGGER.debug("%s: OSError while starting: %s", self.name, ex, exc_info=True)
+        msg = (
+            f"{self.name}: OSError while starting: {ex}; try restarting "
+            "`bluetooth` on the host"
+        )
+        raise ScannerStartError(msg) from ex
+
     def _raise_for_invalid_dbus_message(self, ex: InvalidMessageError) -> None:
         """Raise a ScannerStartError for an InvalidMessageError."""
         _LOGGER.debug(
@@ -569,4 +591,11 @@ class HaScanner(BaseHaScanner):
             # the config entry to restart the scanner if they
             # change the bluetooth dongle.
             _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
+        if self._stop_aioble_scanner:
+            try:
+                await self._stop_aioble_scanner()
+            except (asyncio.TimeoutError, OSError) as ex:
+                # This is not fatal
+                _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
+            self._stop_aioble_scanner = None
         self.scanner = None
