@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any, Callable, Coroutine
 
-import aioblescan
+from aioblescan import aioblescan
 from bleak import BleakScanner
 from bleak.backends.bluezdbus.manager import DeviceRemovedCallbackAndState
 from bleak.backends.bluezdbus.scanner import BleakScannerBlueZDBus
@@ -10,8 +10,9 @@ from bleak_retry_connector.bleak_manager import get_global_bluez_manager_with_ti
 
 async def _start_or_stop_scan(device: str, start: bool) -> None:
     """Start or stop scanning for BLE advertisements."""
+    interface = int(device.removeprefix("hci"))
     loop = asyncio.get_running_loop()
-    bt_sock = aioblescan.create_bt_socket(device)
+    bt_sock = aioblescan.create_bt_socket(interface)
     conn, btctrl = await loop._create_connection_transport(  # type: ignore[attr-defined]
         bt_sock, aioblescan.BLEScanRequester, None, None
     )
