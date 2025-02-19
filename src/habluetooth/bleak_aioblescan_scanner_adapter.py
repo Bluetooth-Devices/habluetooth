@@ -1,11 +1,14 @@
 import asyncio
-from typing import Any, Callable, Coroutine
+import logging
+from typing import Any, Callable, Coroutine, cast
 
 from aioblescan import aioblescan
 from bleak import BleakScanner
 from bleak.backends.bluezdbus.manager import DeviceRemovedCallbackAndState
 from bleak.backends.bluezdbus.scanner import BleakScannerBlueZDBus
 from bleak_retry_connector.bleak_manager import get_global_bluez_manager_with_timeout
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def _start_or_stop_scan(device: str, start: bool) -> None:
@@ -16,11 +19,15 @@ async def _start_or_stop_scan(device: str, start: bool) -> None:
     conn, btctrl = await loop._create_connection_transport(  # type: ignore[attr-defined]
         bt_sock, aioblescan.BLEScanRequester, None, None
     )
+    proto = cast(aioblescan.BLEScanRequester, btctrl)
+    transport = cast(asyncio.Transport, conn)
     if start:
-        await btctrl.send_scan_request()
+        _LOGGER.debug("Starting BLE scan: %s", device)
+        await proto.send_scan_request()
     else:
-        await btctrl.stop_scan_request()
-    conn.close()
+        _LOGGER.debug("Stopping BLE scan: %s", device)
+        await proto.stop_scan_request()
+    transport.close()
     bt_sock.close()
 
 
