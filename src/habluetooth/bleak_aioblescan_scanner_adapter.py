@@ -2,6 +2,7 @@ import asyncio
 from typing import Any, Callable, Coroutine
 
 import aioblescan
+from bleak import BleakScanner
 from bleak.backends.bluezdbus.manager import DeviceRemovedCallbackAndState
 from bleak.backends.bluezdbus.scanner import BleakScannerBlueZDBus
 from bleak_retry_connector.bleak_manager import get_global_bluez_manager_with_timeout
@@ -23,23 +24,24 @@ async def _start_or_stop_scan(device: str, start: bool) -> None:
 
 
 async def start_aioble_scan(
-    scanner: BleakScannerBlueZDBus, device: str
+    scanner: BleakScanner, device: str
 ) -> Callable[[], Coroutine[Any, Any, None]]:
     """Start scanning for BLE advertisements."""
     adapter_path = f"/org/bluez/{device}"
+    backend: BleakScannerBlueZDBus = scanner._backend
     manager = await get_global_bluez_manager_with_timeout()
     manager._advertisement_callbacks[adapter_path].append(
-        scanner._handle_advertising_data
+        backend._handle_advertising_data
     )
     device_removed_callback_and_state = DeviceRemovedCallbackAndState(
-        scanner._handle_device_removed, adapter_path
+        backend._handle_device_removed, adapter_path
     )
     manager._device_removed_callbacks.append(device_removed_callback_and_state)
 
     async def stop() -> None:
         """Stop scanning for BLE advertisements."""
         manager._advertisement_callbacks[adapter_path].remove(
-            scanner._handle_advertising_data
+            backend._handle_advertising_data
         )
         manager._device_removed_callbacks.remove(device_removed_callback_and_state)
         await _start_or_stop_scan(device, False)
