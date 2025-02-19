@@ -593,7 +593,8 @@ class HaScanner(BaseHaScanner):
             _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
         if self._stop_aioble_scanner:
             try:
-                await self._stop_aioble_scanner()
+                async with asyncio.timeout(STOP_TIMEOUT):
+                    await self._stop_aioble_scanner()
             except (asyncio.TimeoutError, OSError) as ex:
                 # This is not fatal
                 _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
