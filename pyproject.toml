@@ -37,7 +37,6 @@ bluetooth-data-tools = ">=1.16.0"
 bluetooth-adapters = ">=0.16.1"
 bluetooth-auto-recovery = ">=1.2.3"
 async-interrupt = ">=1.1.1"
-aioblescan = {version = ">=0.2.14", markers = "platform_system == \"Linux\""}
 
 
 [tool.poetry.group.dev.dependencies]

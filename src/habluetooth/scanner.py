@@ -43,7 +43,7 @@ if IS_LINUX:
     from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
     from dbus_fast.service import method
 
-    from .bleak_aioblescan_scanner_adapter import start_aioble_scan
+    from .bleak_manual_scanner_adapter import start_manual_scan
 
     # or_patterns is a workaround for the fact that passive scanning
     # needs at least one matcher to be set. The below matcher
@@ -172,7 +172,7 @@ class HaScanner(BaseHaScanner):
         "_background_tasks",
         "_start_future",
         "_start_stop_lock",
-        "_stop_aioble_scanner",
+        "_stop_manual_scanner",
         "mac_address",
         "scanner",
     )
@@ -193,7 +193,7 @@ class HaScanner(BaseHaScanner):
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.scanner: bleak.BleakScanner | None = None
         self._start_future: asyncio.Future[None] | None = None
-        self._stop_aioble_scanner: Callable[[], Coroutine[Any, Any, None]] | None = None
+        self._stop_manual_scanner: Callable[[], Coroutine[Any, Any, None]] | None = None
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
@@ -310,7 +310,7 @@ class HaScanner(BaseHaScanner):
         # 1st attempt - no auto reset
         # 2nd attempt - try to reset the adapter and wait a bit
         # 3th attempt - no auto reset
-        # 4th attempt - use aioblescan since dbus is not working (linux only)
+        # 4th attempt - use btmgmt API to start manual scan
         # 5th attempt - fallback to passive if available
 
         if (
@@ -343,8 +343,8 @@ class HaScanner(BaseHaScanner):
                     and attempt == 4
                     and IS_LINUX
                 ):
-                    self._stop_aioble_scanner = await start_aioble_scan(
-                        self.scanner, self.adapter
+                    self._stop_manual_scanner = await start_manual_scan(
+                        self.scanner, self.adapter, self.mac_address
                     )
                 else:
                     await self.scanner.start()
@@ -595,12 +595,12 @@ class HaScanner(BaseHaScanner):
             # the config entry to restart the scanner if they
             # change the bluetooth dongle.
             _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
-        if self._stop_aioble_scanner:
+        if self._stop_manual_scanner:
             try:
                 async with asyncio.timeout(STOP_TIMEOUT):
-                    await self._stop_aioble_scanner()
+                    await self._stop_manual_scanner()
             except (asyncio.TimeoutError, OSError) as ex:
                 # This is not fatal
                 _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
-            self._stop_aioble_scanner = None
+            self._stop_manual_scanner = None
         self.scanner = None
