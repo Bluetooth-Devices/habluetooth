@@ -338,7 +338,11 @@ class HaScanner(BaseHaScanner):
                 asyncio.timeout(START_TIMEOUT),
                 async_interrupt.interrupt(self._start_future, _AbortStartError, None),
             ):
-                if START_ATTEMPTS == 4 and IS_LINUX:
+                if (
+                    self.requested_mode is BluetoothScanningMode.ACTIVE
+                    and attempt == 4
+                    and IS_LINUX
+                ):
                     self._stop_aioble_scanner = await start_aioble_scan(
                         self.scanner, self.adapter
                     )
