@@ -48,6 +48,7 @@ async def _get_adapter(device: str, mac: str) -> MGMTBluetoothCtl:
 
 async def _start_or_stop_scan(adapter: MGMTBluetoothCtl, start: bool) -> None:
     command = "StartDiscovery" if start else "StopDiscovery"
+    _LOGGER.debug("%s: %s", adapter.name, command)
     try:
         response = await adapter.protocol.send(
             command,
@@ -61,7 +62,7 @@ async def _start_or_stop_scan(adapter: MGMTBluetoothCtl, start: bool) -> None:
         await cleanup_adapter(adapter)
         raise ManualScannerStartFailed(f"{command} failed: {ex}") from ex
     _LOGGER.debug(
-        "%s: %s: response.event_frame.command_opcode = %s, "
+        "%s: response.event_frame.command_opcode = %s, "
         "response.event_frame.status = %s",
         adapter.name,
         response.event_frame.command_opcode,
