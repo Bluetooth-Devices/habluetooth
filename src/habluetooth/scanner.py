@@ -15,6 +15,7 @@ from bleak.assigned_numbers import AdvertisementDataType
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 from bleak_retry_connector import restore_discoveries
+from bleak_retry_connector.bluez import stop_discovery
 from bluetooth_adapters import DEFAULT_ADDRESS
 from bluetooth_data_tools import monotonic_time_coarse
 from dbus_fast import InvalidMessageError
@@ -74,11 +75,12 @@ OriginalBleakScanner = bleak.BleakScanner
 
 _LOGGER = logging.getLogger(__name__)
 
+IN_PROGRESS_ERROR = "org.bluez.Error.InProgress"
 
 # If the adapter is in a stuck state the following errors are raised:
 NEED_RESET_ERRORS = [
     "org.bluez.Error.Failed",
-    "org.bluez.Error.InProgress",
+    IN_PROGRESS_ERROR,
     "org.bluez.Error.NotReady",
     "not found",
 ]
@@ -361,6 +363,9 @@ class HaScanner(BaseHaScanner):
         except BleakError as ex:
             await self._async_stop_scanner()
             error_str = str(ex)
+            if IN_PROGRESS_ERROR in error_str:
+                # If discovery is stuck on, try to force stop it
+                await self._async_force_stop_discovery()
             if attempt == 2 and _error_indicates_reset_needed(error_str):
                 await self._async_reset_adapter()
             elif (
@@ -570,3 +575,14 @@ class HaScanner(BaseHaScanner):
             # change the bluetooth dongle.
             _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
         self.scanner = None
+
+    async def _async_force_stop_discovery(self) -> None:
+        """Force stop discovery."""
+        _LOGGER.debug("%s: Force stopping bluetooth discovery", self.name)
+        try:
+            async with asyncio.timeout(STOP_TIMEOUT):
+                await stop_discovery(self.adapter)
+        except asyncio.TimeoutError as ex:
+            _LOGGER.error("%s: Timeout force stopping scanner: %s", self.name, ex)
+        except Exception as ex:
+            _LOGGER.error("%s: Failed to force stop scanner: %s", self.name, ex)
