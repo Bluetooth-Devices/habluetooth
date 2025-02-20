@@ -361,9 +361,6 @@ class HaScanner(BaseHaScanner):
         except FileNotFoundError as ex:
             await self._async_stop_scanner()
             self._raise_for_file_not_found_error(ex)
-        except OSError as ex:
-            await self._async_stop_scanner()
-            self._raise_for_oserror(ex)
         except ManualScannerStartFailed as ex:
             await self._async_stop_scanner()
             self._raise_for_manual_scanner_start_failed(ex)
@@ -500,15 +497,6 @@ class HaScanner(BaseHaScanner):
             )
         raise ScannerStartError(msg) from ex
 
-    def _raise_for_oserror(self, ex: OSError) -> None:
-        """Raise a ScannerStartError for a OSError."""
-        _LOGGER.debug("%s: OSError while starting: %s", self.name, ex, exc_info=True)
-        msg = (
-            f"{self.name}: OSError while starting: {ex}; try restarting "
-            "`bluetooth` on the host"
-        )
-        raise ScannerStartError(msg) from ex
-
     def _raise_for_manual_scanner_start_failed(
         self, ex: ManualScannerStartFailed
     ) -> None:
@@ -616,7 +604,7 @@ class HaScanner(BaseHaScanner):
             try:
                 async with asyncio.timeout(STOP_TIMEOUT):
                     await self._stop_manual_scanner()
-            except (asyncio.TimeoutError, OSError) as ex:
+            except (asyncio.TimeoutError, ManualScannerStartFailed) as ex:
                 # This is not fatal
                 _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
             self._stop_manual_scanner = None
