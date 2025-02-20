@@ -8,6 +8,8 @@ from bleak_retry_connector.bleak_manager import get_global_bluez_manager_with_ti
 from bluetooth_auto_recovery.recover import _get_adapter
 from btsocket import btmgmt_protocol
 
+from .exceptions import ManualScannerStartFailed
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -16,7 +18,7 @@ async def _start_or_stop_scan(device: str, mac: str, start: bool) -> None:
     interface = int(device.removeprefix("hci"))
     async with _get_adapter(interface, mac) as adapter:
         if not adapter:
-            raise OSError(0, f"{device} not found")
+            raise ManualScannerStartFailed(f"{device} not found")
         adapter.set_powered(True)
         command = "StartDiscovery" if start else "StopDiscovery"
         response = await adapter.protocol.send(
@@ -34,7 +36,9 @@ async def _start_or_stop_scan(device: str, mac: str, start: bool) -> None:
             response.event_frame.status,
         )
         if response.event_frame.status != btmgmt_protocol.ErrorCodes.SUCCESS:
-            raise OSError(0, f"{command} failed: {response.event_frame.status}")
+            raise ManualScannerStartFailed(
+                f"{command} failed: {response.event_frame.status}"
+            )
 
 
 async def start_manual_scan(

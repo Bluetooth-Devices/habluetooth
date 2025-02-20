@@ -28,6 +28,7 @@ from .const import (
     START_TIMEOUT,
     STOP_TIMEOUT,
 )
+from .exceptions import ManualScannerStartFailed
 from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
 
@@ -363,6 +364,9 @@ class HaScanner(BaseHaScanner):
         except OSError as ex:
             await self._async_stop_scanner()
             self._raise_for_oserror(ex)
+        except ManualScannerStartFailed as ex:
+            await self._async_stop_scanner()
+            self._raise_for_manual_scanner_start_failed(ex)
         except asyncio.TimeoutError as ex:
             await self._async_stop_scanner()
             if attempt == 2:
@@ -503,6 +507,19 @@ class HaScanner(BaseHaScanner):
             f"{self.name}: OSError while starting: {ex}; try restarting "
             "`bluetooth` on the host"
         )
+        raise ScannerStartError(msg) from ex
+
+    def _raise_for_manual_scanner_start_failed(
+        self, ex: ManualScannerStartFailed
+    ) -> None:
+        """Raise a ScannerStartError for a ManualScannerStartFailed."""
+        _LOGGER.debug(
+            "%s: Manual scanner start failed: %s",
+            self.name,
+            ex,
+            exc_info=True,
+        )
+        msg = f"{self.name}: Manual scanner start failed: {ex}"
         raise ScannerStartError(msg) from ex
 
     def _raise_for_invalid_dbus_message(self, ex: InvalidMessageError) -> None:
