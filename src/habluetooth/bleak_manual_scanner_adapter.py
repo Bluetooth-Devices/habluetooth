@@ -30,8 +30,10 @@ async def _start_or_stop_scan(device: str, mac: str, start: bool) -> None:
             ],
         )
         _LOGGER.debug(
-            "response.event_frame.command_opcode = %s, "
+            "%s: %s: response.event_frame.command_opcode = %s, "
             "response.event_frame.status = %s",
+            interface,
+            mac,
             response.event_frame.command_opcode,
             response.event_frame.status,
         )
