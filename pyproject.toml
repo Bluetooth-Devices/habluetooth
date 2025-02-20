@@ -35,7 +35,7 @@ bleak = ">=0.21.1"
 bleak-retry-connector = ">=3.8.0"
 bluetooth-data-tools = ">=1.16.0"
 bluetooth-adapters = ">=0.16.1"
-bluetooth-auto-recovery = ">=1.2.3"
+bluetooth-auto-recovery = ">=1.4.4"
 async-interrupt = ">=1.1.1"
 
 
