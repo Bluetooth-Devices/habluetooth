@@ -19,7 +19,6 @@ async def _start_or_stop_scan(device: str, mac: str, start: bool) -> None:
     async with _get_adapter(interface, mac) as adapter:
         if not adapter:
             raise ManualScannerStartFailed(f"{device} not found")
-        adapter.set_powered(True)
         command = "StartDiscovery" if start else "StopDiscovery"
         try:
             response = await adapter.protocol.send(
