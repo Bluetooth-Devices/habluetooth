@@ -33,8 +33,8 @@ async def _start_or_stop_scan(device: str, mac: str, start: bool) -> None:
             response.event_frame.command_opcode,
             response.event_frame.status,
         )
-        if response.event_frame.status != 0:
-            raise OSError(response.event_frame.status, "{command} failed")
+        if response.event_frame.status != btmgmt_protocol.ErrorCodes.SUCCESS:
+            raise OSError(0, f"{command} failed: {response.event_frame.status}")
 
 
 async def start_manual_scan(
