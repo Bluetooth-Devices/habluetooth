@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.22.1 (2025-02-20)
+
+### Bug fixes
+
+
+- Try to force stop discovery if its stuck on (#153) ([`e28d836`](https://github.com/Bluetooth-Devices/habluetooth/commit/e28d836d28f0b8062831ee209ba54a7735c4d5ae))
+
+
 ## v3.22.0 (2025-02-18)
 
 ### Features
