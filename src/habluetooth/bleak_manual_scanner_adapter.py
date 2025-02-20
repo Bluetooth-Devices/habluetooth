@@ -21,14 +21,17 @@ async def _start_or_stop_scan(device: str, mac: str, start: bool) -> None:
             raise ManualScannerStartFailed(f"{device} not found")
         adapter.set_powered(True)
         command = "StartDiscovery" if start else "StopDiscovery"
-        response = await adapter.protocol.send(
-            command,
-            adapter.idx,
-            [
-                btmgmt_protocol.AddressType.LERandom,
-                btmgmt_protocol.AddressType.LEPublic,
-            ],
-        )
+        try:
+            response = await adapter.protocol.send(
+                command,
+                adapter.idx,
+                [
+                    btmgmt_protocol.AddressType.LERandom,
+                    btmgmt_protocol.AddressType.LEPublic,
+                ],
+            )
+        except Exception as ex:
+            raise ManualScannerStartFailed(f"{command} failed: {ex}") from ex
         _LOGGER.debug(
             "%s: %s: response.event_frame.command_opcode = %s, "
             "response.event_frame.status = %s",
