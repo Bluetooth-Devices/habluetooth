@@ -13,6 +13,12 @@ from .exceptions import ManualScannerStartFailed
 _LOGGER = logging.getLogger(__name__)
 
 
+async def cleanup_adapter(adapter: MGMTBluetoothCtl) -> None:
+    """Cleanup the adapter."""
+    if adapter.sock:
+        await adapter.close()
+
+
 async def _get_adapter(device: str, mac: str) -> MGMTBluetoothCtl:
     """Start or stop scanning for BLE advertisements."""
     interface = int(device.removeprefix("hci"))
@@ -20,22 +26,22 @@ async def _get_adapter(device: str, mac: str) -> MGMTBluetoothCtl:
     try:
         await adapter.setup()
     except btmgmt_socket.BluetoothSocketError as ex:
-        await adapter.close()
+        await cleanup_adapter(adapter)
         raise ManualScannerStartFailed(
             f"Getting Bluetooth adapter failed: {ex}"
         ) from ex
     except OSError as ex:
-        await adapter.close()
+        await cleanup_adapter(adapter)
         raise ManualScannerStartFailed(
             f"Getting Bluetooth adapter failed: {ex}"
         ) from ex
     except TimeoutError as ex:
-        await adapter.close()
+        await cleanup_adapter(adapter)
         raise ManualScannerStartFailed(
             "Getting Bluetooth adapter failed due to timeout"
         ) from ex
     except BaseException:
-        await adapter.close()
+        await cleanup_adapter(adapter)
         raise
     return adapter
 
@@ -52,7 +58,7 @@ async def _start_or_stop_scan(adapter: MGMTBluetoothCtl, start: bool) -> None:
             ],
         )
     except Exception as ex:
-        await adapter.close()
+        await cleanup_adapter(adapter)
         raise ManualScannerStartFailed(f"{command} failed: {ex}") from ex
     _LOGGER.debug(
         "%s: %s: response.event_frame.command_opcode = %s, "
@@ -62,7 +68,7 @@ async def _start_or_stop_scan(adapter: MGMTBluetoothCtl, start: bool) -> None:
         response.event_frame.status,
     )
     if response.event_frame.status != btmgmt_protocol.ErrorCodes.Success:
-        await adapter.close()
+        await cleanup_adapter(adapter)
         raise ManualScannerStartFailed(
             f"{command} failed: {response.event_frame.status}"
         )
