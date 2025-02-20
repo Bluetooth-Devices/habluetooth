@@ -29,13 +29,13 @@ async def _start_or_stop_scan(device: str, mac: str, start: bool) -> None:
                 btmgmt_protocol.AddressType.LEPublic,
             ],
         )
-        _LOGGER.warning(
+        _LOGGER.debug(
             "response.event_frame.command_opcode = %s, "
             "response.event_frame.status = %s",
             response.event_frame.command_opcode,
             response.event_frame.status,
         )
-        if response.event_frame.status != btmgmt_protocol.ErrorCodes.SUCCESS:
+        if response.event_frame.status != btmgmt_protocol.ErrorCodes.Success:
             raise ManualScannerStartFailed(
                 f"{command} failed: {response.event_frame.status}"
             )
