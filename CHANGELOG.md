@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.23.0 (2025-02-21)
+
+### Features
+
+
+- Add debug logging for connection paths (#154) ([`562d469`](https://github.com/Bluetooth-Devices/habluetooth/commit/562d46912e7596febc3ebcc0301280e6f334172b))
+
+
 ## v3.22.1 (2025-02-20)
 
 ### Bug fixes
