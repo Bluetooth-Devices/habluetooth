@@ -386,6 +386,20 @@ class HaBleakClientWrapper(BleakClient):
                 reverse=True,
             )
 
+        if sorted_devices and _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "%s - %s: Found %s connection path(s), preferred order: %s",
+                address,
+                sorted_devices[0].ble_device.name,
+                len(sorted_devices),
+                ", ".join(
+                    f"{device.scanner.name} "
+                    f"(RSSI={device.advertisement.rssi}) "
+                    f"(failures={self.__connect_failures.get(device.scanner, 0)})"
+                    for device in sorted_devices
+                ),
+            )
+
         for device in sorted_devices:
             if backend := self._async_get_backend_for_ble_device(
                 manager, device.scanner, device.ble_device
