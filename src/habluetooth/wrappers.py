@@ -388,7 +388,7 @@ class HaBleakClientWrapper(BleakClient):
 
         if sorted_devices and _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "%s (%s): Found %s connection path(s), preferred order: %s",
+                "%s - %s: Found %s connection path(s), preferred order: %s",
                 address,
                 sorted_devices[0].ble_device.name,
                 len(sorted_devices),
