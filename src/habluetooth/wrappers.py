@@ -393,7 +393,7 @@ class HaBleakClientWrapper(BleakClient):
                 sorted_devices[0].ble_device.name,
                 len(sorted_devices),
                 ", ".join(
-                    f"RSSI {device.advertisement.rssi} via " f"{device.scanner.name}"
+                    f"RSSI {device.advertisement.rssi} via {device.scanner.name}"
                     for device in sorted_devices
                 ),
             )
