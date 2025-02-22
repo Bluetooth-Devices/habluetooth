@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.24.0 (2025-02-22)
+
+### Features
+
+
+- Improve logging of scanner failures and time_since_last_detection (#155) ([`f0ff045`](https://github.com/Bluetooth-Devices/habluetooth/commit/f0ff04586849bda3933fbe98e8e1335c308999c4))
+
+
 ## v3.23.0 (2025-02-21)
 
 ### Features
