@@ -30,6 +30,8 @@ cdef class BaseHaScanner:
 
     cpdef tuple get_discovered_device_advertisement_data(self, str address)
 
+    cpdef float time_since_last_detection(self)
+
 
 cdef class BaseHaRemoteScanner(BaseHaScanner):
 
