@@ -508,10 +508,11 @@ class HaScanner(BaseHaScanner):
                 self.name,
             )
             return
-        _LOGGER.info(
+        _LOGGER.log(
+            logging.WARNING if self.scanning else logging.DEBUG,
             "%s: Bluetooth scanner has gone quiet for %ss, restarting",
             self.name,
-            SCANNER_WATCHDOG_TIMEOUT,
+            self.time_since_last_detection(),
         )
         # Immediately mark the scanner as not scanning
         # since the restart task will have to wait for the lock
@@ -521,7 +522,6 @@ class HaScanner(BaseHaScanner):
     async def _async_restart_scanner(self) -> None:
         """Restart the scanner."""
         async with self._start_stop_lock:
-            time_since_last_detection = monotonic_time_coarse() - self._last_detection
             # Stop the scanner but not the watchdog
             # since we want to try again later if it's still quiet
             await self._async_stop_scanner()
@@ -530,7 +530,7 @@ class HaScanner(BaseHaScanner):
             # do the reset.
             if (
                 self._start_time == self._last_detection
-                or time_since_last_detection > SCANNER_WATCHDOG_MULTIPLE
+                or self.time_since_last_detection() > SCANNER_WATCHDOG_MULTIPLE
             ):
                 await self._async_reset_adapter()
             try:

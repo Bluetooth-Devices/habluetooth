@@ -88,6 +88,10 @@ class BaseHaScanner:
             adapter=self.adapter,
         )
 
+    def time_since_last_detection(self) -> float:
+        """Return the time since the last detection."""
+        return monotonic_time_coarse() - self._last_detection
+
     def async_setup(self) -> CALLBACK_TYPE:
         """Set up the scanner."""
         self._loop = asyncio.get_running_loop()
@@ -123,7 +127,7 @@ class BaseHaScanner:
 
     def _async_watchdog_triggered(self) -> bool:
         """Check if the watchdog has been triggered."""
-        time_since_last_detection = monotonic_time_coarse() - self._last_detection
+        time_since_last_detection = self.time_since_last_detection()
         _LOGGER.debug(
             "%s: Scanner watchdog time_since_last_detection: %s",
             self.name,
@@ -139,13 +143,14 @@ class BaseHaScanner:
         is triggered.
         """
         if self._async_watchdog_triggered():
-            _LOGGER.info(
+            _LOGGER.log(
+                logging.WARNING if self.scanning else logging.DEBUG,
                 (
                     "%s: Bluetooth scanner has gone quiet for %ss, check logs on the"
                     " scanner device for more information"
                 ),
                 self.name,
-                SCANNER_WATCHDOG_TIMEOUT,
+                self.time_since_last_detection(),
             )
             self.scanning = False
             return
