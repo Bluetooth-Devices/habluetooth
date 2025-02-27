@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Literal, overload
 
 from bleak import BleakClient, BleakError
 from bleak.backends.client import BaseBleakClient, get_platform_client_backend_type
@@ -84,10 +84,27 @@ class HaBleakScannerWrapper(BaseBleakScanner):
             device_identifier, True
         ) or manager.async_ble_device_from_address(device_identifier, False)
 
+    @overload
     @classmethod
-    async def discover(cls, timeout: float = 5.0, **kwargs: Any) -> list[BLEDevice]:
+    async def discover(
+        cls, timeout: float = 5.0, *, return_adv: Literal[False] = False, **kwargs: Any
+    ) -> list[BLEDevice]: ...
+
+    @overload
+    @classmethod
+    async def discover(
+        cls, timeout: float = 5.0, *, return_adv: Literal[True], **kwargs: Any
+    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]: ...
+
+    @classmethod
+    async def discover(
+        cls, timeout: float = 5.0, *, return_adv: bool = False, **kwargs: Any
+    ) -> list[BLEDevice] | dict[str, tuple[BLEDevice, AdvertisementData]]:
         """Discover devices."""
-        return list(get_manager().async_discovered_devices(True))
+        infos = get_manager().async_discovered_service_info(True)
+        if return_adv:
+            return {info.address: (info.device, info.advertisement) for info in infos}
+        return [info.device for info in infos]
 
     async def stop(self, *args: Any, **kwargs: Any) -> None:
         """Stop scanning for devices."""
