@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.24.1 (2025-02-27)
+
+### Bug fixes
+
+
+- Update scanner discover signature for newer bleak (#157) ([`a071cb8`](https://github.com/Bluetooth-Devices/habluetooth/commit/a071cb8e3f921da30055b94a74a4b0aa339e53de))
+
+
 ## v3.24.0 (2025-02-22)
 
 ### Features
