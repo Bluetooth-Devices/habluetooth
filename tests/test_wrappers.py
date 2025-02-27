@@ -413,6 +413,20 @@ async def test_find_device_by_address(
 
 
 @pytest.mark.asyncio
+async def test_discover(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Ensure the discover is implemented."""
+    _, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    devices = await bleak.BleakScanner.discover()
+    assert any(device.address == "00:00:00:00:00:01" for device in devices)
+    devices_adv = await bleak.BleakScanner.discover(return_adv=True)
+    assert "00:00:00:00:00:01" in devices_adv
+
+
+@pytest.mark.asyncio
 async def test_raise_after_shutdown(
     two_adapters: None,
     enable_bluetooth: None,
