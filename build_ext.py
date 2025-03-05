@@ -5,7 +5,31 @@ import os
 from distutils.command.build_ext import build_ext
 from typing import Any
 
+try:
+    from setuptools import Extension
+except ImportError:
+    from distutils.core import Extension
+
+
 _LOGGER = logging.getLogger(__name__)
+
+TO_CYTHONIZE = [
+    "src/habluetooth/advertisement_tracker.py",
+    "src/habluetooth/base_scanner.py",
+    "src/habluetooth/manager.py",
+    "src/habluetooth/models.py",
+    "src/habluetooth/scanner.py",
+]
+
+EXTENSIONS = [
+    Extension(
+        ext.removeprefix("src/").removesuffix(".py").replace("/", "."),
+        [ext],
+        language="c",
+        extra_compile_args=["-O3", "-g0"],
+    )
+    for ext in TO_CYTHONIZE
+]
 
 
 class BuildExt(build_ext):
@@ -30,13 +54,7 @@ def build(setup_kwargs: Any) -> None:
         setup_kwargs.update(
             {
                 "ext_modules": cythonize(
-                    [
-                        "src/habluetooth/advertisement_tracker.py",
-                        "src/habluetooth/base_scanner.py",
-                        "src/habluetooth/manager.py",
-                        "src/habluetooth/models.py",
-                        "src/habluetooth/scanner.py",
-                    ],
+                    EXTENSIONS,
                     compiler_directives={"language_level": "3"},  # Python 3
                 ),
                 "cmdclass": {"build_ext": BuildExt},
