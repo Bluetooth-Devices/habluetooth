@@ -231,10 +231,13 @@ jobs:
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.musl }}-${{ matrix.pyver }}-${{ matrix.qemu }}
           path: ./wheelhouse/*.whl
+
   upload_pypi:
     needs: [build_wheels]
     runs-on: ubuntu-latest
     environment: release
+    permissions:
+      id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
 
     steps:
       - uses: actions/download-artifact@v4
@@ -245,9 +248,7 @@ jobs:
           pattern: wheels-*
           merge-multiple: true
 
-      - uses: pypa/gh-action-pypi-publish@v1.12.4
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_TOKEN }}
+      - uses:
+          pypa/gh-action-pypi-publish@v1.12.4
 
           # To test: repository_url: https://test.pypi.org/legacy/
