@@ -1,5 +1,22 @@
 # Changelog
 
+## v3.25.0 (2025-03-05)
+
+### Bug fixes
+
+
+- Use trusted publishing for wheels (#163) ([`c726687`](https://github.com/Bluetooth-Devices/habluetooth/commit/c726687affb0025037676b76cf4ecefdef0da23f))
+
+
+### Features
+
+
+- Add armv7l to wheel builds (#162) ([`e394707`](https://github.com/Bluetooth-Devices/habluetooth/commit/e394707b6b7ffc54e6dc5b8c038a08c5404f1777))
+
+
+- Reduce wheel sizes (#161) ([`5e6b644`](https://github.com/Bluetooth-Devices/habluetooth/commit/5e6b64476ff2db7a215d1b0d58ef01c04b839d34))
+
+
 ## v3.24.1 (2025-02-27)
 
 ### Bug fixes
