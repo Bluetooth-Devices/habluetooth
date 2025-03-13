@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.25.1 (2025-03-13)
+
+### Bug fixes
+
+
+- Downgrade scanner gone quiet logger to debug (#166) ([`d450ffc`](https://github.com/Bluetooth-Devices/habluetooth/commit/d450ffca38dec015f44b5be08af484fe8ca09866))
+
+
 ## v3.25.0 (2025-03-05)
 
 ### Bug fixes
