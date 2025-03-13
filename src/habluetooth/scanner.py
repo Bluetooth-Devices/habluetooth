@@ -508,8 +508,7 @@ class HaScanner(BaseHaScanner):
                 self.name,
             )
             return
-        _LOGGER.log(
-            logging.WARNING if self.scanning else logging.DEBUG,
+        _LOGGER.debug(
             "%s: Bluetooth scanner has gone quiet for %ss, restarting",
             self.name,
             self.time_since_last_detection(),

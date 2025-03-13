@@ -143,8 +143,7 @@ class BaseHaScanner:
         is triggered.
         """
         if self._async_watchdog_triggered():
-            _LOGGER.log(
-                logging.WARNING if self.scanning else logging.DEBUG,
+            _LOGGER.debug(
                 (
                     "%s: Bluetooth scanner has gone quiet for %ss, check logs on the"
                     " scanner device for more information"
