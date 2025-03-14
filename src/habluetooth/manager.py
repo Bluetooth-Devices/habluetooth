@@ -626,7 +626,7 @@ class BluetoothManager:
             self._bleak_callbacks is not None
         ):
             # Bleak callbacks must get a connectable device
-            advertisement_data = service_info.advertisement
+            advertisement_data = service_info._advertisement_internal()
             for bleak_callback in self._bleak_callbacks:
                 _dispatch_bleak_callback(
                     bleak_callback, service_info.device, advertisement_data

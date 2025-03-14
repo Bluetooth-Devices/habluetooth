@@ -297,7 +297,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         return {
             address: (
                 service_info.device,
-                service_info.advertisement,
+                service_info._advertisement_internal(),
             )
             for address, service_info in self._previous_service_info.items()
         }
