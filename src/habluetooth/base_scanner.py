@@ -226,7 +226,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         "_cancel_track",
         "_details",
         "_expire_seconds",
-        "_previous_service_info",
+        "_previous_info",
     )
 
     def __init__(
@@ -247,14 +247,14 @@ class BaseHaRemoteScanner(BaseHaScanner):
         # will handle taking care of availability for non-connectable devices
         self._expire_seconds = CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
         self._cancel_track: asyncio.TimerHandle | None = None
-        self._previous_service_info: dict[str, BluetoothServiceInfoBleak] = {}
+        self._previous_info: dict[str, BluetoothServiceInfoBleak] = {}
 
     def restore_discovered_devices(
         self, history: DiscoveredDeviceAdvertisementData
     ) -> None:
         """Restore discovered devices from a previous run."""
         discovered_device_timestamps = history.discovered_device_timestamps
-        self._previous_service_info = {
+        self._previous_info = {
             address: BluetoothServiceInfoBleak(
                 device.name or address,
                 address,
@@ -295,19 +295,16 @@ class BaseHaRemoteScanner(BaseHaScanner):
         """Return a list of discovered devices and advertisement data."""
         return {
             address: (
-                service_info.device,
-                service_info.advertisement,
+                info.device,
+                info.advertisement,
             )
-            for address, service_info in self._previous_service_info.items()
+            for address, info in self._previous_info.items()
         }
 
     @property
     def _discovered_device_timestamps(self) -> dict[str, float]:
         """Return a dict of discovered device timestamps."""
-        return {
-            address: service_info.time
-            for address, service_info in self._previous_service_info.items()
-        }
+        return {address: info.time for address, info in self._previous_info.items()}
 
     def _cancel_expire_devices(self) -> None:
         """Cancel the expiration of old devices."""
@@ -347,20 +344,17 @@ class BaseHaRemoteScanner(BaseHaScanner):
         now = monotonic_time_coarse()
         expired = [
             address
-            for address, service_info in self._previous_service_info.items()
-            if now - service_info.time > self._expire_seconds
+            for address, info in self._previous_info.items()
+            if now - info.time > self._expire_seconds
         ]
         for address in expired:
-            del self._previous_service_info[address]
+            del self._previous_info[address]
 
     @property
     def discovered_devices(self) -> list[BLEDevice]:
         """Return a list of discovered devices."""
-        service_infos = self._previous_service_info.values()
-        return [
-            device_advertisement_data.device
-            for device_advertisement_data in service_infos
-        ]
+        infos = self._previous_info.values()
+        return [device_advertisement_data.device for device_advertisement_data in infos]
 
     @property
     def discovered_devices_and_advertisement_data(
@@ -372,13 +366,13 @@ class BaseHaRemoteScanner(BaseHaScanner):
     @property
     def discovered_addresses(self) -> Iterable[str]:
         """Return an iterable of discovered devices."""
-        return self._previous_service_info
+        return self._previous_info
 
     def get_discovered_device_advertisement_data(
         self, address: str
     ) -> tuple[BLEDevice, AdvertisementData] | None:
         """Return the advertisement data for a discovered device."""
-        if (info := self._previous_service_info.get(address)) is not None:
+        if (info := self._previous_info.get(address)) is not None:
             return info.device, info.advertisement
         return None
 
@@ -397,28 +391,28 @@ class BaseHaRemoteScanner(BaseHaScanner):
         """Call the registered callback."""
         self.scanning = not self._connecting
         self._last_detection = advertisement_monotonic_time
-        service_info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
+        info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
 
-        if (prev_service_info := self._previous_service_info.get(address)) is None:
+        if (prev_info := self._previous_info.get(address)) is None:
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
-            service_info.device = BLEDevice(
+            info.device = BLEDevice(
                 address,
                 local_name,
                 {**self._details, **details},
                 rssi,  # deprecated, will be removed in newer bleak
             )
-            service_info.manufacturer_data = manufacturer_data
-            service_info.service_data = service_data
-            service_info.service_uuids = service_uuids
-            service_info.name = local_name or address
+            info.manufacturer_data = manufacturer_data
+            info.service_data = service_data
+            info.service_uuids = service_uuids
+            info.name = local_name or address
         else:
             # Merge the new data with the old data
             # to function the same as BlueZ which
             # merges the dicts on PropertiesChanged
-            service_info.device = prev_service_info.device
-            prev_name = prev_service_info.device.name
+            info.device = prev_info.device
+            prev_name = prev_info.device.name
             #
             # Bleak updates the BLEDevice via create_or_update_device.
             # We need to do the same to ensure integrations that already
@@ -427,62 +421,69 @@ class BaseHaRemoteScanner(BaseHaScanner):
             #
             # https://github.com/hbldh/bleak/blob/222618b7747f0467dbb32bd3679f8cfaa19b1668/bleak/backends/scanner.py#L203
             #
-            prev_details: dict[str, Any] = service_info.device.details
+            prev_details: dict[str, Any] = info.device.details
             prev_details.update(details)
             # _rssi is deprecated, will be removed in newer bleak
             # pylint: disable-next=protected-access
-            service_info.device._rssi = rssi
+            info.device._rssi = rssi
             has_local_name = bool(local_name)
             if prev_name and (not has_local_name or len(prev_name) > len(local_name)):  # type: ignore[arg-type]
-                service_info.name = prev_name
+                info.name = prev_name
             else:
-                service_info.device.name = local_name
-                service_info.name = local_name if has_local_name else address  # type: ignore[assignment]
+                info.device.name = local_name
+                info.name = local_name if has_local_name else address  # type: ignore[assignment]
 
             has_service_uuids = bool(service_uuids)
-            if has_service_uuids and service_uuids != prev_service_info.service_uuids:
-                service_info.service_uuids = list(
-                    {*service_uuids, *prev_service_info.service_uuids}
-                )
+            if (
+                has_service_uuids
+                and service_uuids is not prev_info.service_uuids
+                and service_uuids != prev_info.service_uuids
+            ):
+                info.service_uuids = list({*service_uuids, *prev_info.service_uuids})
             elif not has_service_uuids:
-                service_info.service_uuids = prev_service_info.service_uuids
+                info.service_uuids = prev_info.service_uuids
             else:
-                service_info.service_uuids = service_uuids
+                info.service_uuids = service_uuids
 
             has_service_data = bool(service_data)
-            if has_service_data and service_data != prev_service_info.service_data:
-                service_info.service_data = {
-                    **prev_service_info.service_data,
+            if (
+                has_service_data
+                and service_data is not prev_info.service_data
+                and service_data != prev_info.service_data
+            ):
+                info.service_data = {
+                    **prev_info.service_data,
                     **service_data,
                 }
             elif not has_service_data:
-                service_info.service_data = prev_service_info.service_data
+                info.service_data = prev_info.service_data
             else:
-                service_info.service_data = service_data
+                info.service_data = service_data
 
             has_manufacturer_data = bool(manufacturer_data)
             if (
                 has_manufacturer_data
-                and manufacturer_data != prev_service_info.manufacturer_data
+                and manufacturer_data is not prev_info.manufacturer_data
+                and manufacturer_data != prev_info.manufacturer_data
             ):
-                service_info.manufacturer_data = {
-                    **prev_service_info.manufacturer_data,
+                info.manufacturer_data = {
+                    **prev_info.manufacturer_data,
                     **manufacturer_data,
                 }
             elif not has_manufacturer_data:
-                service_info.manufacturer_data = prev_service_info.manufacturer_data
+                info.manufacturer_data = prev_info.manufacturer_data
             else:
-                service_info.manufacturer_data = manufacturer_data
+                info.manufacturer_data = manufacturer_data
 
-        service_info.address = address
-        service_info.rssi = rssi
-        service_info.source = self.source
-        service_info._advertisement = None
-        service_info.connectable = self.connectable
-        service_info.time = advertisement_monotonic_time
-        service_info.tx_power = tx_power
-        self._previous_service_info[address] = service_info
-        self._manager.scanner_adv_received(service_info)
+        info.address = address
+        info.rssi = rssi
+        info.source = self.source
+        info._advertisement = None
+        info.connectable = self.connectable
+        info.time = advertisement_monotonic_time
+        info.tx_power = tx_power
+        self._previous_info[address] = info
+        self._manager.scanner_adv_received(info)
 
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""

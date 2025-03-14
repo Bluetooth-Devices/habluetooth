@@ -38,7 +38,7 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
     cdef public dict _details
     cdef public double _expire_seconds
     cdef public object _cancel_track
-    cdef public dict _previous_service_info
+    cdef public dict _previous_info
 
     @cython.locals(
         prev_name=str,
@@ -48,8 +48,8 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         has_service_data=bint,
         has_service_uuids=bint,
         prev_details=dict,
-        service_info=BluetoothServiceInfoBleak,
-        prev_service_info=BluetoothServiceInfoBleak
+        info=BluetoothServiceInfoBleak,
+        prev_info=BluetoothServiceInfoBleak
     )
     cpdef void _async_on_advertisement(
         self,
@@ -64,7 +64,7 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         double advertisement_monotonic_time
     )
 
-    @cython.locals(now=double, timestamp=double, service_info=BluetoothServiceInfoBleak)
+    @cython.locals(now=double, timestamp=double, info=BluetoothServiceInfoBleak)
     cpdef void _async_expire_devices(self)
 
     cpdef void _schedule_expire_devices(self)
