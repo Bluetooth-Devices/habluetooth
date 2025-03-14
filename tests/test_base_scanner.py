@@ -247,6 +247,12 @@ async def test_remote_scanner_expires_non_connectable() -> None:
     assert len(scanner.discovered_devices_and_advertisement_data) == 1
     assert len(scanner.discovered_device_timestamps) == 1
     assert len(scanner._discovered_device_timestamps) == 1
+    dev_adv = scanner.get_discovered_device_advertisement_data(switchbot_device.address)
+    assert dev_adv is not None
+    dev, adv = dev_adv
+    assert dev.name == "wohand"
+    assert adv.local_name == "wohand"
+    assert adv.manufacturer_data == switchbot_device_adv.manufacturer_data
     assert devices[0].name == "wohand"
 
     assert (
@@ -273,6 +279,10 @@ async def test_remote_scanner_expires_non_connectable() -> None:
     assert len(scanner.discovered_devices_and_advertisement_data) == 0
     assert len(scanner.discovered_device_timestamps) == 0
     assert len(scanner._discovered_device_timestamps) == 0
+    assert (
+        scanner.get_discovered_device_advertisement_data(switchbot_device.address)
+        is None
+    )
 
     expire_monotonic = (
         start_time_monotonic + FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS + 1
@@ -288,6 +298,10 @@ async def test_remote_scanner_expires_non_connectable() -> None:
     assert len(scanner.discovered_devices_and_advertisement_data) == 0
     assert len(scanner.discovered_device_timestamps) == 0
     assert len(scanner._discovered_device_timestamps) == 0
+    assert (
+        scanner.get_discovered_device_advertisement_data(switchbot_device.address)
+        is None
+    )
 
     cancel()
     unsetup()
