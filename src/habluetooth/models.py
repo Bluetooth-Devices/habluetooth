@@ -208,9 +208,12 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             f"tx_power={self.tx_power}>"
         )
 
-    @property
-    def advertisement(self) -> AdvertisementData:
-        """Get the advertisement data."""
+    def _advertisement_internal(self) -> AdvertisementData:
+        """
+        Get the advertisement data.
+
+        Internal method only to be used by this library.
+        """
         if self._advertisement is None:
             self._advertisement = tuple.__new__(
                 AdvertisementData,
@@ -225,6 +228,11 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
                 ),
             )
         return self._advertisement
+
+    @property
+    def advertisement(self) -> AdvertisementData:
+        """Get the advertisement data."""
+        return self._advertisement_internal()
 
     def as_dict(self) -> dict[str, Any]:
         """

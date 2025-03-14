@@ -75,6 +75,19 @@ async def mock_enable_bluetooth(
     assert manager._bluetooth_adapters is not None
     await manager.async_setup()
     yield
+    manager._all_history.clear()
+    manager._connectable_history.clear()
+    manager._unavailable_callbacks.clear()
+    manager._connectable_unavailable_callbacks.clear()
+    manager._bleak_callbacks.clear()
+    manager._fallback_intervals.clear()
+    manager._intervals.clear()
+    manager._adapter_sources.clear()
+    manager._adapters.clear()
+    manager._sources.clear()
+    manager._allocations.clear()
+    manager._non_connectable_scanners.clear()
+    manager._connectable_scanners.clear()
 
 
 @pytest.fixture(scope="session")
@@ -154,6 +167,24 @@ def two_adapters_fixture():
                 },
             },
         ),
+    ):
+        yield
+
+
+@pytest.fixture(name="macos_adapter")
+def macos_adapter() -> Generator[None, None, None]:
+    """Fixture that mocks the macos adapter."""
+    with (
+        patch("bleak.get_platform_scanner_backend_type"),
+        patch(
+            "habluetooth.scanner.platform.system",
+            return_value="Darwin",
+        ),
+        patch(
+            "bluetooth_adapters.systems.platform.system",
+            return_value="Darwin",
+        ),
+        patch("habluetooth.scanner.SYSTEM", "Darwin"),
     ):
         yield
 

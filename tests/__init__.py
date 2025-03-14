@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Generator
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from bleak.backends.scanner import AdvertisementData, BLEDevice
 
@@ -13,6 +13,9 @@ from habluetooth.models import BluetoothServiceInfoBleak
 
 utcnow = partial(datetime.now, timezone.utc)
 
+HCI0_SOURCE_ADDRESS = "AA:BB:CC:DD:EE:00"
+HCI1_SOURCE_ADDRESS = "AA:BB:CC:DD:EE:11"
+NON_CONNECTABLE_REMOTE_SOURCE_ADDRESS = "AA:BB:CC:DD:EE:FF"
 
 _MONOTONIC_RESOLUTION = time.get_clock_info("monotonic").resolution
 
@@ -150,3 +153,20 @@ def inject_advertisement_with_time_and_source_connectable(
             tx_power=adv.tx_power,
         )
     )
+
+
+@contextmanager
+def patch_discovered_devices(
+    mock_discovered: list[BLEDevice],
+) -> Generator[None, None, None]:
+    """Mock the combined best path to discovered devices from all the scanners."""
+    manager = get_manager()
+    original_all_history = manager._all_history
+    original_connectable_history = manager._connectable_history
+    manager._connectable_history = {}
+    manager._all_history = {
+        device.address: MagicMock(device=device) for device in mock_discovered
+    }
+    yield
+    manager._all_history = original_all_history
+    manager._connectable_history = original_connectable_history
