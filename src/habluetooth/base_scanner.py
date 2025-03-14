@@ -226,7 +226,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         "_cancel_track",
         "_details",
         "_expire_seconds",
-        "_previous_info",
+        "_previous_service_info",
     )
 
     def __init__(
@@ -247,14 +247,14 @@ class BaseHaRemoteScanner(BaseHaScanner):
         # will handle taking care of availability for non-connectable devices
         self._expire_seconds = CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
         self._cancel_track: asyncio.TimerHandle | None = None
-        self._previous_info: dict[str, BluetoothServiceInfoBleak] = {}
+        self._previous_service_info: dict[str, BluetoothServiceInfoBleak] = {}
 
     def restore_discovered_devices(
         self, history: DiscoveredDeviceAdvertisementData
     ) -> None:
         """Restore discovered devices from a previous run."""
         discovered_device_timestamps = history.discovered_device_timestamps
-        self._previous_info = {
+        self._previous_service_info = {
             address: BluetoothServiceInfoBleak(
                 device.name or address,
                 address,
@@ -295,13 +295,15 @@ class BaseHaRemoteScanner(BaseHaScanner):
         """Return a list of discovered devices and advertisement data."""
         return {
             address: (info.device, info.advertisement)
-            for address, info in self._previous_info.items()
+            for address, info in self._previous_service_info.items()
         }
 
     @property
     def _discovered_device_timestamps(self) -> dict[str, float]:
         """Return a dict of discovered device timestamps."""
-        return {address: info.time for address, info in self._previous_info.items()}
+        return {
+            address: info.time for address, info in self._previous_service_info.items()
+        }
 
     def _cancel_expire_devices(self) -> None:
         """Cancel the expiration of old devices."""
@@ -341,16 +343,16 @@ class BaseHaRemoteScanner(BaseHaScanner):
         now = monotonic_time_coarse()
         expired = [
             address
-            for address, info in self._previous_info.items()
+            for address, info in self._previous_service_info.items()
             if now - info.time > self._expire_seconds
         ]
         for address in expired:
-            del self._previous_info[address]
+            del self._previous_service_info[address]
 
     @property
     def discovered_devices(self) -> list[BLEDevice]:
         """Return a list of discovered devices."""
-        infos = self._previous_info.values()
+        infos = self._previous_service_info.values()
         return [device_advertisement_data.device for device_advertisement_data in infos]
 
     @property
@@ -363,13 +365,13 @@ class BaseHaRemoteScanner(BaseHaScanner):
     @property
     def discovered_addresses(self) -> Iterable[str]:
         """Return an iterable of discovered devices."""
-        return self._previous_info
+        return self._previous_service_info
 
     def get_discovered_device_advertisement_data(
         self, address: str
     ) -> tuple[BLEDevice, AdvertisementData] | None:
         """Return the advertisement data for a discovered device."""
-        if (info := self._previous_info.get(address)) is not None:
+        if (info := self._previous_service_info.get(address)) is not None:
             return info.device, info.advertisement
         return None
 
@@ -390,7 +392,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self._last_detection = advertisement_monotonic_time
         info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
 
-        if (prev_info := self._previous_info.get(address)) is None:
+        if (prev_info := self._previous_service_info.get(address)) is None:
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
@@ -479,7 +481,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         info.connectable = self.connectable
         info.time = advertisement_monotonic_time
         info.tx_power = tx_power
-        self._previous_info[address] = info
+        self._previous_service_info[address] = info
         self._manager.scanner_adv_received(info)
 
     async def async_diagnostics(self) -> dict[str, Any]:

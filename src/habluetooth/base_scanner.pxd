@@ -38,7 +38,7 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
     cdef public dict _details
     cdef public double _expire_seconds
     cdef public object _cancel_track
-    cdef public dict _previous_info
+    cdef public dict _previous_service_info
 
     @cython.locals(
         prev_name=str,
