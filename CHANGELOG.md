@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.26.0 (2025-03-14)
+
+### Features
+
+
+- Improve manager performance (#167) ([`e0bdace`](https://github.com/Bluetooth-Devices/habluetooth/commit/e0bdace8180ff3ac450447be99f700fd647fb659))
+
+
 ## v3.25.1 (2025-03-13)
 
 ### Bug fixes
