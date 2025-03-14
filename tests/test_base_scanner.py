@@ -104,7 +104,20 @@ async def test_remote_scanner(name_2: str | None) -> None:
         manufacturer_data={1: b"\x01", 2: b"\x02"},
         rssi=-100,
     )
-
+    switchbot_device_adv_4 = generate_advertisement_data(
+        local_name="wohandlonger",
+        service_uuids=["00000001-0000-1000-8000-00805f9b34fb"],
+        service_data={"00000001-0000-1000-8000-00805f9b34fb": b"\n\xff"},
+        manufacturer_data={1: b"\x04", 2: b"\x02", 3: b"\x03"},
+        rssi=-100,
+    )
+    switchbot_device_adv_5 = generate_advertisement_data(
+        local_name="wohandlonger",
+        service_uuids=["00000001-0000-1000-8000-00805f9b34fb"],
+        service_data={"00000001-0000-1000-8000-00805f9b34fb": b"\n\xff"},
+        manufacturer_data={1: b"\x04", 2: b"\x01"},
+        rssi=-100,
+    )
     connector = HaBluetoothConnector(
         MockBleakClient, "mock_bleak_client", lambda: False
     )
@@ -154,6 +167,15 @@ async def test_remote_scanner(name_2: str | None) -> None:
     # sure we always keep the longer name
     scanner.inject_advertisement(switchbot_device_2, switchbot_device_adv_2)
     assert discovered_device.name == switchbot_device_3.name
+
+    scanner.inject_advertisement(switchbot_device_2, switchbot_device_adv_4)
+    assert scanner.discovered_devices_and_advertisement_data[
+        switchbot_device_2.address
+    ][1].manufacturer_data == {1: b"\x04", 2: b"\x02", 3: b"\x03"}
+    scanner.inject_advertisement(switchbot_device_2, switchbot_device_adv_5)
+    assert scanner.discovered_devices_and_advertisement_data[
+        switchbot_device_2.address
+    ][1].manufacturer_data == {1: b"\x04", 2: b"\x01", 3: b"\x03"}
 
     cancel()
     unsetup()
