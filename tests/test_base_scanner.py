@@ -245,6 +245,8 @@ async def test_remote_scanner_expires_non_connectable() -> None:
     devices = scanner.discovered_devices
     assert len(scanner.discovered_devices) == 1
     assert len(scanner.discovered_devices_and_advertisement_data) == 1
+    assert len(scanner.discovered_device_timestamps) == 1
+    assert len(scanner._discovered_device_timestamps) == 1
     assert devices[0].name == "wohand"
 
     assert (
@@ -269,6 +271,8 @@ async def test_remote_scanner_expires_non_connectable() -> None:
 
     assert len(scanner.discovered_devices) == 0
     assert len(scanner.discovered_devices_and_advertisement_data) == 0
+    assert len(scanner.discovered_device_timestamps) == 0
+    assert len(scanner._discovered_device_timestamps) == 0
 
     expire_monotonic = (
         start_time_monotonic + FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS + 1
@@ -282,6 +286,8 @@ async def test_remote_scanner_expires_non_connectable() -> None:
 
     assert len(scanner.discovered_devices) == 0
     assert len(scanner.discovered_devices_and_advertisement_data) == 0
+    assert len(scanner.discovered_device_timestamps) == 0
+    assert len(scanner._discovered_device_timestamps) == 0
 
     cancel()
     unsetup()
