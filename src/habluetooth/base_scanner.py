@@ -36,14 +36,12 @@ _float = float
 _int = int
 _str = str
 
-_EMPTY_BYTES = b""
-
 
 def _dict_subset(super_dict: dict[Any, bytes], sub_dict: dict[Any, bytes]) -> bool:
     """Return True if sub_dict is a subset of super_dict."""
     for key, sub_value in sub_dict.items():
-        super_value = super_dict.get(key, _EMPTY_BYTES)
-        if super_value is _EMPTY_BYTES or super_value != sub_value:
+        super_value = super_dict.get(key)
+        if super_value is None or super_value != sub_value:
             return False
     return True
 
