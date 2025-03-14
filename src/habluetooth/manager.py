@@ -595,6 +595,10 @@ class BluetoothManager:
             not (service_info.connectable and old_connectable_service_info is None)
             # Than check if advertisement data is the same
             and old_service_info is not None
+            # This is a bit complex because we want to skip all the
+            # PyObject_RichCompare overhead as its can be upwards of
+            # 65% of the time spent in this method. The common case
+            # is that its the same object for remote scanners.
             and not (
                 (
                     service_info.manufacturer_data
