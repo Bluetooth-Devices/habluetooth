@@ -505,9 +505,10 @@ class BluetoothManager:
         ):
             return
 
-        address = service_info.address
-        if connectable := service_info.connectable:
-            old_connectable_service_info = self._connectable_history.get(address)
+        if service_info.connectable:
+            old_connectable_service_info = self._connectable_history.get(
+                service_info.address
+            )
         else:
             old_connectable_service_info = None
         # This logic is complex due to the many combinations of scanners
@@ -527,18 +528,19 @@ class BluetoothManager:
         #                       connectable scanner
         #
         if (
-            (old_service_info := self._all_history.get(address)) is not None
+            (old_service_info := self._all_history.get(service_info.address))
+            is not None
             and service_info.source != old_service_info.source
             and (scanner := self._sources.get(old_service_info.source)) is not None
             and scanner.scanning
             and self._prefer_previous_adv_from_different_source(
-                address, old_service_info, service_info
+                service_info.address, old_service_info, service_info
             )
         ):
             # If we are rejecting the new advertisement and the device is connectable
             # but not in the connectable history or the connectable source is the same
             # as the new source, we need to add it to the connectable history
-            if connectable:
+            if service_info.connectable:
                 if old_connectable_service_info is not None and (
                     # If its the same as the preferred source, we are done
                     # as we know we prefer the old advertisement
@@ -557,29 +559,31 @@ class BluetoothManager:
                         is not None
                         and connectable_scanner.scanning
                         and self._prefer_previous_adv_from_different_source(
-                            address, old_connectable_service_info, service_info
+                            service_info.address,
+                            old_connectable_service_info,
+                            service_info,
                         )
                     )
                 ):
                     return
 
-                self._connectable_history[address] = service_info
+                self._connectable_history[service_info.address] = service_info
 
             return
 
-        if connectable:
-            self._connectable_history[address] = service_info
+        if service_info.connectable:
+            self._connectable_history[service_info.address] = service_info
 
-        self._all_history[address] = service_info
+        self._all_history[service_info.address] = service_info
 
         # Track advertisement intervals to determine when we need to
         # switch adapters or mark a device as unavailable
         if (
-            last_source := self._advertisement_tracker.sources.get(address)
+            last_source := self._advertisement_tracker.sources.get(service_info.address)
         ) is not None and last_source != service_info.source:
             # Source changed, remove the old address from the tracker
-            self._advertisement_tracker.async_remove_address(address)
-        if address not in self._advertisement_tracker.intervals:
+            self._advertisement_tracker.async_remove_address(service_info.address)
+        if service_info.address not in self._advertisement_tracker.intervals:
             self._advertisement_tracker.async_collect(service_info)
 
         # If the advertisement data is the same as the last time we saw it, we
@@ -588,33 +592,45 @@ class BluetoothManager:
         # after unavailable callbacks.
         if (
             # Ensure its not a connectable device missing from connectable history
-            not (connectable and old_connectable_service_info is None)
+            not (service_info.connectable and old_connectable_service_info is None)
             # Than check if advertisement data is the same
             and old_service_info is not None
             and not (
-                service_info.manufacturer_data != old_service_info.manufacturer_data
-                or service_info.service_data != old_service_info.service_data
-                or service_info.service_uuids != old_service_info.service_uuids
+                (
+                    service_info.manufacturer_data
+                    is not old_service_info.manufacturer_data
+                    and service_info.manufacturer_data
+                    != old_service_info.manufacturer_data
+                )
+                or (
+                    service_info.service_data is not old_service_info.service_data
+                    and service_info.service_data != old_service_info.service_data
+                )
+                or (
+                    service_info.service_uuids is not old_service_info.service_uuids
+                    and service_info.service_uuids != old_service_info.service_uuids
+                )
                 or service_info.name != old_service_info.name
             )
         ):
             return
 
-        if not connectable and old_connectable_service_info is not None:
+        if not service_info.connectable and old_connectable_service_info is not None:
             # Since we have a connectable path and our BleakClient will
             # route any connection attempts to the connectable path, we
             # mark the service_info as connectable so that the callbacks
             # will be called and the device can be discovered.
             service_info = service_info._as_connectable()
 
-        if (connectable or old_connectable_service_info is not None) and (
-            bleak_callbacks := self._bleak_callbacks
-        ) is not None:
+        if (service_info.connectable or old_connectable_service_info is not None) and (
+            self._bleak_callbacks is not None
+        ):
             # Bleak callbacks must get a connectable device
-            device = service_info.device
             advertisement_data = service_info.advertisement
-            for bleak_callback in bleak_callbacks:
-                _dispatch_bleak_callback(bleak_callback, device, advertisement_data)
+            for bleak_callback in self._bleak_callbacks:
+                _dispatch_bleak_callback(
+                    bleak_callback, service_info.device, advertisement_data
+                )
 
         self._discover_service_info(service_info)
 
