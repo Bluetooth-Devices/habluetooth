@@ -188,3 +188,65 @@ async def test_inject_100_different_advertisements(benchmark: BenchmarkFixture) 
 
     cancel()
     unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_inject_100_different_manufacturer_data(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """Test injecting 100 different manufacturer_data."""
+    manager = get_manager()
+
+    switchbot_device = generate_ble_device(
+        "44:44:33:11:23:45",
+        "wohand",
+        {},
+        rssi=-100,
+    )
+    advs: list[AdvertisementData] = []
+    for i in range(100):
+
+        switchbot_device_adv = generate_advertisement_data(
+            local_name="wohand",
+            service_uuids=["050a021a-0000-1000-8000-00805f9b34fb"],
+            service_data={"050a021a-0000-1000-8000-00805f9b34fb": b"\n\xff"},
+            manufacturer_data={1: b"\x01", 2: b"\x02", i: b"\x03", 3: bytes((i,))},
+            rssi=-100,
+        )
+        advs.append(switchbot_device_adv)
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = BaseHaRemoteScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    def run():
+        _address = switchbot_device.address
+        _rssi = switchbot_device_adv.rssi
+        _name = switchbot_device.name
+        _service_uuids = switchbot_device_adv.service_uuids
+        _service_data = switchbot_device_adv.service_data
+        _tx_power = switchbot_device_adv.tx_power
+        _details = {"scanner_specific_data": "test"}
+        _now = monotonic_time_coarse()
+
+        for adv in advs:
+            scanner._async_on_advertisement(
+                _address,
+                _rssi,
+                _name,
+                _service_uuids,
+                _service_data,
+                adv.manufacturer_data,
+                _tx_power,
+                _details,
+                _now,
+            )
+
+    benchmark(run)
+
+    cancel()
+    unsetup()
