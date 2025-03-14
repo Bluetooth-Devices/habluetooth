@@ -294,10 +294,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
     ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
         """Return a list of discovered devices and advertisement data."""
         return {
-            address: (
-                info.device,
-                info.advertisement,
-            )
+            address: (info.device, info.advertisement)
             for address, info in self._previous_info.items()
         }
 
