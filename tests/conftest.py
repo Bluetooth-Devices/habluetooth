@@ -172,7 +172,7 @@ def two_adapters_fixture():
 
 
 @pytest.fixture(name="macos_adapter")
-def macos_adapter() -> Generator[None]:
+def macos_adapter() -> Generator[None, None, None]:
     """Fixture that mocks the macos adapter."""
     with (
         patch("bleak.get_platform_scanner_backend_type"),
