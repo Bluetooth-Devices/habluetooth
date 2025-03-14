@@ -45,7 +45,7 @@ def _dict_subset(super_dict: dict[Any, bytes], sub_dict: dict[Any, bytes]) -> bo
         if key not in super_dict:
             return False
         super_value = super_dict[key]
-        if super_value != sub_value:
+        if super_value is _EMPTY_BYTES or super_value != sub_value:
             return False
     return True
 
