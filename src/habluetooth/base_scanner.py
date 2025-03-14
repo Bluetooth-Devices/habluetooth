@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Final, Iterable, final
@@ -284,29 +285,40 @@ class BaseHaRemoteScanner(BaseHaScanner):
         return DiscoveredDeviceAdvertisementData(
             self.connectable,
             self._expire_seconds,
-            self._discovered_device_advertisement_datas,
-            self._discovered_device_timestamps,
+            self._build_discovered_device_advertisement_datas(),
+            self._build_discovered_device_timestamps(),
         )
-
-    @property
-    def _discovered_device_advertisement_datas(
-        self,
-    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
-        """Return a list of discovered devices and advertisement data."""
-        return {
-            address: (
-                service_info.device,
-                service_info.advertisement,
-            )
-            for address, service_info in self._previous_service_info.items()
-        }
 
     @property
     def _discovered_device_timestamps(self) -> dict[str, float]:
         """Return a dict of discovered device timestamps."""
+        warnings.warn(
+            "BaseHaRemoteScanner._discovered_device_timestamps is deprecated "
+            "and will be removed in a future version of habluetooth, use "
+            "BaseHaRemoteScanner.discovered_device_timestamps instead",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return self._build_discovered_device_timestamps()
+
+    @property
+    def discovered_device_timestamps(self) -> dict[str, float]:
+        """Return a dict of discovered device timestamps."""
+        return self._build_discovered_device_timestamps()
+
+    def _build_discovered_device_advertisement_datas(
+        self,
+    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
+        """Return a list of discovered devices and advertisement data."""
         return {
-            address: service_info.time
-            for address, service_info in self._previous_service_info.items()
+            address: (info.device, info._advertisement_internal())
+            for address, info in self._previous_service_info.items()
+        }
+
+    def _build_discovered_device_timestamps(self) -> dict[str, float]:
+        """Return a dict of discovered device timestamps."""
+        return {
+            address: info.time for address, info in self._previous_service_info.items()
         }
 
     def _cancel_expire_devices(self) -> None:
@@ -367,7 +379,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self,
     ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
         """Return a list of discovered devices and advertisement data."""
-        return self._discovered_device_advertisement_datas
+        return self._build_discovered_device_advertisement_datas()
 
     @property
     def discovered_addresses(self) -> Iterable[str]:
@@ -487,7 +499,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""
         now = monotonic_time_coarse()
-        discovered_device_timestamps = self._discovered_device_timestamps
+        discovered_device_timestamps = self._build_discovered_device_timestamps()
         return await super().async_diagnostics() | {
             "discovered_device_timestamps": discovered_device_timestamps,
             "time_since_last_device_detection": {

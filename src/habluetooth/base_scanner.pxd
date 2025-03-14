@@ -71,3 +71,9 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
 
     @cython.locals(info=BluetoothServiceInfoBleak)
     cpdef tuple get_discovered_device_advertisement_data(self, str address)
+
+    @cython.locals(info=BluetoothServiceInfoBleak)
+    cdef dict _build_discovered_device_advertisement_datas(self)
+
+    @cython.locals(info=BluetoothServiceInfoBleak)
+    cdef dict _build_discovered_device_timestamps(self)

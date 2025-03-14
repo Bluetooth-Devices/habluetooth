@@ -1,5 +1,6 @@
 """Tests for the manager."""
 
+import asyncio
 import time
 from datetime import timedelta
 from typing import Any
@@ -11,7 +12,11 @@ from bluetooth_adapters.systems.linux import LinuxAdapters
 from freezegun import freeze_time
 
 from habluetooth import (
+    FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
+    TRACKER_BUFFERING_WOBBLE_SECONDS,
+    UNAVAILABLE_TRACK_SECONDS,
     BluetoothManager,
+    BluetoothServiceInfoBleak,
     HaBluetoothSlotAllocations,
     HaScannerRegistration,
     HaScannerRegistrationEvent,
@@ -20,13 +25,20 @@ from habluetooth import (
 )
 
 from . import (
+    HCI0_SOURCE_ADDRESS,
+    HCI1_SOURCE_ADDRESS,
     async_fire_time_changed,
     generate_advertisement_data,
     generate_ble_device,
     inject_advertisement_with_source,
+    inject_advertisement_with_time_and_source,
+    inject_advertisement_with_time_and_source_connectable,
+    patch_bluetooth_time,
     utcnow,
 )
 from .conftest import FakeBluetoothAdapters, FakeScanner
+
+SOURCE_LOCAL = "local"
 
 
 @pytest.mark.asyncio
@@ -471,3 +483,734 @@ async def test_diagnostics(register_hci0_scanner: None) -> None:
             "manager": False,
         },
     }
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_advertisements_do_not_switch_adapters_for_no_reason(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Test we only switch adapters when needed."""
+    address = "44:44:33:11:23:12"
+
+    switchbot_device_signal_100 = generate_ble_device(
+        address, "wohand_signal_100", rssi=-100
+    )
+    switchbot_adv_signal_100 = generate_advertisement_data(
+        local_name="wohand_signal_100", service_uuids=[]
+    )
+    inject_advertisement_with_source(
+        switchbot_device_signal_100, switchbot_adv_signal_100, HCI0_SOURCE_ADDRESS
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_signal_100
+    )
+
+    switchbot_device_signal_99 = generate_ble_device(
+        address, "wohand_signal_99", rssi=-99
+    )
+    switchbot_adv_signal_99 = generate_advertisement_data(
+        local_name="wohand_signal_99", service_uuids=[]
+    )
+    inject_advertisement_with_source(
+        switchbot_device_signal_99, switchbot_adv_signal_99, HCI0_SOURCE_ADDRESS
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_signal_99
+    )
+
+    switchbot_device_signal_98 = generate_ble_device(
+        address, "wohand_good_signal", rssi=-98
+    )
+    switchbot_adv_signal_98 = generate_advertisement_data(
+        local_name="wohand_good_signal", service_uuids=[]
+    )
+    inject_advertisement_with_source(
+        switchbot_device_signal_98, switchbot_adv_signal_98, HCI1_SOURCE_ADDRESS
+    )
+
+    # should not switch to hci1
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_signal_99
+    )
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_switching_adapters_based_on_rssi(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Test switching adapters based on rssi."""
+    address = "44:44:33:11:23:45"
+
+    switchbot_device_poor_signal = generate_ble_device(address, "wohand_poor_signal")
+    switchbot_adv_poor_signal = generate_advertisement_data(
+        local_name="wohand_poor_signal", service_uuids=[], rssi=-100
+    )
+    inject_advertisement_with_source(
+        switchbot_device_poor_signal,
+        switchbot_adv_poor_signal,
+        HCI0_SOURCE_ADDRESS,
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal
+    )
+
+    switchbot_device_good_signal = generate_ble_device(address, "wohand_good_signal")
+    switchbot_adv_good_signal = generate_advertisement_data(
+        local_name="wohand_good_signal", service_uuids=[], rssi=-60
+    )
+    inject_advertisement_with_source(
+        switchbot_device_good_signal,
+        switchbot_adv_good_signal,
+        HCI1_SOURCE_ADDRESS,
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_good_signal
+    )
+
+    inject_advertisement_with_source(
+        switchbot_device_good_signal,
+        switchbot_adv_poor_signal,
+        HCI0_SOURCE_ADDRESS,
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_good_signal
+    )
+
+    # We should not switch adapters unless the signal hits the threshold
+    switchbot_device_similar_signal = generate_ble_device(
+        address, "wohand_similar_signal"
+    )
+    switchbot_adv_similar_signal = generate_advertisement_data(
+        local_name="wohand_similar_signal", service_uuids=[], rssi=-62
+    )
+
+    inject_advertisement_with_source(
+        switchbot_device_similar_signal,
+        switchbot_adv_similar_signal,
+        HCI0_SOURCE_ADDRESS,
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_good_signal
+    )
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_switching_adapters_based_on_zero_rssi(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Test switching adapters based on zero rssi."""
+    address = "44:44:33:11:23:45"
+
+    switchbot_device_no_rssi = generate_ble_device(address, "wohand_poor_signal")
+    switchbot_adv_no_rssi = generate_advertisement_data(
+        local_name="wohand_no_rssi", service_uuids=[], rssi=0
+    )
+    inject_advertisement_with_source(
+        switchbot_device_no_rssi, switchbot_adv_no_rssi, HCI0_SOURCE_ADDRESS
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_no_rssi
+    )
+
+    switchbot_device_good_signal = generate_ble_device(address, "wohand_good_signal")
+    switchbot_adv_good_signal = generate_advertisement_data(
+        local_name="wohand_good_signal", service_uuids=[], rssi=-60
+    )
+    inject_advertisement_with_source(
+        switchbot_device_good_signal,
+        switchbot_adv_good_signal,
+        HCI1_SOURCE_ADDRESS,
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_good_signal
+    )
+
+    inject_advertisement_with_source(
+        switchbot_device_good_signal, switchbot_adv_no_rssi, HCI0_SOURCE_ADDRESS
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_good_signal
+    )
+
+    # We should not switch adapters unless the signal hits the threshold
+    switchbot_device_similar_signal = generate_ble_device(
+        address, "wohand_similar_signal"
+    )
+    switchbot_adv_similar_signal = generate_advertisement_data(
+        local_name="wohand_similar_signal", service_uuids=[], rssi=-62
+    )
+
+    inject_advertisement_with_source(
+        switchbot_device_similar_signal,
+        switchbot_adv_similar_signal,
+        HCI0_SOURCE_ADDRESS,
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_good_signal
+    )
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_switching_adapters_based_on_stale(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Test switching adapters based on the previous advertisement being stale."""
+    address = "44:44:33:11:23:41"
+    start_time_monotonic = 50.0
+
+    switchbot_device_poor_signal_hci0 = generate_ble_device(
+        address, "wohand_poor_signal_hci0"
+    )
+    switchbot_adv_poor_signal_hci0 = generate_advertisement_data(
+        local_name="wohand_poor_signal_hci0", service_uuids=[], rssi=-100
+    )
+    inject_advertisement_with_time_and_source(
+        switchbot_device_poor_signal_hci0,
+        switchbot_adv_poor_signal_hci0,
+        start_time_monotonic,
+        HCI0_SOURCE_ADDRESS,
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal_hci0
+    )
+
+    switchbot_device_poor_signal_hci1 = generate_ble_device(
+        address, "wohand_poor_signal_hci1"
+    )
+    switchbot_adv_poor_signal_hci1 = generate_advertisement_data(
+        local_name="wohand_poor_signal_hci1", service_uuids=[], rssi=-99
+    )
+    inject_advertisement_with_time_and_source(
+        switchbot_device_poor_signal_hci1,
+        switchbot_adv_poor_signal_hci1,
+        start_time_monotonic,
+        HCI1_SOURCE_ADDRESS,
+    )
+
+    # Should not switch adapters until the advertisement is stale
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal_hci0
+    )
+
+    # Should switch to hci1 since the previous advertisement is stale
+    # even though the signal is poor because the device is now
+    # likely unreachable via hci0
+    inject_advertisement_with_time_and_source(
+        switchbot_device_poor_signal_hci1,
+        switchbot_adv_poor_signal_hci1,
+        start_time_monotonic + FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS + 1,
+        "hci1",
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal_hci1
+    )
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_switching_adapters_based_on_stale_with_discovered_interval(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Test switching with discovered interval."""
+    address = "44:44:33:11:23:41"
+    start_time_monotonic = 50.0
+
+    switchbot_device_poor_signal_hci0 = generate_ble_device(
+        address, "wohand_poor_signal_hci0"
+    )
+    switchbot_adv_poor_signal_hci0 = generate_advertisement_data(
+        local_name="wohand_poor_signal_hci0", service_uuids=[], rssi=-100
+    )
+    inject_advertisement_with_time_and_source(
+        switchbot_device_poor_signal_hci0,
+        switchbot_adv_poor_signal_hci0,
+        start_time_monotonic,
+        HCI0_SOURCE_ADDRESS,
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal_hci0
+    )
+
+    get_manager().async_set_fallback_availability_interval(address, 10)
+
+    switchbot_device_poor_signal_hci1 = generate_ble_device(
+        address, "wohand_poor_signal_hci1"
+    )
+    switchbot_adv_poor_signal_hci1 = generate_advertisement_data(
+        local_name="wohand_poor_signal_hci1", service_uuids=[], rssi=-99
+    )
+    inject_advertisement_with_time_and_source(
+        switchbot_device_poor_signal_hci1,
+        switchbot_adv_poor_signal_hci1,
+        start_time_monotonic,
+        HCI1_SOURCE_ADDRESS,
+    )
+
+    # Should not switch adapters until the advertisement is stale
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal_hci0
+    )
+
+    inject_advertisement_with_time_and_source(
+        switchbot_device_poor_signal_hci1,
+        switchbot_adv_poor_signal_hci1,
+        start_time_monotonic + 10 + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+
+    # Should not switch yet since we are not within the
+    # wobble period
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal_hci0
+    )
+
+    inject_advertisement_with_time_and_source(
+        switchbot_device_poor_signal_hci1,
+        switchbot_adv_poor_signal_hci1,
+        start_time_monotonic + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+    # Should switch to hci1 since the previous advertisement is stale
+    # even though the signal is poor because the device is now
+    # likely unreachable via hci0
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal_hci1
+    )
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_switching_adapters_based_on_rssi_connectable_to_non_connectable(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Test switching adapters based on rssi from connectable to non connectable."""
+    address = "44:44:33:11:23:45"
+    now = time.monotonic()
+    switchbot_device_poor_signal = generate_ble_device(address, "wohand_poor_signal")
+    switchbot_adv_poor_signal = generate_advertisement_data(
+        local_name="wohand_poor_signal", service_uuids=[], rssi=-100
+    )
+    inject_advertisement_with_time_and_source_connectable(
+        switchbot_device_poor_signal,
+        switchbot_adv_poor_signal,
+        now,
+        HCI0_SOURCE_ADDRESS,
+        True,
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, False)
+        is switchbot_device_poor_signal
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal
+    )
+    switchbot_device_good_signal = generate_ble_device(address, "wohand_good_signal")
+    switchbot_adv_good_signal = generate_advertisement_data(
+        local_name="wohand_good_signal", service_uuids=[], rssi=-60
+    )
+    inject_advertisement_with_time_and_source_connectable(
+        switchbot_device_good_signal,
+        switchbot_adv_good_signal,
+        now,
+        "hci1",
+        False,
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, False)
+        is switchbot_device_good_signal
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal
+    )
+    inject_advertisement_with_time_and_source_connectable(
+        switchbot_device_good_signal,
+        switchbot_adv_poor_signal,
+        now,
+        "hci0",
+        False,
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, False)
+        is switchbot_device_good_signal
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal
+    )
+    switchbot_device_excellent_signal = generate_ble_device(
+        address, "wohand_excellent_signal"
+    )
+    switchbot_adv_excellent_signal = generate_advertisement_data(
+        local_name="wohand_excellent_signal", service_uuids=[], rssi=-25
+    )
+
+    inject_advertisement_with_time_and_source_connectable(
+        switchbot_device_excellent_signal,
+        switchbot_adv_excellent_signal,
+        now,
+        "hci2",
+        False,
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, False)
+        is switchbot_device_excellent_signal
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal
+    )
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_connectable_advertisement_can_be_retrieved_best_path_is_non_connectable(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    Test we can still get a connectable BLEDevice when the best path is non-connectable.
+
+    In this case the device is closer to a non-connectable scanner, but the
+    at least one connectable scanner has the device in range.
+    """
+    address = "44:44:33:11:23:45"
+    now = time.monotonic()
+    switchbot_device_good_signal = generate_ble_device(address, "wohand_good_signal")
+    switchbot_adv_good_signal = generate_advertisement_data(
+        local_name="wohand_good_signal", service_uuids=[], rssi=-60
+    )
+    inject_advertisement_with_time_and_source_connectable(
+        switchbot_device_good_signal,
+        switchbot_adv_good_signal,
+        now,
+        HCI1_SOURCE_ADDRESS,
+        False,
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, False)
+        is switchbot_device_good_signal
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is None
+
+    switchbot_device_poor_signal = generate_ble_device(address, "wohand_poor_signal")
+    switchbot_adv_poor_signal = generate_advertisement_data(
+        local_name="wohand_poor_signal", service_uuids=[], rssi=-100
+    )
+    inject_advertisement_with_time_and_source_connectable(
+        switchbot_device_poor_signal,
+        switchbot_adv_poor_signal,
+        now,
+        HCI0_SOURCE_ADDRESS,
+        True,
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, False)
+        is switchbot_device_good_signal
+    )
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal
+    )
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_switching_adapters_when_one_goes_away(
+    register_hci0_scanner: None,
+) -> None:
+    """Test switching adapters when one goes away."""
+    cancel_hci2 = get_manager().async_register_scanner(FakeScanner("hci2", "hci2"))
+
+    address = "44:44:33:11:23:45"
+
+    switchbot_device_good_signal = generate_ble_device(address, "wohand_good_signal")
+    switchbot_adv_good_signal = generate_advertisement_data(
+        local_name="wohand_good_signal", service_uuids=[], rssi=-60
+    )
+    inject_advertisement_with_source(
+        switchbot_device_good_signal, switchbot_adv_good_signal, "hci2"
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_good_signal
+    )
+
+    switchbot_device_poor_signal = generate_ble_device(address, "wohand_poor_signal")
+    switchbot_adv_poor_signal = generate_advertisement_data(
+        local_name="wohand_poor_signal", service_uuids=[], rssi=-100
+    )
+    inject_advertisement_with_source(
+        switchbot_device_poor_signal,
+        switchbot_adv_poor_signal,
+        HCI0_SOURCE_ADDRESS,
+    )
+
+    # We want to prefer the good signal when we have options
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_good_signal
+    )
+
+    cancel_hci2()
+
+    inject_advertisement_with_source(
+        switchbot_device_poor_signal,
+        switchbot_adv_poor_signal,
+        HCI0_SOURCE_ADDRESS,
+    )
+
+    # Now that hci2 is gone, we should prefer the poor signal
+    # since no poor signal is better than no signal
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal
+    )
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_switching_adapters_when_one_stop_scanning(
+    register_hci0_scanner: None,
+) -> None:
+    """Test switching adapters when stops scanning."""
+    hci2_scanner = FakeScanner("hci2", "hci2")
+    cancel_hci2 = get_manager().async_register_scanner(hci2_scanner)
+
+    address = "44:44:33:11:23:45"
+
+    switchbot_device_good_signal = generate_ble_device(address, "wohand_good_signal")
+    switchbot_adv_good_signal = generate_advertisement_data(
+        local_name="wohand_good_signal", service_uuids=[], rssi=-60
+    )
+    inject_advertisement_with_source(
+        switchbot_device_good_signal, switchbot_adv_good_signal, "hci2"
+    )
+
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_good_signal
+    )
+
+    switchbot_device_poor_signal = generate_ble_device(address, "wohand_poor_signal")
+    switchbot_adv_poor_signal = generate_advertisement_data(
+        local_name="wohand_poor_signal", service_uuids=[], rssi=-100
+    )
+    inject_advertisement_with_source(
+        switchbot_device_poor_signal,
+        switchbot_adv_poor_signal,
+        HCI0_SOURCE_ADDRESS,
+    )
+
+    # We want to prefer the good signal when we have options
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_good_signal
+    )
+
+    hci2_scanner.scanning = False
+
+    inject_advertisement_with_source(
+        switchbot_device_poor_signal,
+        switchbot_adv_poor_signal,
+        HCI0_SOURCE_ADDRESS,
+    )
+
+    # Now that hci2 has stopped scanning, we should prefer the poor signal
+    # since poor signal is better than no signal
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal
+    )
+
+    cancel_hci2()
+
+
+@pytest.mark.usefixtures("enable_bluetooth", "macos_adapter")
+@pytest.mark.asyncio
+async def test_set_fallback_interval_small() -> None:
+    """Test we can set the fallback advertisement interval."""
+    assert (
+        get_manager().async_get_fallback_availability_interval("44:44:33:11:23:12")
+        is None
+    )
+
+    get_manager().async_set_fallback_availability_interval("44:44:33:11:23:12", 2.0)
+    assert (
+        get_manager().async_get_fallback_availability_interval("44:44:33:11:23:12")
+        == 2.0
+    )
+
+    start_monotonic_time = time.monotonic()
+    switchbot_device = generate_ble_device("44:44:33:11:23:12", "wohand")
+    switchbot_adv = generate_advertisement_data(
+        local_name="wohand", service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
+    )
+    switchbot_device_went_unavailable = False
+
+    inject_advertisement_with_time_and_source(
+        switchbot_device,
+        switchbot_adv,
+        start_monotonic_time,
+        SOURCE_LOCAL,
+    )
+
+    def _switchbot_device_unavailable_callback(
+        _address: BluetoothServiceInfoBleak,
+    ) -> None:
+        """Switchbot device unavailable callback."""
+        nonlocal switchbot_device_went_unavailable
+        switchbot_device_went_unavailable = True
+
+    assert (
+        get_manager().async_get_learned_advertising_interval("44:44:33:11:23:12")
+        is None
+    )
+
+    switchbot_device_unavailable_cancel = get_manager().async_track_unavailable(
+        _switchbot_device_unavailable_callback,
+        switchbot_device.address,
+        connectable=False,
+    )
+
+    monotonic_now = start_monotonic_time + 2
+    with patch_bluetooth_time(
+        monotonic_now + UNAVAILABLE_TRACK_SECONDS,
+    ):
+        async_fire_time_changed(utcnow() + timedelta(seconds=UNAVAILABLE_TRACK_SECONDS))
+        await asyncio.sleep(0)
+
+    assert switchbot_device_went_unavailable is True
+    switchbot_device_unavailable_cancel()
+
+    # We should forget fallback interval after it expires
+    assert (
+        get_manager().async_get_fallback_availability_interval("44:44:33:11:23:12")
+        is None
+    )
+
+
+@pytest.mark.usefixtures("enable_bluetooth", "macos_adapter")
+@pytest.mark.asyncio
+async def test_set_fallback_interval_big() -> None:
+    """Test we can set the fallback advertisement interval."""
+    assert (
+        get_manager().async_get_fallback_availability_interval("44:44:33:11:23:12")
+        is None
+    )
+
+    # Force the interval to be really big and check it doesn't expire using the default
+    # timeout (900)
+
+    get_manager().async_set_fallback_availability_interval(
+        "44:44:33:11:23:12", 604800.0
+    )
+    assert (
+        get_manager().async_get_fallback_availability_interval("44:44:33:11:23:12")
+        == 604800.0
+    )
+
+    start_monotonic_time = time.monotonic()
+    switchbot_device = generate_ble_device("44:44:33:11:23:12", "wohand")
+    switchbot_adv = generate_advertisement_data(
+        local_name="wohand", service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
+    )
+    switchbot_device_went_unavailable = False
+
+    inject_advertisement_with_time_and_source(
+        switchbot_device,
+        switchbot_adv,
+        start_monotonic_time,
+        SOURCE_LOCAL,
+    )
+
+    def _switchbot_device_unavailable_callback(
+        _address: BluetoothServiceInfoBleak,
+    ) -> None:
+        """Switchbot device unavailable callback."""
+        nonlocal switchbot_device_went_unavailable
+        switchbot_device_went_unavailable = True
+
+    assert (
+        get_manager().async_get_learned_advertising_interval("44:44:33:11:23:12")
+        is None
+    )
+
+    switchbot_device_unavailable_cancel = get_manager().async_track_unavailable(
+        _switchbot_device_unavailable_callback,
+        switchbot_device.address,
+        connectable=False,
+    )
+
+    # Check that device hasn't expired after a day
+
+    monotonic_now = start_monotonic_time + 86400
+    with patch_bluetooth_time(
+        monotonic_now + UNAVAILABLE_TRACK_SECONDS,
+    ):
+        async_fire_time_changed(utcnow() + timedelta(seconds=UNAVAILABLE_TRACK_SECONDS))
+        await asyncio.sleep(0)
+
+    assert switchbot_device_went_unavailable is False
+
+    # Try again after it has expired
+
+    monotonic_now = start_monotonic_time + 604800
+    with patch_bluetooth_time(
+        monotonic_now + UNAVAILABLE_TRACK_SECONDS,
+    ):
+        async_fire_time_changed(utcnow() + timedelta(seconds=UNAVAILABLE_TRACK_SECONDS))
+        await asyncio.sleep(0)
+
+    assert switchbot_device_went_unavailable is True
+
+    switchbot_device_unavailable_cancel()  # type: ignore[unreachable]
+
+    # We should forget fallback interval after it expires
+    assert (
+        get_manager().async_get_fallback_availability_interval("44:44:33:11:23:12")
+        is None
+    )
