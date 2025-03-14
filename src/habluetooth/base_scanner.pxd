@@ -12,7 +12,7 @@ cdef bint TYPE_CHECKING
 
 cdef bytes _EMPTY_BYTES
 
-@cython.locals(super_value=bytes, sub_value=dict)
+@cython.locals(super_value=bytes, sub_value=bytes)
 cdef bint _dict_subset(dict super_dict, dict sub_dict)
 
 cdef class BaseHaScanner:
