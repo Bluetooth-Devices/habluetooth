@@ -13,6 +13,9 @@ from habluetooth.models import BluetoothServiceInfoBleak
 
 utcnow = partial(datetime.now, timezone.utc)
 
+HCI0_SOURCE_ADDRESS = "AA:BB:CC:DD:EE:00"
+HCI1_SOURCE_ADDRESS = "AA:BB:CC:DD:EE:11"
+NON_CONNECTABLE_REMOTE_SOURCE_ADDRESS = "AA:BB:CC:DD:EE:FF"
 
 _MONOTONIC_RESOLUTION = time.get_clock_info("monotonic").resolution
 

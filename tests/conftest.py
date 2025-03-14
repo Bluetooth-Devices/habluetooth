@@ -158,6 +158,24 @@ def two_adapters_fixture():
         yield
 
 
+@pytest.fixture(name="macos_adapter")
+def macos_adapter() -> Generator[None]:
+    """Fixture that mocks the macos adapter."""
+    with (
+        patch("bleak.get_platform_scanner_backend_type"),
+        patch(
+            "habluetooth.scanner.platform.system",
+            return_value="Darwin",
+        ),
+        patch(
+            "bluetooth_adapters.systems.platform.system",
+            return_value="Darwin",
+        ),
+        patch("habluetooth.scanner.SYSTEM", "Darwin"),
+    ):
+        yield
+
+
 @pytest.fixture
 def register_hci0_scanner() -> Generator[None, None, None]:
     """Register an hci0 scanner."""
