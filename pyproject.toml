@@ -1,6 +1,6 @@
 [project]
 name = "habluetooth"
-version = "3.26.0"
+version = "3.27.0"
 license.text = "Apache-2.0"
 description = "High availability Bluetooth"
 authors = [{ name = "J. Nick Koston", email = "bluetooth@koston.org" }]

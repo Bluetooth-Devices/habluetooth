@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.27.0 (2025-03-14)
+
+### Features
+
+
+- Improve performance of base_scanner (#168) ([`5b8c59c`](https://github.com/Bluetooth-Devices/habluetooth/commit/5b8c59c7ffadead5997fa457b07ff37ec8ec31b5))
+
+
 ## v3.26.0 (2025-03-14)
 
 ### Features
