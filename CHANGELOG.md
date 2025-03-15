@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.29.0 (2025-03-15)
+
+### Features
+
+
+- Improve performance for device with large manufacturer data history (#170) ([`ec1f6aa`](https://github.com/Bluetooth-Devices/habluetooth/commit/ec1f6aa7989cea2a589029362461dba4f7a8f0db))
+
+
 ## v3.28.0 (2025-03-15)
 
 ### Features
