@@ -1214,3 +1214,39 @@ async def test_set_fallback_interval_big() -> None:
         get_manager().async_get_fallback_availability_interval("44:44:33:11:23:12")
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_subclassing_bluetooth_manager(caplog: pytest.LogCaptureFixture) -> None:
+    """Test subclassing BluetoothManager."""
+    slot_manager = BleakSlotManager()
+    bluetooth_adapters = FakeBluetoothAdapters()
+
+    class TestBluetoothManager(BluetoothManager):
+        """
+        Test class for BluetoothManager.
+
+        This class implements _discover_service_info.
+        """
+
+        def _discover_service_info(
+            self, service_info: BluetoothServiceInfoBleak
+        ) -> None:
+            """
+            Discover a new service info.
+
+            This method is intended to be overridden by subclasses.
+            """
+
+    TestBluetoothManager(bluetooth_adapters, slot_manager)
+    assert "does not implement _discover_service_info" not in caplog.text
+
+    class TestBluetoothManager2(BluetoothManager):
+        """
+        Test class for BluetoothManager.
+
+        This class does not implement _discover_service_info.
+        """
+
+    TestBluetoothManager2(bluetooth_adapters, slot_manager)
+    assert "does not implement _discover_service_info" in caplog.text

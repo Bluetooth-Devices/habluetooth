@@ -135,6 +135,7 @@ class BluetoothManager:
         "_unavailable_callbacks",
         "shutdown",
         "slot_manager",
+        "_subclass_discover_info",
     )
 
     def __init__(
@@ -184,6 +185,17 @@ class BluetoothManager:
         self._scanner_registration_callbacks: dict[
             str | None, set[Callable[[HaScannerRegistration], None]]
         ] = {}
+        self._subclass_discover_info = self._discover_service_info
+        if (
+            self._discover_service_info.__func__  # type: ignore[attr-defined]
+            is BluetoothManager._discover_service_info
+        ):
+            _LOGGER.warning(
+                "%s: does not implement _discover_service_info, "
+                "subclasses must implement this method to consume "
+                "discovery data",
+                type(self).__name__,
+            )
 
     @property
     def supports_passive_scan(self) -> bool:
@@ -639,7 +651,7 @@ class BluetoothManager:
                     bleak_callback, service_info.device, advertisement_data
                 )
 
-        self._discover_service_info(service_info)
+        self._subclass_discover_info(service_info)
 
     def _discover_service_info(self, service_info: BluetoothServiceInfoBleak) -> None:
         """
