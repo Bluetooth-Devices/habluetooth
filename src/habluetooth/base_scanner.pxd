@@ -10,6 +10,9 @@ cdef object AdvertisementData
 cdef object BLEDevice
 cdef bint TYPE_CHECKING
 
+@cython.locals(sub_value=bytes, super_value=bytes)
+cdef bint _dict_subset(dict super_dict, dict sub_dict)
+
 cdef class BaseHaScanner:
 
     cdef public str adapter

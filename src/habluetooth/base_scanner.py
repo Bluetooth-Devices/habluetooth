@@ -37,6 +37,14 @@ _int = int
 _str = str
 
 
+def _dict_subset(super_dict: dict[Any, bytes], sub_dict: dict[Any, bytes]) -> bool:
+    """Return True if sub_dict is a subset of super_dict."""
+    for key, sub_value in sub_dict.items():
+        if (super_value := super_dict.get(key)) is None or super_value != sub_value:
+            return False
+    return True
+
+
 class BaseHaScanner:
     """Base class for high availability BLE scanners."""
 
@@ -464,15 +472,14 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 info.service_uuids = service_uuids
 
             has_service_data = bool(service_data)
-            if (
-                has_service_data
-                and service_data is not prev_info.service_data
-                and service_data != prev_info.service_data
-            ):
-                info.service_data = {
-                    **prev_info.service_data,
-                    **service_data,
-                }
+            if has_service_data and service_data is not prev_info.service_data:
+                if _dict_subset(prev_info.service_data, service_data):
+                    info.service_data = prev_info.service_data
+                else:
+                    info.service_data = {
+                        **prev_info.service_data,
+                        **service_data,
+                    }
             elif not has_service_data:
                 info.service_data = prev_info.service_data
             else:
@@ -482,12 +489,14 @@ class BaseHaRemoteScanner(BaseHaScanner):
             if (
                 has_manufacturer_data
                 and manufacturer_data is not prev_info.manufacturer_data
-                and manufacturer_data != prev_info.manufacturer_data
             ):
-                info.manufacturer_data = {
-                    **prev_info.manufacturer_data,
-                    **manufacturer_data,
-                }
+                if _dict_subset(prev_info.manufacturer_data, manufacturer_data):
+                    info.manufacturer_data = prev_info.manufacturer_data
+                else:
+                    info.manufacturer_data = {
+                        **prev_info.manufacturer_data,
+                        **manufacturer_data,
+                    }
             elif not has_manufacturer_data:
                 info.manufacturer_data = prev_info.manufacturer_data
             else:
