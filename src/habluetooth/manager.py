@@ -186,7 +186,10 @@ class BluetoothManager:
             str | None, set[Callable[[HaScannerRegistration], None]]
         ] = {}
         self._subclass_discover_info = self._discover_service_info
-        if self._discover_service_info is BluetoothManager._discover_service_info:
+        if (
+            self._discover_service_info.__func__  # type: ignore[attr-defined]
+            is BluetoothManager._discover_service_info
+        ):
             _LOGGER.warning("%s does not implement _discover_service_info", type(self))
 
     @property
