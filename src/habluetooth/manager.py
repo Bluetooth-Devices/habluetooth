@@ -190,7 +190,12 @@ class BluetoothManager:
             self._discover_service_info.__func__  # type: ignore[attr-defined]
             is BluetoothManager._discover_service_info
         ):
-            _LOGGER.warning("%s does not implement _discover_service_info", type(self))
+            _LOGGER.warning(
+                "%s: does not implement _discover_service_info, "
+                "subclasses must implement this method to consume "
+                "discovery data",
+                type(self).__name__,
+            )
 
     @property
     def supports_passive_scan(self) -> bool:
