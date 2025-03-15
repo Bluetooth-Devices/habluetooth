@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.28.0 (2025-03-15)
+
+### Features
+
+
+- Improve performance of local name checks (#173) ([`9f57d2f`](https://github.com/Bluetooth-Devices/habluetooth/commit/9f57d2fcc23595b376d5785162c21633514f44bd))
+
+
 ## v3.27.0 (2025-03-14)
 
 ### Features
