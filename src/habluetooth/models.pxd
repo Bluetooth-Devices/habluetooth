@@ -8,7 +8,9 @@ cdef object _int
 cdef object _str
 cdef object _BluetoothServiceInfoBleakSelfT
 cdef object _BluetoothServiceInfoSelfT
+cdef object NO_RSSI_VALUE
 
+cdef object TUPLE_NEW
 
 cdef class BluetoothServiceInfo:
     """Prepared info from bluetooth entries."""

@@ -23,6 +23,7 @@ _BluetoothServiceInfoBleakSelfT = TypeVar(
     "_BluetoothServiceInfoBleakSelfT", bound="BluetoothServiceInfoBleak"
 )
 SOURCE_LOCAL: Final = "local"
+TUPLE_NEW: Final = tuple.__new__
 
 _float = float  # avoid cython conversion since we always want a pyfloat
 _str = str  # avoid cython conversion since we always want a pystr
@@ -215,7 +216,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         Internal method only to be used by this library.
         """
         if self._advertisement is None:
-            self._advertisement = tuple.__new__(
+            self._advertisement = TUPLE_NEW(
                 AdvertisementData,
                 (
                     None if self.name == "" or self.name == self.address else self.name,
