@@ -316,7 +316,7 @@ async def test_inject_100_different_service_data(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
-async def test_rotating_manufacturer_data(
+async def test_inject_100_rotating_manufacturer_data(
     benchmark: BenchmarkFixture,
 ) -> None:
     """Test injecting 100 different manufacturer_data to mimic a sensor push device."""
@@ -329,7 +329,7 @@ async def test_rotating_manufacturer_data(
         rssi=-60,
     )
     sensor_push_device_adv = generate_advertisement_data(
-        name="",
+        local_name="",
         rssi=-60,
         manufacturer_data={
             17667: b"\xad\x00\x01\x00\x00",
