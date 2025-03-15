@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.30.0 (2025-03-15)
+
+### Features
+
+
+- Improve performance of on demand advertisementdata construction (#179) ([`ab005cb`](https://github.com/Bluetooth-Devices/habluetooth/commit/ab005cbef5e2ece74a0facd502fca7173ba2b1fc))
+
+
 ## v3.29.0 (2025-03-15)
 
 ### Features
