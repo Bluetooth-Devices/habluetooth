@@ -450,7 +450,10 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # pylint: disable-next=protected-access
             info.device._rssi = rssi
             has_local_name = bool(local_name)
-            if prev_name and (not has_local_name or len(prev_name) > len(local_name)):  # type: ignore[arg-type]
+            if prev_name and (
+                not has_local_name
+                or (prev_name is not local_name and len(prev_name) > len(local_name))  # type: ignore[arg-type]
+            ):
                 info.name = prev_name
             else:
                 info.device.name = local_name

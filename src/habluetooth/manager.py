@@ -614,7 +614,10 @@ class BluetoothManager:
                     service_info.service_uuids is not old_service_info.service_uuids
                     and service_info.service_uuids != old_service_info.service_uuids
                 )
-                or service_info.name != old_service_info.name
+                or (
+                    service_info.name is not old_service_info.name
+                    and service_info.name != old_service_info.name
+                )
             )
         ):
             return
