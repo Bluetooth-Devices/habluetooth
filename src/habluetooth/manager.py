@@ -629,9 +629,9 @@ class BluetoothManager:
             # will be called and the device can be discovered.
             service_info = service_info._as_connectable()
 
-        if (service_info.connectable or old_connectable_service_info is not None) and (
-            self._bleak_callbacks is not None
-        ):
+        if (
+            service_info.connectable or old_connectable_service_info is not None
+        ) and self._bleak_callbacks:
             # Bleak callbacks must get a connectable device
             advertisement_data = service_info._advertisement_internal()
             for bleak_callback in self._bleak_callbacks:
