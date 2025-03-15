@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.31.0 (2025-03-15)
+
+### Features
+
+
+- Avoid building on demand advertisementdata if there are no bleak callbacks (#180) ([`ae977b9`](https://github.com/Bluetooth-Devices/habluetooth/commit/ae977b9d53c29c581ff6394a2078d2a2b01066dd))
+
+
 ## v3.30.0 (2025-03-15)
 
 ### Features
