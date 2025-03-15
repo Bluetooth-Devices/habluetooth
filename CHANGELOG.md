@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.32.0 (2025-03-15)
+
+### Features
+
+
+- Improve performance of dispatching discovery info to subclasses (#181) ([`d0fae7d`](https://github.com/Bluetooth-Devices/habluetooth/commit/d0fae7ddd9158903f6621888cc4c75480822ae35))
+
+
 ## v3.31.0 (2025-03-15)
 
 ### Features
