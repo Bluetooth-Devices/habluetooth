@@ -56,7 +56,7 @@ cdef class BluetoothManager:
     cdef public dict _adapter_sources
     cdef public dict _allocations
     cdef public dict _scanner_registration_callbacks
-    cdef public object _parent_discover_info
+    cdef public object _subclass_discover_info
 
     @cython.locals(stale_seconds=double)
     cdef bint _prefer_previous_adv_from_different_source(
