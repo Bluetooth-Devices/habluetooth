@@ -89,7 +89,7 @@ async def test_inject_100_complex_advertisements(benchmark: BenchmarkFixture) ->
         local_name="wohand",
         service_uuids=["050a021a-0000-1000-8000-00805f9b34fb"],
         service_data={"050a021a-0000-1000-8000-00805f9b34fb": b"\n\xff"},
-        manufacturer_data={i: b"\x01" for i in range(100)},
+        manufacturer_data=dict.fromkeys(range(100), b"\x01"),
         rssi=-100,
     )
 
