@@ -132,10 +132,10 @@ class BluetoothManager:
         "_recovery_lock",
         "_scanner_registration_callbacks",
         "_sources",
+        "_subclass_discover_info",
         "_unavailable_callbacks",
         "shutdown",
         "slot_manager",
-        "_subclass_discover_info",
     )
 
     def __init__(
