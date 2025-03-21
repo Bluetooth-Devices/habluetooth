@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.34.1 (2025-03-21)
+
+### Bug fixes
+
+
+- Revert adding _async_on_advertisements (#185) ([`4bc3cb8`](https://github.com/Bluetooth-Devices/habluetooth/commit/4bc3cb89baf52570deec4f27ed3cd935249525ec))
+
+
 ## v3.34.0 (2025-03-21)
 
 ### Features
