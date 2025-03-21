@@ -437,6 +437,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             info.manufacturer_data = manufacturer_data
             info.service_data = service_data
             info.service_uuids = service_uuids
+            info._service_uuids = set(service_uuids)
             info.name = local_name or address
         else:
             # Merge the new data with the old data
