@@ -445,13 +445,12 @@ class BluetoothManager:
 
     def _prefer_previous_adv_from_different_source(
         self,
-        address: _str,
         old: BluetoothServiceInfoBleak,
         new: BluetoothServiceInfoBleak,
     ) -> bool:
         """Prefer previous advertisement from a different source if it is better."""
         if stale_seconds := self._intervals.get(
-            address, self._fallback_intervals.get(address, 0)
+            new.address, self._fallback_intervals.get(new.address, 0)
         ):
             stale_seconds += TRACKER_BUFFERING_WOBBLE_SECONDS
         else:
@@ -460,10 +459,8 @@ class BluetoothManager:
             # If the old advertisement is stale, any new advertisement is preferred
             if self._debug:
                 _LOGGER.debug(
-                    (
-                        "%s (%s): Switching from %s to %s (time elapsed:%s > stale"
-                        " seconds:%s)"
-                    ),
+                    "%s (%s): Switching from %s to %s (time elapsed:%s > stale"
+                    " seconds:%s)",
                     new.name,
                     new.address,
                     self._async_describe_source(old),
@@ -479,12 +476,10 @@ class BluetoothManager:
             # the new one is preferred.
             if self._debug:
                 _LOGGER.debug(
-                    (
-                        "%s (%s): Switching from %s to %s (new rssi:%s - threshold:%s >"
-                        " old rssi:%s)"
-                    ),
+                    "%s (%s): Switching from %s to %s (new rssi:%s - threshold:%s >"
+                    " old rssi:%s)",
                     new.name,
-                    address,
+                    new.address,
                     self._async_describe_source(old),
                     self._async_describe_source(new),
                     new.rssi,
@@ -546,7 +541,7 @@ class BluetoothManager:
             and (scanner := self._sources.get(old_service_info.source)) is not None
             and scanner.scanning
             and self._prefer_previous_adv_from_different_source(
-                service_info.address, old_service_info, service_info
+                old_service_info, service_info
             )
         ):
             # If we are rejecting the new advertisement and the device is connectable
@@ -571,7 +566,6 @@ class BluetoothManager:
                         is not None
                         and connectable_scanner.scanning
                         and self._prefer_previous_adv_from_different_source(
-                            service_info.address,
                             old_connectable_service_info,
                             service_info,
                         )
