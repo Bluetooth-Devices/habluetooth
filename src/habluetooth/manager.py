@@ -503,11 +503,12 @@ class BluetoothManager:
         # Pre-filter noisy apple devices as they can account for 20-35% of the
         # traffic on a typical network.
         if (
-            len(service_info.manufacturer_data) == 1
+            (apple_data := service_info.manufacturer_data.get(APPLE_MFR_ID)) is not None
+            and len(service_info.manufacturer_data) == 1
             and not service_info.service_data
-            and (apple_data := service_info.manufacturer_data.get(APPLE_MFR_ID))
         ):
-            apple_cstr = apple_data
+            apple_bytes = apple_data
+            apple_cstr = apple_bytes
             if apple_cstr[0] not in {
                 APPLE_IBEACON_START_BYTE,
                 APPLE_HOMEKIT_START_BYTE,
