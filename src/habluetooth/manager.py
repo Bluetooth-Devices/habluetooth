@@ -506,7 +506,6 @@ class BluetoothManager:
             not service_info.service_data
             and len(service_info.manufacturer_data) == 1
             and (apple_data := service_info.manufacturer_data.get(APPLE_MFR_ID))
-            is not None
         ):
             apple_cstr = apple_data
             if apple_cstr[0] not in {
