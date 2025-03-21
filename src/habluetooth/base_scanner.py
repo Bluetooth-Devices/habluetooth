@@ -37,10 +37,26 @@ _int = int
 _str = str
 
 
-def _dict_subset(super_dict: dict[Any, bytes], sub_dict: dict[Any, bytes]) -> bool:
+def _manufacturer_data_subset(
+    info: BluetoothServiceInfoBleak, manufacturer_data: dict[Any, bytes]
+) -> bool:
     """Return True if sub_dict is a subset of super_dict."""
-    for key, sub_value in sub_dict.items():
-        if (super_value := super_dict.get(key)) is None or super_value != sub_value:
+    for key, sub_value in manufacturer_data.items():
+        if (
+            super_value := info.manufacturer_data.get(key)
+        ) is None or super_value != sub_value:
+            return False
+    return True
+
+
+def _service_data_subset(
+    info: BluetoothServiceInfoBleak, service_data: dict[Any, bytes]
+) -> bool:
+    """Return True if sub_dict is a subset of super_dict."""
+    for key, sub_value in service_data.items():
+        if (
+            super_value := info.service_data.get(key)
+        ) is None or super_value != sub_value:
             return False
     return True
 
@@ -473,7 +489,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
 
             has_service_data = bool(service_data)
             if has_service_data and service_data is not prev_info.service_data:
-                if _dict_subset(prev_info.service_data, service_data):
+                if _service_data_subset(prev_info, service_data):
                     info.service_data = prev_info.service_data
                 else:
                     info.service_data = {
@@ -490,7 +506,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 has_manufacturer_data
                 and manufacturer_data is not prev_info.manufacturer_data
             ):
-                if _dict_subset(prev_info.manufacturer_data, manufacturer_data):
+                if _manufacturer_data_subset(prev_info, manufacturer_data):
                     info.manufacturer_data = prev_info.manufacturer_data
                 else:
                     info.manufacturer_data = {

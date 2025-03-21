@@ -11,7 +11,11 @@ cdef object BLEDevice
 cdef bint TYPE_CHECKING
 
 @cython.locals(sub_value=bytes, super_value=bytes)
-cdef bint _dict_subset(dict super_dict, dict sub_dict)
+cdef bint _manufacturer_data_subset(BluetoothServiceInfoBleak info, dict manufacturer_data)
+
+@cython.locals(sub_value=bytes, super_value=bytes)
+cdef bint _service_data_subset(BluetoothServiceInfoBleak info, dict service_data)
+
 
 cdef class BaseHaScanner:
 
