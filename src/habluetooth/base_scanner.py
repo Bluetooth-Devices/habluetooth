@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Final, Iterable, final
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bluetooth_adapters import DiscoveredDeviceAdvertisementData, adapter_human_name
-from bluetooth_data_tools import monotonic_time_coarse
+from bluetooth_data_tools import monotonic_time_coarse, parse_advertisement_data_tuple
 
 from .central_manager import get_manager
 from .const import (
@@ -30,11 +30,20 @@ from .models import (
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
+_MONOTONIC_NOW = monotonic_time_coarse
 
 
 _float = float
 _int = int
 _str = str
+
+
+AdvertisementTupleType = tuple[
+    _str,  # address
+    _int,  # rssi
+    tuple[bytes, ...],  # raw_data
+    dict[Any, Any],  # details
+]
 
 
 def _dict_subset(super_dict: dict[Any, bytes], sub_dict: dict[Any, bytes]) -> bool:
@@ -398,6 +407,32 @@ class BaseHaRemoteScanner(BaseHaScanner):
         if (info := self._previous_service_info.get(address)) is not None:
             return info.device, info.advertisement
         return None
+
+    def _async_on_raw_advertisement(
+        self, advertisements: list[AdvertisementTupleType]
+    ) -> None:
+        """
+        Parse multiple advertisement.
+
+        This API is unstable and may be changed in the future
+        without increasing the major version number.
+
+        Do not rely on this API, use the _async_on_advertisement instead.
+        """
+        now = _MONOTONIC_NOW()
+        for address_rssi_raw_details in advertisements:
+            parsed = parse_advertisement_data_tuple(address_rssi_raw_details[2])
+            self._async_on_advertisement(
+                address_rssi_raw_details[0],
+                address_rssi_raw_details[1],
+                parsed[0],
+                parsed[1],
+                parsed[2],
+                parsed[3],
+                parsed[4],
+                address_rssi_raw_details[3],
+                now,
+            )
 
     def _async_on_advertisement(
         self,
