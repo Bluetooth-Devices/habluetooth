@@ -507,7 +507,8 @@ class BluetoothManager:
             and not service_info.service_data
             and (apple_data := service_info.manufacturer_data.get(APPLE_MFR_ID))
         ):
-            if apple_data[0] not in {
+            apple_cstr = apple_data
+            if apple_cstr[0] not in {
                 APPLE_IBEACON_START_BYTE,
                 APPLE_HOMEKIT_START_BYTE,
                 APPLE_HOMEKIT_NOTIFY_START_BYTE,

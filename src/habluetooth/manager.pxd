@@ -79,7 +79,8 @@ cdef class BluetoothManager:
         connectable=bint,
         scanner=BaseHaScanner,
         connectable_scanner=BaseHaScanner,
-        apple_data="const unsigned char*",
+        apple_data=bytes,
+        apple_cstr="const unsigned char *",
         bleak_callback=BleakCallback
     )
     cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
