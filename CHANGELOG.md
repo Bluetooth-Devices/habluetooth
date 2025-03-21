@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.36.0 (2025-03-21)
+
+### Features
+
+
+- Improve performance of filtering apple data (#188) ([`9f56840`](https://github.com/Bluetooth-Devices/habluetooth/commit/9f568405ae987de0fb3953d6ae7b39eabacde9ef))
+
+
 ## v3.35.0 (2025-03-21)
 
 ### Features
