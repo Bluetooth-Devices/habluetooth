@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.37.0 (2025-03-21)
+
+### Features
+
+
+- Improve performance of _prefer_previous_adv_from_different_source (#191) ([`73ec210`](https://github.com/Bluetooth-Devices/habluetooth/commit/73ec2107375be217ffb0310194be8c3d4f20e150))
+
+
 ## v3.36.0 (2025-03-21)
 
 ### Features
