@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.33.0 (2025-03-21)
+
+### Features
+
+
+- Add _async_on_raw_advertisement (#183) ([`24d128f`](https://github.com/Bluetooth-Devices/habluetooth/commit/24d128fe4854135647e9a41c7eeaf1784fbda0bf))
+
+
 ## v3.32.0 (2025-03-15)
 
 ### Features
