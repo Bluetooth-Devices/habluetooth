@@ -30,6 +30,7 @@ from .models import (
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
+_MONOTONIC_NOW = monotonic_time_coarse
 
 
 _float = float
@@ -418,7 +419,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
 
         Do not rely on this API, use the _async_on_advertisement instead.
         """
-        now = monotonic_time_coarse()
+        now = _MONOTONIC_NOW()
         for address_rssi_raw_details in advertisements:
             parsed = parse_advertisement_data_tuple(address_rssi_raw_details[2])
             self._async_on_advertisement(

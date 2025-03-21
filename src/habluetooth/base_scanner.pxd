@@ -4,7 +4,7 @@ import cython
 from .models cimport BluetoothServiceInfoBleak
 from .manager cimport BluetoothManager
 
-cdef object monotonic_time_coarse
+cdef object _MONOTONIC_NOW
 cdef object parse_advertisement_data_tuple
 cdef object NO_RSSI_VALUE
 cdef object BluetoothServiceInfoBleak
