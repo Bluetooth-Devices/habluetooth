@@ -62,13 +62,7 @@ APPLE_HOMEKIT_START_BYTE: Final = 0x06  # homekit_controller
 APPLE_DEVICE_ID_START_BYTE: Final = 0x10  # bluetooth_le_tracker
 APPLE_HOMEKIT_NOTIFY_START_BYTE: Final = 0x11  # homekit_controller
 APPLE_FINDMY_START_BYTE: Final = 0x12  # FindMy network advertisements
-APPLE_START_BYTES_WANTED: Final = {
-    APPLE_IBEACON_START_BYTE,
-    APPLE_HOMEKIT_START_BYTE,
-    APPLE_HOMEKIT_NOTIFY_START_BYTE,
-    APPLE_DEVICE_ID_START_BYTE,
-    APPLE_FINDMY_START_BYTE,
-}
+
 
 _str = str
 
@@ -512,8 +506,14 @@ class BluetoothManager:
             len(service_info.manufacturer_data) == 1
             and not service_info.service_data
             and (apple_data := service_info.manufacturer_data.get(APPLE_MFR_ID))
-            is not None
-            and apple_data[0] not in APPLE_START_BYTES_WANTED
+            and apple_data[0]
+            not in {
+                APPLE_IBEACON_START_BYTE,
+                APPLE_HOMEKIT_START_BYTE,
+                APPLE_HOMEKIT_NOTIFY_START_BYTE,
+                APPLE_DEVICE_ID_START_BYTE,
+                APPLE_FINDMY_START_BYTE,
+            }
         ):
             return
 
