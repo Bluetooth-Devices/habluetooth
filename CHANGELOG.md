@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.35.0 (2025-03-21)
+
+### Features
+
+
+- Optimize previous local name matching (#187) ([`fadb722`](https://github.com/Bluetooth-Devices/habluetooth/commit/fadb722b8ded2bc15bd56b641a963d4c4d19838e))
+
+
 ## v3.34.1 (2025-03-21)
 
 ### Bug fixes
