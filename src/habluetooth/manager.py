@@ -537,6 +537,7 @@ class BluetoothManager:
         if (
             (old_service_info := self._all_history.get(service_info.address))
             is not None
+            and service_info.source is not old_service_info.source
             and service_info.source != old_service_info.source
             and (scanner := self._sources.get(old_service_info.source)) is not None
             and scanner.scanning
@@ -557,7 +558,8 @@ class BluetoothManager:
                     # source, we need to check it as well to see if we prefer
                     # the old connectable advertisement
                     or (
-                        old_connectable_service_info.source != service_info.source
+                        old_connectable_service_info.source is not service_info.source
+                        and old_connectable_service_info.source != service_info.source
                         and (
                             connectable_scanner := self._sources.get(
                                 old_connectable_service_info.source
@@ -585,8 +587,15 @@ class BluetoothManager:
         # Track advertisement intervals to determine when we need to
         # switch adapters or mark a device as unavailable
         if (
-            last_source := self._advertisement_tracker.sources.get(service_info.address)
-        ) is not None and last_source != service_info.source:
+            (
+                last_source := self._advertisement_tracker.sources.get(
+                    service_info.address
+                )
+            )
+            is not None
+            and last_source is not service_info.source
+            and last_source != service_info.source
+        ):
             # Source changed, remove the old address from the tracker
             self._advertisement_tracker.async_remove_address(service_info.address)
         if service_info.address not in self._advertisement_tracker.intervals:
