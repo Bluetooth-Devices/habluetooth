@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-import base64
-
 import pytest
 from bleak.backends.scanner import AdvertisementData
 from bluetooth_data_tools import monotonic_time_coarse
 from pytest_codspeed import BenchmarkFixture
 
-from habluetooth import (
-    AdvertisementTupleType,
-    BaseHaRemoteScanner,
-    HaBluetoothConnector,
-    get_manager,
-)
+from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector, get_manager
 
 from . import (
     MockBleakClient,
@@ -73,46 +66,6 @@ async def test_inject_100_simple_advertisements(benchmark: BenchmarkFixture) -> 
                 _details,
                 _now,
             )
-
-    benchmark(run)
-
-    cancel()
-    unsetup()
-
-
-@pytest.mark.usefixtures("enable_bluetooth")
-@pytest.mark.asyncio
-async def test_inject_100_simple_raw_advertisements(
-    benchmark: BenchmarkFixture,
-) -> None:
-    """Test injecting 100 simple raw advertisements."""
-    manager = get_manager()
-
-    switchbot_device = generate_ble_device(
-        "44:44:33:11:23:45",
-        "wohand",
-        {},
-        rssi=-100,
-    )
-    connector = HaBluetoothConnector(
-        MockBleakClient, "mock_bleak_client", lambda: False
-    )
-
-    class SubclassedBaseHaRemoteScanner(BaseHaRemoteScanner):
-        """Subclassed BaseHaRemoteScanner to expose _async_on_raw_advertisements."""
-
-    scanner = SubclassedBaseHaRemoteScanner("esp32", "esp32", connector, True)
-    unsetup = scanner.async_setup()
-    cancel = manager.async_register_scanner(scanner)
-    _address = switchbot_device.address
-    _rssi = switchbot_device.rssi
-    adv_bytes = (base64.b64decode("AgEaAgoFCv9MABAFChx3+Vs="),)
-    advs: list[AdvertisementTupleType] = [
-        (_address, _rssi, adv_bytes, {}) for _ in range(100)
-    ]
-
-    def run():
-        scanner._async_on_raw_advertisements(advs)
 
     benchmark(run)
 

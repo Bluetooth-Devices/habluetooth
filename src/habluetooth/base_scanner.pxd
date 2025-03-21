@@ -4,8 +4,6 @@ import cython
 from .models cimport BluetoothServiceInfoBleak
 from .manager cimport BluetoothManager
 
-cdef object _MONOTONIC_NOW
-cdef object parse_advertisement_data_tuple
 cdef object NO_RSSI_VALUE
 cdef object BluetoothServiceInfoBleak
 cdef object AdvertisementData
@@ -56,19 +54,6 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         info=BluetoothServiceInfoBleak,
         prev_info=BluetoothServiceInfoBleak
     )
-    cdef void _async_on_advertisement_internal(
-        self,
-        str address,
-        int rssi,
-        str local_name,
-        list service_uuids,
-        dict service_data,
-        dict manufacturer_data,
-        object tx_power,
-        dict details,
-        double advertisement_monotonic_time
-    )
-
     cpdef void _async_on_advertisement(
         self,
         str address,
@@ -81,9 +66,6 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         dict details,
         double advertisement_monotonic_time
     )
-
-    @cython.locals(parsed=tuple, address_rssi_raw_details=tuple, now=double)
-    cpdef void _async_on_raw_advertisements(self, list advertisements)
 
     @cython.locals(now=double, timestamp=double, info=BluetoothServiceInfoBleak)
     cpdef void _async_expire_devices(self)

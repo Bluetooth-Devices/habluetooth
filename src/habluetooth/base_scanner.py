@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Final, Iterable, final
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bluetooth_adapters import DiscoveredDeviceAdvertisementData, adapter_human_name
-from bluetooth_data_tools import monotonic_time_coarse, parse_advertisement_data_tuple
+from bluetooth_data_tools import monotonic_time_coarse
 
 from .central_manager import get_manager
 from .const import (
@@ -30,20 +30,11 @@ from .models import (
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
-_MONOTONIC_NOW = monotonic_time_coarse
 
 
 _float = float
 _int = int
 _str = str
-
-
-AdvertisementTupleType = tuple[
-    _str,  # address
-    _int,  # rssi
-    tuple[bytes, ...],  # raw_data
-    dict[Any, Any],  # details
-]
 
 
 def _dict_subset(super_dict: dict[Any, bytes], sub_dict: dict[Any, bytes]) -> bool:
@@ -408,32 +399,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
             return info.device, info.advertisement
         return None
 
-    def _async_on_raw_advertisements(
-        self, advertisements: list[AdvertisementTupleType]
-    ) -> None:
-        """
-        Parse multiple advertisement.
-
-        This API is unstable and may be changed in the future
-        without increasing the major version number.
-
-        Do not rely on this API, use the _async_on_advertisement instead.
-        """
-        now = _MONOTONIC_NOW()
-        for address_rssi_raw_details in advertisements:
-            parsed = parse_advertisement_data_tuple(address_rssi_raw_details[2])
-            self._async_on_advertisement_internal(
-                address_rssi_raw_details[0],
-                address_rssi_raw_details[1],
-                parsed[0],
-                parsed[1],
-                parsed[2],
-                parsed[3],
-                parsed[4],
-                address_rssi_raw_details[3],
-                now,
-            )
-
     def _async_on_advertisement(
         self,
         address: _str,
@@ -446,36 +411,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         details: dict[Any, Any],
         advertisement_monotonic_time: _float,
     ) -> None:
-        """Call on new advertisement data."""
-        self._async_on_advertisement_internal(
-            address,
-            rssi,
-            local_name,
-            service_uuids,
-            service_data,
-            manufacturer_data,
-            tx_power,
-            details,
-            advertisement_monotonic_time,
-        )
-
-    def _async_on_advertisement_internal(
-        self,
-        address: _str,
-        rssi: _int,
-        local_name: _str | None,
-        service_uuids: list[str],
-        service_data: dict[str, bytes],
-        manufacturer_data: dict[int, bytes],
-        tx_power: _int | None,
-        details: dict[Any, Any],
-        advertisement_monotonic_time: _float,
-    ) -> None:
-        """
-        Internal implementation of _async_on_advertisement.
-
-        This method is unstable and not part of the public API.
-        """
+        """Call the registered callback."""
         self.scanning = not self._connecting
         self._last_detection = advertisement_monotonic_time
         info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
