@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import time
 from datetime import timedelta
-from typing import Any
 
 import pytest
 from bleak.backends.device import BLEDevice
@@ -58,12 +56,6 @@ class FakeScanner(BaseHaRemoteScanner):
             {"scanner_specific_data": "test"},
             now or monotonic_time_coarse(),
         )
-
-    def inject_raw_advertisement(
-        self, address: str, data: tuple[bytes, ...], details: dict[Any, Any], rssi: int
-    ) -> None:
-        """Inject a raw advertisement."""
-        self._async_on_raw_advertisements([(address, rssi, data, details)])
 
 
 @pytest.mark.parametrize("name_2", [None, "w"])
@@ -601,55 +593,3 @@ async def test_merge_manufacturer_data_history_new() -> None:
 
     cancel()
     unsetup()
-
-
-@pytest.mark.usefixtures("enable_bluetooth")
-@pytest.mark.asyncio
-async def test_injecting_raw_adv_data() -> None:
-    """Test injecting raw adv data."""
-    manager = get_manager()
-
-    device = generate_ble_device(
-        "44:44:33:11:23:45",
-        "Oral-B Toothbrush",
-        {},
-        rssi=-60,
-    )
-    raw_adv = (
-        base64.b64decode("AgEGDv/cAAYyawNSAAEECQAEAwIN/g=="),
-        base64.b64decode("EglPcmFsLUIgVG9vdGhicnVzaAUSEABQAAIKAA=="),
-    )
-
-    connector = HaBluetoothConnector(
-        MockBleakClient, "mock_bleak_client", lambda: False
-    )
-    scanner = FakeScanner("esp32", "esp32", connector, True)
-    details = scanner.details
-    assert details == HaScannerDetails(
-        source=scanner.source,
-        connectable=scanner.connectable,
-        name=scanner.name,
-        adapter=scanner.adapter,
-    )
-    unsetup = scanner.async_setup()
-    cancel = manager.async_register_scanner(scanner)
-
-    scanner.inject_raw_advertisement(
-        device.address,
-        raw_adv,
-        {},
-        -60,
-    )
-
-    data = scanner.discovered_devices_and_advertisement_data
-    discovered_device, discovered_adv_data = data[device.address]
-    assert discovered_device.name == device.name
-    assert discovered_adv_data.manufacturer_data == {
-        220: b"\x062k\x03R\x00\x01\x04\t\x00\x04"
-    }
-    assert discovered_adv_data.service_data == {}
-    assert discovered_adv_data.service_uuids == [
-        "0000fe0d-0000-1000-8000-00805f9b34fb",
-    ]
-    unsetup()
-    cancel()
