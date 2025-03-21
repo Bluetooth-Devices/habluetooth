@@ -10,12 +10,6 @@ cdef object AdvertisementData
 cdef object BLEDevice
 cdef bint TYPE_CHECKING
 
-@cython.locals(sub_value=bytes, super_value=bytes)
-cdef bint _manufacturer_data_subset(BluetoothServiceInfoBleak info, dict manufacturer_data)
-
-@cython.locals(sub_value=bytes, super_value=bytes)
-cdef bint _service_data_subset(BluetoothServiceInfoBleak info, dict service_data)
-
 
 cdef class BaseHaScanner:
 
@@ -56,7 +50,9 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         has_service_uuids=bint,
         prev_details=dict,
         info=BluetoothServiceInfoBleak,
-        prev_info=BluetoothServiceInfoBleak
+        prev_info=BluetoothServiceInfoBleak,
+        sub_value=bytes,
+        super_value=bytes
     )
     cpdef void _async_on_advertisement(
         self,

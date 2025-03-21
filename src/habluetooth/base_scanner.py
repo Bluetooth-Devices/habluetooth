@@ -37,30 +37,6 @@ _int = int
 _str = str
 
 
-def _manufacturer_data_subset(
-    info: BluetoothServiceInfoBleak, manufacturer_data: dict[Any, bytes]
-) -> bool:
-    """Return True if sub_dict is a subset of super_dict."""
-    for key, sub_value in manufacturer_data.items():
-        if (
-            super_value := info.manufacturer_data.get(key)
-        ) is None or super_value != sub_value:
-            return False
-    return True
-
-
-def _service_data_subset(
-    info: BluetoothServiceInfoBleak, service_data: dict[Any, bytes]
-) -> bool:
-    """Return True if sub_dict is a subset of super_dict."""
-    for key, sub_value in service_data.items():
-        if (
-            super_value := info.service_data.get(key)
-        ) is None or super_value != sub_value:
-            return False
-    return True
-
-
 class BaseHaScanner:
     """Base class for high availability BLE scanners."""
 
@@ -431,6 +407,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self.scanning = not self._connecting
         self._last_detection = advertisement_monotonic_time
         info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
+        key: int | str
 
         if (prev_info := self._previous_service_info.get(address)) is None:
             # We expect this is the rare case and since py3.11+ has
@@ -489,13 +466,17 @@ class BaseHaRemoteScanner(BaseHaScanner):
 
             has_service_data = bool(service_data)
             if has_service_data and service_data is not prev_info.service_data:
-                if _service_data_subset(prev_info, service_data):
-                    info.service_data = prev_info.service_data
+                for key, sub_value in service_data.items():
+                    if (
+                        super_value := info.service_data.get(key)
+                    ) is None or super_value != sub_value:
+                        info.service_data = {
+                            **prev_info.service_data,
+                            **service_data,
+                        }
+                        break
                 else:
-                    info.service_data = {
-                        **prev_info.service_data,
-                        **service_data,
-                    }
+                    info.service_data = prev_info.service_data
             elif not has_service_data:
                 info.service_data = prev_info.service_data
             else:
@@ -506,13 +487,17 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 has_manufacturer_data
                 and manufacturer_data is not prev_info.manufacturer_data
             ):
-                if _manufacturer_data_subset(prev_info, manufacturer_data):
-                    info.manufacturer_data = prev_info.manufacturer_data
+                for key, sub_value in manufacturer_data.items():
+                    if (
+                        super_value := info.manufacturer_data.get(key)
+                    ) is None or super_value != sub_value:
+                        info.manufacturer_data = {
+                            **prev_info.manufacturer_data,
+                            **manufacturer_data,
+                        }
+                        break
                 else:
-                    info.manufacturer_data = {
-                        **prev_info.manufacturer_data,
-                        **manufacturer_data,
-                    }
+                    info.manufacturer_data = prev_info.manufacturer_data
             elif not has_manufacturer_data:
                 info.manufacturer_data = prev_info.manufacturer_data
             else:
