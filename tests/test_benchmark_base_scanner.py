@@ -726,7 +726,7 @@ async def test_filter_wanted_apple_advs(benchmark: BenchmarkFixture) -> None:
         local_name="beacon",
         service_uuids=[],
         service_data={},
-        manufacturer_data={76: b"\x01"},
+        manufacturer_data={76: b"\x02"},
         rssi=-100,
     )
 
