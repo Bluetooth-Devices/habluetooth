@@ -69,17 +69,6 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         double advertisement_monotonic_time
     )
 
-    @cython.locals(
-        prev_name=str,
-        prev_discovery=tuple,
-        has_local_name=bint,
-        has_manufacturer_data=bint,
-        has_service_data=bint,
-        has_service_uuids=bint,
-        prev_details=dict,
-        info=BluetoothServiceInfoBleak,
-        prev_info=BluetoothServiceInfoBleak
-    )
     cpdef void _async_on_advertisement(
         self,
         str address,
