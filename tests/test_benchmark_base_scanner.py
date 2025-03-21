@@ -651,3 +651,60 @@ async def test_inject_100_rotating_manufacturer_data(
 
     cancel()
     unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_filter_unwanted_apple_advs(benchmark: BenchmarkFixture) -> None:
+    """Test filtering unwanted apple data."""
+    manager = get_manager()
+
+    device = generate_ble_device(
+        "44:44:33:11:23:45",
+        "beacon",
+        {},
+        rssi=-100,
+    )
+    device_adv = generate_advertisement_data(
+        local_name="beacon",
+        service_uuids=[],
+        service_data={},
+        manufacturer_data={76: b"\xff"},
+        rssi=-100,
+    )
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = BaseHaRemoteScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    def run():
+        _address = device.address
+        _rssi = device.rssi
+        _name = device.name
+        _service_uuids = device_adv.service_uuids
+        _service_data = device_adv.service_data
+        _manufacturer_data = device_adv.manufacturer_data
+        _tx_power = device_adv.tx_power
+        _details = {"scanner_specific_data": "test"}
+        _now = monotonic_time_coarse()
+
+        for _ in range(100):
+            scanner._async_on_advertisement(
+                _address,
+                _rssi,
+                _name,
+                _service_uuids,
+                _service_data,
+                _manufacturer_data,
+                _tx_power,
+                _details,
+                _now,
+            )
+
+    benchmark(run)
+
+    cancel()
+    unsetup()
