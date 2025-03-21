@@ -422,7 +422,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         now = _MONOTONIC_NOW()
         for address_rssi_raw_details in advertisements:
             parsed = parse_advertisement_data_tuple(address_rssi_raw_details[2])
-            self._async_on_advertisement(
+            self._async_on_advertisement_internal(
                 address_rssi_raw_details[0],
                 address_rssi_raw_details[1],
                 parsed[0],
@@ -558,3 +558,5 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 for address, timestamp in discovered_device_timestamps.items()
             },
         }
+
+    _async_on_advertisement_internal = _async_on_advertisement
