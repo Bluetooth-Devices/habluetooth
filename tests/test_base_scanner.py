@@ -593,3 +593,50 @@ async def test_merge_manufacturer_data_history_new() -> None:
 
     cancel()
     unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_filter_apple_data() -> None:
+    """Test filtering apple data accepts bytes that start with 01."""
+    manager = get_manager()
+
+    device = generate_ble_device(
+        "44:44:33:11:23:45",
+        "",
+        {},
+        rssi=-60,
+    )
+    device_adv = generate_advertisement_data(
+        local_name="",
+        rssi=-60,
+        manufacturer_data={
+            76: b"\x01\r.\xa9\xb6",
+        },
+        service_uuids=["ef090000-11d6-42ba-93b8-9dd7ec090ab0"],
+        service_data={},
+    )
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = FakeScanner("esp32", "esp32", connector, True)
+    details = scanner.details
+    assert details == HaScannerDetails(
+        source=scanner.source,
+        connectable=scanner.connectable,
+        name=scanner.name,
+        adapter=scanner.adapter,
+    )
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    scanner.inject_advertisement(device, device_adv)
+
+    data = scanner.discovered_devices_and_advertisement_data
+    discovered_device, discovered_adv_data = data[device.address]
+    assert discovered_device.address == device.address
+    assert discovered_device.name == device.name
+    assert discovered_adv_data.manufacturer_data == device_adv.manufacturer_data
+    unsetup()
+    cancel()
