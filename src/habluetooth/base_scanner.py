@@ -453,7 +453,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             if prev_name and (
                 not has_local_name
                 or prev_name is local_name
-                or (prev_name is not local_name and len(prev_name) > len(local_name))  # type: ignore[arg-type]
+                or len(prev_name) > len(local_name)  # type: ignore[arg-type]
             ):
                 info.name = prev_name
             else:
