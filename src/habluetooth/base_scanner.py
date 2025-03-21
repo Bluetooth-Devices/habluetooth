@@ -468,7 +468,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             if has_service_data and service_data is not prev_info.service_data:
                 for key, sub_value in service_data.items():
                     if (
-                        super_value := info.service_data.get(key)
+                        super_value := prev_info.service_data.get(key)
                     ) is None or super_value != sub_value:
                         info.service_data = {
                             **prev_info.service_data,
@@ -489,7 +489,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             ):
                 for key, sub_value in manufacturer_data.items():
                     if (
-                        super_value := info.manufacturer_data.get(key)
+                        super_value := prev_info.manufacturer_data.get(key)
                     ) is None or super_value != sub_value:
                         info.manufacturer_data = {
                             **prev_info.manufacturer_data,
