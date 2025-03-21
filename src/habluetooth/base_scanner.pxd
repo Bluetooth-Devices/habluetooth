@@ -4,6 +4,8 @@ import cython
 from .models cimport BluetoothServiceInfoBleak
 from .manager cimport BluetoothManager
 
+cdef object monotonic_time_coarse
+cdef object parse_advertisement_data_tuple
 cdef object NO_RSSI_VALUE
 cdef object BluetoothServiceInfoBleak
 cdef object AdvertisementData
@@ -66,6 +68,9 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         dict details,
         double advertisement_monotonic_time
     )
+
+    @cython.locals(parsed=tuple, address_rssi_raw_details=tuple, now=double)
+    cpdef void _async_on_raw_advertisement(self, list advertisements)
 
     @cython.locals(now=double, timestamp=double, info=BluetoothServiceInfoBleak)
     cpdef void _async_expire_devices(self)
