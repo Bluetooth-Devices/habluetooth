@@ -4,7 +4,7 @@ from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
     AdvertisementTracker,
 )
-from .base_scanner import BaseHaRemoteScanner, BaseHaScanner
+from .base_scanner import AdvertisementTupleType, BaseHaRemoteScanner, BaseHaScanner
 from .central_manager import get_manager, set_manager
 from .const import (
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
@@ -35,6 +35,7 @@ __all__ = [
     "TRACKER_BUFFERING_WOBBLE_SECONDS",
     "UNAVAILABLE_TRACK_SECONDS",
     "AdvertisementTracker",
+    "AdvertisementTupleType",
     "BaseHaRemoteScanner",
     "BaseHaScanner",
     "BluetoothManager",
