@@ -82,7 +82,9 @@ async def test_inject_100_simple_advertisements(benchmark: BenchmarkFixture) -> 
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
-def test_inject_100_simple_raw_advertisements(benchmark: BenchmarkFixture) -> None:
+async def test_inject_100_simple_raw_advertisements(
+    benchmark: BenchmarkFixture,
+) -> None:
     """Test injecting 100 simple raw advertisements."""
     manager = get_manager()
 
