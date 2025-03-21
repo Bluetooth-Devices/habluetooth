@@ -45,6 +45,14 @@ def _dict_subset(super_dict: dict[Any, bytes], sub_dict: dict[Any, bytes]) -> bo
     return True
 
 
+def _list_subset(super_list: list[str], sub_list: list[str]) -> bool:
+    """Return True if sub_list is a subset of super_list."""
+    for sub_value in sub_list:
+        if sub_value not in super_list:
+            return False
+    return True
+
+
 class BaseHaScanner:
     """Base class for high availability BLE scanners."""
 
@@ -460,12 +468,13 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 info.name = local_name if has_local_name else address  # type: ignore[assignment]
 
             has_service_uuids = bool(service_uuids)
-            if (
-                has_service_uuids
-                and service_uuids is not prev_info.service_uuids
-                and service_uuids != prev_info.service_uuids
-            ):
-                info.service_uuids = list({*service_uuids, *prev_info.service_uuids})
+            if has_service_uuids and service_uuids is not prev_info.service_uuids:
+                if _list_subset(prev_info.service_uuids, service_uuids):
+                    info.service_uuids = prev_info.service_uuids
+                else:
+                    info.service_uuids = list(
+                        {*service_uuids, *prev_info.service_uuids}
+                    )
             elif not has_service_uuids:
                 info.service_uuids = prev_info.service_uuids
             else:
