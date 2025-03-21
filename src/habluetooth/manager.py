@@ -506,16 +506,15 @@ class BluetoothManager:
             len(service_info.manufacturer_data) == 1
             and not service_info.service_data
             and (apple_data := service_info.manufacturer_data.get(APPLE_MFR_ID))
-            and apple_data[0]
-            not in {
+        ):
+            if apple_data[0] not in {
                 APPLE_IBEACON_START_BYTE,
                 APPLE_HOMEKIT_START_BYTE,
                 APPLE_HOMEKIT_NOTIFY_START_BYTE,
                 APPLE_DEVICE_ID_START_BYTE,
                 APPLE_FINDMY_START_BYTE,
-            }
-        ):
-            return
+            }:
+                return
 
         if service_info.connectable:
             old_connectable_service_info = self._connectable_history.get(
