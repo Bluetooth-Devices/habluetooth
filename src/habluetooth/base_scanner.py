@@ -408,7 +408,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             return info.device, info.advertisement
         return None
 
-    def _async_on_raw_advertisement(
+    def _async_on_raw_advertisements(
         self, advertisements: list[AdvertisementTupleType]
     ) -> None:
         """

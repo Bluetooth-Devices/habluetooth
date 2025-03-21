@@ -70,7 +70,7 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
     )
 
     @cython.locals(parsed=tuple, address_rssi_raw_details=tuple, now=double)
-    cpdef void _async_on_raw_advertisement(self, list advertisements)
+    cpdef void _async_on_raw_advertisements(self, list advertisements)
 
     @cython.locals(now=double, timestamp=double, info=BluetoothServiceInfoBleak)
     cpdef void _async_expire_devices(self)
