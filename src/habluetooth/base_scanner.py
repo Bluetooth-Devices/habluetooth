@@ -449,7 +449,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # _rssi is deprecated, will be removed in newer bleak
             # pylint: disable-next=protected-access
             info.device._rssi = rssi
-            has_local_name = bool(local_name)
+            has_local_name = local_name is not None and local_name != b""
             if prev_name and (
                 not has_local_name
                 or prev_name is local_name
