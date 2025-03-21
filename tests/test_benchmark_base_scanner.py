@@ -97,7 +97,11 @@ async def test_inject_100_simple_raw_advertisements(
     connector = HaBluetoothConnector(
         MockBleakClient, "mock_bleak_client", lambda: False
     )
-    scanner = BaseHaRemoteScanner("esp32", "esp32", connector, True)
+
+    class SubclassedBaseHaRemoteScanner(BaseHaRemoteScanner):
+        """Subclassed BaseHaRemoteScanner to expose _async_on_raw_advertisements."""
+
+    scanner = SubclassedBaseHaRemoteScanner("esp32", "esp32", connector, True)
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
     _address = switchbot_device.address
