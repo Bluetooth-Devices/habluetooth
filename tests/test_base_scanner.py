@@ -63,7 +63,7 @@ class FakeScanner(BaseHaRemoteScanner):
         self, address: str, data: tuple[bytes, ...], details: dict[Any, Any], rssi: int
     ) -> None:
         """Inject a raw advertisement."""
-        self._async_on_raw_advertisement([(address, rssi, data, details)])
+        self._async_on_raw_advertisements([(address, rssi, data, details)])
 
 
 @pytest.mark.parametrize("name_2", [None, "w"])

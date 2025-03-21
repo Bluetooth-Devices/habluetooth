@@ -56,6 +56,19 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         info=BluetoothServiceInfoBleak,
         prev_info=BluetoothServiceInfoBleak
     )
+    cdef void _async_on_advertisement_internal(
+        self,
+        str address,
+        int rssi,
+        str local_name,
+        list service_uuids,
+        dict service_data,
+        dict manufacturer_data,
+        object tx_power,
+        dict details,
+        double advertisement_monotonic_time
+    )
+
     cpdef void _async_on_advertisement(
         self,
         str address,
@@ -70,7 +83,7 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
     )
 
     @cython.locals(parsed=tuple, address_rssi_raw_details=tuple, now=double)
-    cpdef void _async_on_raw_advertisement(self, list advertisements)
+    cpdef void _async_on_raw_advertisements(self, list advertisements)
 
     @cython.locals(now=double, timestamp=double, info=BluetoothServiceInfoBleak)
     cpdef void _async_expire_devices(self)

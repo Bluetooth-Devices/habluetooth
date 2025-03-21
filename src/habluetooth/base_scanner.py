@@ -408,7 +408,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             return info.device, info.advertisement
         return None
 
-    def _async_on_raw_advertisement(
+    def _async_on_raw_advertisements(
         self, advertisements: list[AdvertisementTupleType]
     ) -> None:
         """
@@ -422,7 +422,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         now = _MONOTONIC_NOW()
         for address_rssi_raw_details in advertisements:
             parsed = parse_advertisement_data_tuple(address_rssi_raw_details[2])
-            self._async_on_advertisement(
+            self._async_on_advertisement_internal(
                 address_rssi_raw_details[0],
                 address_rssi_raw_details[1],
                 parsed[0],
@@ -446,7 +446,36 @@ class BaseHaRemoteScanner(BaseHaScanner):
         details: dict[Any, Any],
         advertisement_monotonic_time: _float,
     ) -> None:
-        """Call the registered callback."""
+        """Call on new advertisement data."""
+        self._async_on_advertisement_internal(
+            address,
+            rssi,
+            local_name,
+            service_uuids,
+            service_data,
+            manufacturer_data,
+            tx_power,
+            details,
+            advertisement_monotonic_time,
+        )
+
+    def _async_on_advertisement_internal(
+        self,
+        address: _str,
+        rssi: _int,
+        local_name: _str | None,
+        service_uuids: list[str],
+        service_data: dict[str, bytes],
+        manufacturer_data: dict[int, bytes],
+        tx_power: _int | None,
+        details: dict[Any, Any],
+        advertisement_monotonic_time: _float,
+    ) -> None:
+        """
+        Internal implementation of _async_on_advertisement.
+
+        This method is unstable and not part of the public API.
+        """
         self.scanning = not self._connecting
         self._last_detection = advertisement_monotonic_time
         info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
