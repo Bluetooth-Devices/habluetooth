@@ -22,6 +22,7 @@ cdef class BluetoothServiceInfo:
     cdef public dict service_data
     cdef public list service_uuids
     cdef public str source
+    cdef set _service_uuids
 
 
 cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):

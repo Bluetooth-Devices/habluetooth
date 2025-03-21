@@ -45,10 +45,10 @@ def _dict_subset(super_dict: dict[Any, bytes], sub_dict: dict[Any, bytes]) -> bo
     return True
 
 
-def _list_subset(super_list: list[str], sub_list: list[str]) -> bool:
-    """Return True if sub_list is a subset of super_list."""
+def _subset(super_set: set[str], sub_list: list[str]) -> bool:
+    """Return True if sub_list is a subset of super_set."""
     for sub_value in sub_list:
-        if sub_value not in super_list:
+        if sub_value not in super_set:
             return False
     return True
 
@@ -469,16 +469,18 @@ class BaseHaRemoteScanner(BaseHaScanner):
 
             has_service_uuids = bool(service_uuids)
             if has_service_uuids and service_uuids is not prev_info.service_uuids:
-                if _list_subset(prev_info.service_uuids, service_uuids):
+                if _subset(prev_info._service_uuids, service_uuids):
                     info.service_uuids = prev_info.service_uuids
+                    info._service_uuids = prev_info._service_uuids
                 else:
-                    info.service_uuids = list(
-                        {*service_uuids, *prev_info.service_uuids}
-                    )
+                    info._service_uuids = {*prev_info._service_uuids, *service_uuids}
+                    info.service_uuids = list(info._service_uuids)
             elif not has_service_uuids:
                 info.service_uuids = prev_info.service_uuids
+                info._service_uuids = prev_info._service_uuids
             else:
                 info.service_uuids = service_uuids
+                info._service_uuids = set(service_uuids)
 
             has_service_data = bool(service_data)
             if has_service_data and service_data is not prev_info.service_data:

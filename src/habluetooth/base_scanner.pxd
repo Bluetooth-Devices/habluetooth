@@ -15,7 +15,7 @@ cdef bint _dict_subset(dict super_dict, dict sub_dict)
 
 
 @cython.locals(sub_value=str, super_value=str)
-cdef bint _list_subset(list super_list, list sub_list)
+cdef bint _subset(set super_set, list sub_list)
 
 
 cdef class BaseHaScanner:

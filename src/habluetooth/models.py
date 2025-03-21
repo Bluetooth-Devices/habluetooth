@@ -86,6 +86,7 @@ class BluetoothServiceInfo:
     """Prepared info from bluetooth entries."""
 
     __slots__ = (
+        "_service_uuids",
         "address",
         "manufacturer_data",
         "name",
@@ -113,6 +114,7 @@ class BluetoothServiceInfo:
         self.service_data = service_data
         self.service_uuids = service_uuids
         self.source = source
+        self._service_uuids = set(service_uuids)
 
     @classmethod
     def from_advertisement(
@@ -186,6 +188,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         self.manufacturer_data = manufacturer_data
         self.service_data = service_data
         self.service_uuids = service_uuids
+        self._service_uuids = set(service_uuids)
         self.source = source
         self.device = device
         self._advertisement = advertisement
@@ -316,6 +319,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         new_obj.manufacturer_data = self.manufacturer_data
         new_obj.service_data = self.service_data
         new_obj.service_uuids = self.service_uuids
+        new_obj._service_uuids = self._service_uuids
         new_obj.source = self.source
         new_obj.device = self.device
         new_obj._advertisement = self._advertisement
