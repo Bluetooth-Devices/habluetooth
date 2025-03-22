@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.38.0 (2025-03-22)
+
+### Bug fixes
+
+
+- Use project.license key (#196) ([`1decf97`](https://github.com/Bluetooth-Devices/habluetooth/commit/1decf9704f7db33bc8094880651321c1b58420c8))
+
+
+### Features
+
+
+- Improve performance of previous source checks (#192) ([`8d96528`](https://github.com/Bluetooth-Devices/habluetooth/commit/8d96528f605231f3089319c789390d784c45b4c5))
+
+
 ## v3.37.0 (2025-03-21)
 
 ### Features
