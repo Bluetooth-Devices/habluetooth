@@ -1,7 +1,11 @@
+[build-system]
+requires = ['setuptools>=77.0', 'Cython>=3', "poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
+
 [project]
 name = "habluetooth"
 version = "3.37.0"
-license.text = "Apache-2.0"
+license = "Apache-2.0"
 description = "High availability Bluetooth"
 authors = [{ name = "J. Nick Koston", email = "bluetooth@koston.org" }]
 readme = "README.md"
@@ -160,7 +164,3 @@ allow_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "docs.*"
 ignore_errors = true
-
-[build-system]
-requires = ['setuptools>=75.8.0', 'Cython>=3', "poetry-core>=2.0.0"]
-build-backend = "poetry.core.masonry.api"
