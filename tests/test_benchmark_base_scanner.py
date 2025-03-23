@@ -43,17 +43,18 @@ async def test_inject_100_simple_advertisements(benchmark: BenchmarkFixture) -> 
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
-    def run():
-        _address = switchbot_device.address
-        _rssi = switchbot_device_adv.rssi
-        _name = switchbot_device.name
-        _service_uuids = switchbot_device_adv.service_uuids
-        _service_data = switchbot_device_adv.service_data
-        _manufacturer_data = switchbot_device_adv.manufacturer_data
-        _tx_power = switchbot_device_adv.tx_power
-        _details = {"scanner_specific_data": "test"}
-        _now = monotonic_time_coarse()
+    _address = switchbot_device.address
+    _rssi = switchbot_device_adv.rssi
+    _name = switchbot_device.name
+    _service_uuids = switchbot_device_adv.service_uuids
+    _service_data = switchbot_device_adv.service_data
+    _manufacturer_data = switchbot_device_adv.manufacturer_data
+    _tx_power = switchbot_device_adv.tx_power
+    _details = {"scanner_specific_data": "test"}
+    _now = monotonic_time_coarse()
 
+    @benchmark
+    def run():
         for _ in range(100):
             scanner._async_on_advertisement(
                 _address,
@@ -66,8 +67,6 @@ async def test_inject_100_simple_advertisements(benchmark: BenchmarkFixture) -> 
                 _details,
                 _now,
             )
-
-    benchmark(run)
 
     cancel()
     unsetup()
@@ -100,17 +99,18 @@ async def test_inject_100_complex_advertisements(benchmark: BenchmarkFixture) ->
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
-    def run():
-        _address = switchbot_device.address
-        _rssi = switchbot_device_adv.rssi
-        _name = switchbot_device.name
-        _service_uuids = switchbot_device_adv.service_uuids
-        _service_data = switchbot_device_adv.service_data
-        _manufacturer_data = switchbot_device_adv.manufacturer_data
-        _tx_power = switchbot_device_adv.tx_power
-        _details = {"scanner_specific_data": "test"}
-        _now = monotonic_time_coarse()
+    _address = switchbot_device.address
+    _rssi = switchbot_device_adv.rssi
+    _name = switchbot_device.name
+    _service_uuids = switchbot_device_adv.service_uuids
+    _service_data = switchbot_device_adv.service_data
+    _manufacturer_data = switchbot_device_adv.manufacturer_data
+    _tx_power = switchbot_device_adv.tx_power
+    _details = {"scanner_specific_data": "test"}
+    _now = monotonic_time_coarse()
 
+    @benchmark
+    def run():
         for _ in range(100):
             scanner._async_on_advertisement(
                 _address,
@@ -123,8 +123,6 @@ async def test_inject_100_complex_advertisements(benchmark: BenchmarkFixture) ->
                 _details,
                 _now,
             )
-
-    benchmark(run)
 
     cancel()
     unsetup()
@@ -161,16 +159,17 @@ async def test_inject_100_different_advertisements(benchmark: BenchmarkFixture) 
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
-    def run():
-        _address = switchbot_device.address
-        _rssi = switchbot_device_adv.rssi
-        _name = switchbot_device.name
-        _service_uuids = switchbot_device_adv.service_uuids
-        _service_data = switchbot_device_adv.service_data
-        _tx_power = switchbot_device_adv.tx_power
-        _details = {"scanner_specific_data": "test"}
-        _now = monotonic_time_coarse()
+    _address = switchbot_device.address
+    _rssi = switchbot_device_adv.rssi
+    _name = switchbot_device.name
+    _service_uuids = switchbot_device_adv.service_uuids
+    _service_data = switchbot_device_adv.service_data
+    _tx_power = switchbot_device_adv.tx_power
+    _details = {"scanner_specific_data": "test"}
+    _now = monotonic_time_coarse()
 
+    @benchmark
+    def run():
         for adv in advs:
             scanner._async_on_advertisement(
                 _address,
@@ -183,8 +182,6 @@ async def test_inject_100_different_advertisements(benchmark: BenchmarkFixture) 
                 _details,
                 _now,
             )
-
-    benchmark(run)
 
     cancel()
     unsetup()
@@ -223,16 +220,17 @@ async def test_inject_100_different_manufacturer_data(
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
-    def run():
-        _address = switchbot_device.address
-        _rssi = switchbot_device_adv.rssi
-        _name = switchbot_device.name
-        _service_uuids = switchbot_device_adv.service_uuids
-        _service_data = switchbot_device_adv.service_data
-        _tx_power = switchbot_device_adv.tx_power
-        _details = {"scanner_specific_data": "test"}
-        _now = monotonic_time_coarse()
+    _address = switchbot_device.address
+    _rssi = switchbot_device_adv.rssi
+    _name = switchbot_device.name
+    _service_uuids = switchbot_device_adv.service_uuids
+    _service_data = switchbot_device_adv.service_data
+    _tx_power = switchbot_device_adv.tx_power
+    _details = {"scanner_specific_data": "test"}
+    _now = monotonic_time_coarse()
 
+    @benchmark
+    def run():
         for adv in advs:
             scanner._async_on_advertisement(
                 _address,
@@ -245,8 +243,6 @@ async def test_inject_100_different_manufacturer_data(
                 _details,
                 _now,
             )
-
-    benchmark(run)
 
     cancel()
     unsetup()
@@ -285,16 +281,17 @@ async def test_inject_100_different_service_data(
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
-    def run():
-        _address = switchbot_device.address
-        _rssi = switchbot_device_adv.rssi
-        _name = switchbot_device.name
-        _service_uuids = switchbot_device_adv.service_uuids
-        _service_data = switchbot_device_adv.service_data
-        _tx_power = switchbot_device_adv.tx_power
-        _details = {"scanner_specific_data": "test"}
-        _now = monotonic_time_coarse()
+    _address = switchbot_device.address
+    _rssi = switchbot_device_adv.rssi
+    _name = switchbot_device.name
+    _service_uuids = switchbot_device_adv.service_uuids
+    _service_data = switchbot_device_adv.service_data
+    _tx_power = switchbot_device_adv.tx_power
+    _details = {"scanner_specific_data": "test"}
+    _now = monotonic_time_coarse()
 
+    @benchmark
+    def run():
         for adv in advs:
             scanner._async_on_advertisement(
                 _address,
@@ -307,8 +304,6 @@ async def test_inject_100_different_service_data(
                 _details,
                 _now,
             )
-
-    benchmark(run)
 
     cancel()
     unsetup()
@@ -624,16 +619,17 @@ async def test_inject_100_rotating_manufacturer_data(
         )
         advs.append(sensorpush_device_adv)
 
-    def run():
-        _address = sensor_push_device.address
-        _rssi = sensorpush_device_adv.rssi
-        _name = sensor_push_device.name
-        _service_uuids = sensorpush_device_adv.service_uuids
-        _service_data = sensorpush_device_adv.service_data
-        _tx_power = sensorpush_device_adv.tx_power
-        _details = {"scanner_specific_data": "test"}
-        _now = monotonic_time_coarse()
+    _address = sensor_push_device.address
+    _rssi = sensorpush_device_adv.rssi
+    _name = sensor_push_device.name
+    _service_uuids = sensorpush_device_adv.service_uuids
+    _service_data = sensorpush_device_adv.service_data
+    _tx_power = sensorpush_device_adv.tx_power
+    _details = {"scanner_specific_data": "test"}
+    _now = monotonic_time_coarse()
 
+    @benchmark
+    def run():
         for adv in advs:
             scanner._async_on_advertisement(
                 _address,
@@ -646,8 +642,6 @@ async def test_inject_100_rotating_manufacturer_data(
                 _details,
                 _now,
             )
-
-    benchmark(run)
 
     cancel()
     unsetup()
@@ -679,18 +673,18 @@ async def test_filter_unwanted_apple_advs(benchmark: BenchmarkFixture) -> None:
     scanner = BaseHaRemoteScanner("esp32", "esp32", connector, True)
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
+    _address = device.address
+    _rssi = device.rssi
+    _name = device.name
+    _service_uuids = device_adv.service_uuids
+    _service_data = device_adv.service_data
+    _manufacturer_data = device_adv.manufacturer_data
+    _tx_power = device_adv.tx_power
+    _details = {"scanner_specific_data": "test"}
+    _now = monotonic_time_coarse()
 
+    @benchmark
     def run():
-        _address = device.address
-        _rssi = device.rssi
-        _name = device.name
-        _service_uuids = device_adv.service_uuids
-        _service_data = device_adv.service_data
-        _manufacturer_data = device_adv.manufacturer_data
-        _tx_power = device_adv.tx_power
-        _details = {"scanner_specific_data": "test"}
-        _now = monotonic_time_coarse()
-
         for _ in range(100):
             scanner._async_on_advertisement(
                 _address,
@@ -703,8 +697,6 @@ async def test_filter_unwanted_apple_advs(benchmark: BenchmarkFixture) -> None:
                 _details,
                 _now,
             )
-
-    benchmark(run)
 
     cancel()
     unsetup()
@@ -737,17 +729,18 @@ async def test_filter_wanted_apple_advs(benchmark: BenchmarkFixture) -> None:
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
-    def run():
-        _address = device.address
-        _rssi = device.rssi
-        _name = device.name
-        _service_uuids = device_adv.service_uuids
-        _service_data = device_adv.service_data
-        _manufacturer_data = device_adv.manufacturer_data
-        _tx_power = device_adv.tx_power
-        _details = {"scanner_specific_data": "test"}
-        _now = monotonic_time_coarse()
+    _address = device.address
+    _rssi = device.rssi
+    _name = device.name
+    _service_uuids = device_adv.service_uuids
+    _service_data = device_adv.service_data
+    _manufacturer_data = device_adv.manufacturer_data
+    _tx_power = device_adv.tx_power
+    _details = {"scanner_specific_data": "test"}
+    _now = monotonic_time_coarse()
 
+    @benchmark
+    def run():
         for _ in range(100):
             scanner._async_on_advertisement(
                 _address,
@@ -760,8 +753,6 @@ async def test_filter_wanted_apple_advs(benchmark: BenchmarkFixture) -> None:
                 _details,
                 _now,
             )
-
-    benchmark(run)
 
     cancel()
     unsetup()
