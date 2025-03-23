@@ -473,7 +473,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
 
             has_service_data = bool(service_data)
             if has_service_data and service_data is not prev_info.service_data:
-                if _dict_subset(prev_info.service_data, service_data):
+                if prev_info.service_data.items() >= service_data.items():
                     info.service_data = prev_info.service_data
                 else:
                     info.service_data = {
@@ -490,7 +490,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 has_manufacturer_data
                 and manufacturer_data is not prev_info.manufacturer_data
             ):
-                if _dict_subset(prev_info.manufacturer_data, manufacturer_data):
+                if prev_info.manufacturer_data.items() >= manufacturer_data.items():
                     info.manufacturer_data = prev_info.manufacturer_data
                 else:
                     info.manufacturer_data = {
