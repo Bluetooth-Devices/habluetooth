@@ -40,9 +40,8 @@ _str = str
 def _dict_subset(super_dict: dict[Any, bytes], sub_dict: dict[Any, bytes]) -> bool:
     """Return True if sub_dict is a subset of super_dict."""
     for key in sub_dict:
-        if (value := super_dict.get(key)) is None:
+        if (super_value := super_dict.get(key)) is None:
             return False
-        super_value = value
         sub_value = sub_dict[key]
         if super_value != sub_value:
             return False
