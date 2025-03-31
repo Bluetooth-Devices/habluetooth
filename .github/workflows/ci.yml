@@ -252,7 +252,4 @@ jobs:
           pattern: wheels-*
           merge-multiple: true
 
-      - uses:
-          pypa/gh-action-pypi-publish@v1.12.4
-
-          # To test: repository_url: https://test.pypi.org/legacy/
+      - uses: pypa/gh-action-pypi-publish@v1.12.4
