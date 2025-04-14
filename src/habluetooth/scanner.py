@@ -18,7 +18,6 @@ from bleak_retry_connector import restore_discoveries
 from bleak_retry_connector.bluez import stop_discovery
 from bluetooth_adapters import DEFAULT_ADDRESS
 from bluetooth_data_tools import monotonic_time_coarse
-from dbus_fast import InvalidMessageError
 
 from .base_scanner import BaseHaScanner
 from .const import (
@@ -42,6 +41,7 @@ if IS_LINUX:
         OrPattern,
     )
     from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
+    from dbus_fast import InvalidMessageError
     from dbus_fast.service import method
 
     # or_patterns is a workaround for the fact that passive scanning
@@ -70,6 +70,11 @@ if IS_LINUX:
 
     AdvertisementMonitor.DeviceFound = HaAdvertisementMonitor.DeviceFound
     AdvertisementMonitor.DeviceLost = HaAdvertisementMonitor.DeviceLost
+else:
+
+    class InvalidMessageError(Exception):  # type: ignore[no-redef]
+        """Invalid message error."""
+
 
 OriginalBleakScanner = bleak.BleakScanner
 
