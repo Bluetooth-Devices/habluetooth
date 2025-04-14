@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.38.1 (2025-04-14)
+
+### Bug fixes
+
+
+- Add missing dbus-fast dep on linux (#207) ([`5746448`](https://github.com/Bluetooth-Devices/habluetooth/commit/57464488482626577e9f84c42ab1ff100b7857b3))
+
+
 ## v3.38.0 (2025-03-22)
 
 ### Bug fixes
