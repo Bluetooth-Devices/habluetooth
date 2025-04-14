@@ -41,6 +41,7 @@ bluetooth-data-tools = ">=1.16.0"
 bluetooth-adapters = ">=0.16.1"
 bluetooth-auto-recovery = ">=1.2.3"
 async-interrupt = ">=1.1.1"
+dbus-fast = { version = ">=2.30.2", markers = "platform_system == 'Linux'" }
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7,<9"
