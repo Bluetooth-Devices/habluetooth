@@ -10,7 +10,6 @@ import pytest
 from bleak import BleakError
 from bleak.backends.scanner import AdvertisementDataCallback
 from bleak_retry_connector import BleakSlotManager
-from dbus_fast import InvalidMessageError
 
 from habluetooth import (
     SCANNER_WATCHDOG_INTERVAL,
@@ -22,6 +21,7 @@ from habluetooth import (
     scanner,
     set_manager,
 )
+from habluetooth.scanner import InvalidMessageError
 
 from . import (
     async_fire_time_changed,
