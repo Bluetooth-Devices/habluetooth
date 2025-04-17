@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.39.0 (2025-04-17)
+
+### Features
+
+
+- Improve performance of _async_on_advertisement (#209) ([`0fc0500`](https://github.com/Bluetooth-Devices/habluetooth/commit/0fc0500d74cdc3d320111df979bef784a51a2eac))
+
+
 ## v3.38.1 (2025-04-14)
 
 ### Bug fixes
