@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.41.0 (2025-04-27)
+
+### Features
+
+
+- Add new _async_on_raw_advertisement base scanner api (#213) ([`fb2a487`](https://github.com/Bluetooth-Devices/habluetooth/commit/fb2a487c06cf102c17509410f916b5c06728df98))
+
+
 ## v3.40.0 (2025-04-27)
 
 ### Features
