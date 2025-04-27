@@ -74,7 +74,8 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         dict manufacturer_data,
         object tx_power,
         dict details,
-        double advertisement_monotonic_time
+        double advertisement_monotonic_time,
+        bytes adv
     )
 
     cpdef void _async_on_advertisement(
