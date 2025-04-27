@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.40.0 (2025-04-27)
+
+### Features
+
+
+- Require bluetooth-data-tools 1.28.0 or later (#212) ([`e154136`](https://github.com/Bluetooth-Devices/habluetooth/commit/e154136db9f15d33c6de3d89bf9e4e53e03c690a))
+
+
 ## v3.39.0 (2025-04-17)
 
 ### Features
