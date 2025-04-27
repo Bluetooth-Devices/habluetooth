@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.42.0 (2025-04-27)
+
+### Features
+
+
+- Add raw field to bluetoothserviceinfobleak (#214) ([`343f18b`](https://github.com/Bluetooth-Devices/habluetooth/commit/343f18bfbbf3ebbee31e64beab60b2686700797f))
+
+
 ## v3.41.0 (2025-04-27)
 
 ### Features
