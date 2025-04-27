@@ -81,6 +81,7 @@ def test_model_from_scanner():
         "connectable": True,
         "manufacturer_data": {},
         "name": "wohand",
+        "raw": None,
         "rssi": -127,
         "service_data": {},
         "service_uuids": ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
@@ -125,6 +126,7 @@ def test_construct_service_info_bleak():
         "advertisement": switchbot_adv,
         "device": switchbot_device,
         "connectable": False,
+        "raw": None,
         "manufacturer_data": {},
         "name": "wohand",
         "rssi": -127,
@@ -165,6 +167,7 @@ def test_from_device_and_advertisement_data():
         "connectable": True,
         "manufacturer_data": {},
         "name": "wohand",
+        "raw": None,
         "rssi": -127,
         "service_data": {},
         "service_uuids": ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
@@ -176,7 +179,7 @@ def test_from_device_and_advertisement_data():
         "<BluetoothServiceInfoBleak name=wohand address=44:44:33:11:23:45 rssi=-127 "
         "manufacturer_data={} service_data={} "
         "service_uuids=['cba20d00-224d-11e6-9fb8-0002a5d5c51b'] source=local "
-        f"connectable=True time={now_monotonic} tx_power=-127>"
+        f"connectable=True time={now_monotonic} tx_power=-127 raw=None>"
     )
 
 
@@ -231,6 +234,7 @@ def test_pyobjc_compat():
         "connectable": False,
         "manufacturer_data": {},
         "name": "wohand",
+        "raw": None,
         "rssi": -127,
         "service_data": {},
         "service_uuids": ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
@@ -259,6 +263,7 @@ def test_as_connectable():
         connectable=False,
         time=now,
         tx_power=1,
+        raw=b"\x00\x00\x00\x00\x00\x00",
     )
     connectable_service_info = service_info._as_connectable()
     assert connectable_service_info.connectable is True
@@ -275,3 +280,4 @@ def test_as_connectable():
     assert service_info.advertisement == connectable_service_info.advertisement
     assert service_info.time == connectable_service_info.time
     assert service_info.tx_power == connectable_service_info.tx_power
+    assert service_info.raw == connectable_service_info.raw
