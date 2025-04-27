@@ -32,6 +32,7 @@ SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_secon
 _LOGGER = logging.getLogger(__name__)
 
 
+_bytes = bytes
 _float = float
 _int = int
 _str = str
@@ -396,7 +397,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self,
         address: _str,
         rssi: _int,
-        raw: bytes,
+        raw: _bytes,
         details: dict[str, Any],
         advertisement_monotonic_time: _float,
     ) -> None:
@@ -436,7 +437,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             tx_power,
             details,
             advertisement_monotonic_time,
-            b"",
+            None,
         )
 
     def _async_on_advertisement_internal(
@@ -450,7 +451,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         tx_power: _int | None,
         details: dict[Any, Any],
         advertisement_monotonic_time: _float,
-        raw: bytes,
+        raw: _bytes | None,
     ) -> None:
         """Call the registered callback."""
         self.scanning = not self._connecting
