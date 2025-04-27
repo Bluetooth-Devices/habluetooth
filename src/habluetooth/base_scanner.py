@@ -269,6 +269,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 self.connectable,
                 discovered_device_timestamps[address],
                 adv.tx_power,
+                b"",
             )
             for address, (
                 device,
@@ -395,11 +396,11 @@ class BaseHaRemoteScanner(BaseHaScanner):
         self,
         address: _str,
         rssi: _int,
-        adv: bytes,
+        raw: bytes,
         details: dict[str, Any],
         advertisement_monotonic_time: _float,
     ) -> None:
-        parsed = parse_advertisement_data_bytes(adv)
+        parsed = parse_advertisement_data_bytes(raw)
         self._async_on_advertisement_internal(
             address,
             rssi,
@@ -410,7 +411,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             parsed[4],
             details,
             advertisement_monotonic_time,
-            adv,
+            raw,
         )
 
     def _async_on_advertisement(
@@ -449,7 +450,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         tx_power: _int | None,
         details: dict[Any, Any],
         advertisement_monotonic_time: _float,
-        adv: bytes,
+        raw: bytes,
     ) -> None:
         """Call the registered callback."""
         self.scanning = not self._connecting
@@ -557,6 +558,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
         info.connectable = self.connectable
         info.time = advertisement_monotonic_time
         info.tx_power = tx_power
+        info.raw = raw
         self._previous_service_info[address] = info
         self._manager.scanner_adv_received(info)
 
