@@ -46,7 +46,7 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         self,
         str address,
         int rssi,
-        bytes adv,
+        bytes raw,
         dict details,
         double advertisement_monotonic_time
     )
@@ -75,7 +75,7 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         object tx_power,
         dict details,
         double advertisement_monotonic_time,
-        bytes adv
+        bytes raw
     )
 
     cpdef void _async_on_advertisement(

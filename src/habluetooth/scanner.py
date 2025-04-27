@@ -282,6 +282,7 @@ class HaScanner(BaseHaScanner):
         service_info.connectable = True
         service_info.time = callback_time
         service_info.tx_power = tx_power
+        service_info.raw = None  # not available in bleak.
         self._manager.scanner_adv_received(service_info)
 
     async def async_start(self) -> None:
