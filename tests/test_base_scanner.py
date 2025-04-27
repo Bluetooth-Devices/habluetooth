@@ -57,6 +57,22 @@ class FakeScanner(BaseHaRemoteScanner):
             now or monotonic_time_coarse(),
         )
 
+    def inject_raw_advertisement(
+        self,
+        address: str,
+        rssi: int,
+        adv: bytes,
+        now: float | None = None,
+    ) -> None:
+        """Inject a raw advertisement."""
+        self._async_on_raw_advertisement(
+            address,
+            rssi,
+            adv,
+            {"scanner_specific_data": "test"},
+            now or monotonic_time_coarse(),
+        )
+
 
 @pytest.mark.parametrize("name_2", [None, "w"])
 @pytest.mark.usefixtures("enable_bluetooth")
@@ -176,6 +192,26 @@ async def test_remote_scanner(name_2: str | None) -> None:
     assert scanner.discovered_devices_and_advertisement_data[
         switchbot_device_2.address
     ][1].manufacturer_data == {1: b"\x04", 2: b"\x01", 3: b"\x03"}
+
+    assert (
+        "00090401-0052-036b-3206-ff0a050a021a"
+        not in scanner.discovered_devices_and_advertisement_data[
+            switchbot_device_2.address
+        ][1].service_data
+    )
+
+    scanner.inject_raw_advertisement(
+        switchbot_device_2.address,
+        switchbot_device_2.rssi,
+        b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x04",
+    )
+
+    assert (
+        "00090401-0052-036b-3206-ff0a050a021a"
+        in scanner.discovered_devices_and_advertisement_data[
+            switchbot_device_2.address
+        ][1].service_data
+    )
 
     cancel()
     unsetup()
