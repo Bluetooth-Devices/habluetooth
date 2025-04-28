@@ -69,6 +69,7 @@ def test_discovered_device_advertisement_data_to_dict():
         },
         "discovered_device_timestamps": {"AA:BB:CC:DD:EE:FF": ANY},
         "expire_seconds": 100,
+        "discovered_device_raw": {},
     }
 
 
@@ -100,6 +101,9 @@ def test_discovered_device_advertisement_data_from_dict():
             },
             "discovered_device_timestamps": {"AA:BB:CC:DD:EE:FF": now},
             "expire_seconds": 100,
+            "discovered_device_raw": {
+                "AA:BB:CC:DD:EE:FF": "0215aabbccddeeff",
+            },
         }
     )
 
@@ -143,6 +147,9 @@ def test_discovered_device_advertisement_data_from_dict():
             )
         },
         discovered_device_timestamps={"AA:BB:CC:DD:EE:FF": ANY},
+        discovered_device_raw={
+            "AA:BB:CC:DD:EE:FF": b"\x02\x15\xaa\xbb\xcc\xdd\xee\xff"
+        },
     )
 
 
@@ -193,6 +200,7 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                         },
                     },
                 },
+                "discovered_device_raw": {},
                 "discovered_device_timestamps": {
                     "AA:BB:CC:DD:EE:FF": now,
                     "CC:DD:EE:FF:AA:BB": now - 100,
@@ -224,6 +232,7 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                         },
                     }
                 },
+                "discovered_device_raw": {},
                 "discovered_device_timestamps": {"CC:DD:EE:FF:AA:BB": now - 100},
                 "expire_seconds": 100,
             }
@@ -291,6 +300,7 @@ def test_expire_future_discovered_device_advertisement_data(
                     "AA:BB:CC:DD:EE:FF": now,
                     "CC:DD:EE:FF:AA:BB": now - 100,
                 },
+                "discovered_device_raw": {},
                 "expire_seconds": 100,
             }
         ),
@@ -319,6 +329,7 @@ def test_expire_future_discovered_device_advertisement_data(
                     }
                 },
                 "discovered_device_timestamps": {"CC:DD:EE:FF:AA:BB": now + 1000000},
+                "discovered_device_raw": {},
                 "expire_seconds": 100,
             }
         ),
@@ -343,7 +354,7 @@ def test_discovered_device_advertisement_data_from_dict_corrupt(caplog):
             "connectable": True,
             "discovered_device_advertisement_datas": {
                 "AA:BB:CC:DD:EE:FF": {
-                    "advertisement_data": {  # type: ignore[typeddict-item]
+                    "advertisement_data": {
                         "local_name": "Test Device",
                         "manufacturer_data": {"76": "0215aabbccddeeff"},
                         "rssi": -50,

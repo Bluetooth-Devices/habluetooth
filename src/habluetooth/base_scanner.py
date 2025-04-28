@@ -271,7 +271,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 self.connectable,
                 discovered_device_timestamps[address],
                 adv.tx_power,
-                b"",
+                history.discovered_device_raw.get(address),
             )
             for address, (
                 device,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final, TypedDict
 
 from bleak.backends.device import BLEDevice
@@ -23,12 +23,14 @@ class DiscoveredDeviceAdvertisementData:
         str, tuple[BLEDevice, AdvertisementData]
     ]
     discovered_device_timestamps: dict[str, float]
+    discovered_device_raw: dict[str, bytes] = field(default_factory=dict)
 
 
 CONNECTABLE: Final = "connectable"
 EXPIRE_SECONDS: Final = "expire_seconds"
 DISCOVERED_DEVICE_ADVERTISEMENT_DATAS: Final = "discovered_device_advertisement_datas"
 DISCOVERED_DEVICE_TIMESTAMPS: Final = "discovered_device_timestamps"
+DISCOVERED_DEVICE_RAW: Final = "discovered_device_raw"
 
 
 class DiscoveredDeviceAdvertisementDataDict(TypedDict):
@@ -38,6 +40,7 @@ class DiscoveredDeviceAdvertisementDataDict(TypedDict):
     expire_seconds: float
     discovered_device_advertisement_datas: dict[str, DiscoveredDeviceDict]
     discovered_device_timestamps: dict[str, float]
+    discovered_device_raw: dict[str, str]
 
 
 ADDRESS: Final = "address"
@@ -95,6 +98,7 @@ def expire_stale_scanner_discovered_device_advertisement_data(
         discovered_device_advertisement_datas = data[
             DISCOVERED_DEVICE_ADVERTISEMENT_DATAS
         ]
+        discovered_device_raw = data.get(DISCOVERED_DEVICE_RAW, {})
         for address, timestamp in timestamps.items():
             time_diff = now - timestamp
             if time_diff > expire_seconds:
@@ -112,6 +116,7 @@ def expire_stale_scanner_discovered_device_advertisement_data(
         for address in expire:
             del timestamps[address]
             del discovered_device_advertisement_datas[address]
+            discovered_device_raw.pop(address, None)
         if not timestamps:
             expired_scanners.append(scanner)
         _LOGGER.debug(
@@ -136,6 +141,7 @@ def discovered_device_advertisement_data_from_dict(
             _deserialize_discovered_device_timestamps(
                 data[DISCOVERED_DEVICE_TIMESTAMPS]
             ),
+            _deserialize_discovered_device_raw(data.get(DISCOVERED_DEVICE_RAW, {})),
         )
     except Exception as err:  # pylint: disable=broad-except
         _LOGGER.exception(
@@ -158,6 +164,9 @@ def discovered_device_advertisement_data_to_dict(
         ),
         discovered_device_timestamps=_serialize_discovered_device_timestamps(
             data.discovered_device_timestamps
+        ),
+        discovered_device_raw=_serialize_discovered_device_raw(
+            data.discovered_device_raw
         ),
     )
 
@@ -279,6 +288,22 @@ def _serialize_discovered_device_timestamps(
         address: monotonic_time + time_diff
         for address, monotonic_time in discovered_device_timestamps.items()
     }
+
+
+def _deserialize_discovered_device_raw(
+    discovered_device_raw: dict[str, str],
+) -> dict[str, bytes]:
+    """Deserialize discovered_device_timestamps."""
+    return {
+        address: bytes.fromhex(raw) for address, raw in discovered_device_raw.items()
+    }
+
+
+def _serialize_discovered_device_raw(
+    discovered_device_raw: dict[str, bytes],
+) -> dict[str, str]:
+    """Serialize discovered_device_timestamps."""
+    return {address: raw.hex() for address, raw in discovered_device_raw.items()}
 
 
 DiscoveryStorageType = dict[str, DiscoveredDeviceAdvertisementDataDict]
