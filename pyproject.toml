@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "habluetooth"
-version = "3.43.0"
+version = "3.44.0"
 license = "Apache-2.0"
 description = "High availability Bluetooth"
 authors = [{ name = "J. Nick Koston", email = "bluetooth@koston.org" }]

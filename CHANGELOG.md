@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.44.0 (2025-04-28)
+
+### Features
+
+
+- Save the raw data in storage (#217) ([`eaf4107`](https://github.com/Bluetooth-Devices/habluetooth/commit/eaf41072ecc915b2de23ad3c9a03148f4b313f17))
+
+
 ## v3.43.0 (2025-04-28)
 
 ### Features
