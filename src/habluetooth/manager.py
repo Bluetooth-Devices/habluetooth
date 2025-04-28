@@ -26,6 +26,7 @@ from bluetooth_adapters import (
     get_adapters,
 )
 from bluetooth_data_tools import monotonic_time_coarse
+from btsocket.btmgmt_socket import BluetoothSocketError
 
 from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
@@ -330,7 +331,12 @@ class BluetoothManager:
             self._mgmt_ctl = MGMTBluetoothCtl(10.0, self._side_channel_scanners)
             try:
                 await self._mgmt_ctl.setup()
-            except (OSError, asyncio.TimeoutError, PermissionError) as ex:
+            except (
+                BluetoothSocketError,
+                OSError,
+                asyncio.TimeoutError,
+                PermissionError,
+            ) as ex:
                 _LOGGER.debug("Cannot start Bluetooth Management API: %s", ex)
                 self._mgmt_ctl = None
             else:
