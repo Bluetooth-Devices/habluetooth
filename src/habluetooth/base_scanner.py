@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Final, Iterable, final
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from bluetooth_adapters import DiscoveredDeviceAdvertisementData, adapter_human_name
+from bluetooth_adapters import adapter_human_name
 from bluetooth_data_tools import monotonic_time_coarse, parse_advertisement_data_bytes
 
 from .central_manager import get_manager
@@ -27,6 +27,7 @@ from .models import (
     HaBluetoothConnector,
     HaScannerDetails,
 )
+from .storage import DiscoveredDeviceAdvertisementData
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
@@ -270,7 +271,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 self.connectable,
                 discovered_device_timestamps[address],
                 adv.tx_power,
-                b"",
+                history.discovered_device_raw.get(address),
             )
             for address, (
                 device,
