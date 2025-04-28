@@ -287,8 +287,8 @@ class BaseHaRemoteScanner(BaseHaScanner):
         return DiscoveredDeviceAdvertisementData(
             self.connectable,
             self._expire_seconds,
-            self._build_discovered_device_advertisement_datas(),
-            self._build_discovered_device_timestamps(),
+            {},  # self._build_discovered_device_advertisement_datas(),
+            {},  # self._build_discovered_device_timestamps(),
         )
 
     @property
