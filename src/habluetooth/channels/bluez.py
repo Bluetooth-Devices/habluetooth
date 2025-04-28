@@ -6,8 +6,9 @@ import socket
 from asyncio import timeout as asyncio_timeout
 from typing import TYPE_CHECKING, cast
 
-from bluetooth_data_tools import parse_advertisement_data_bytes
 from btsocket import btmgmt_protocol, btmgmt_socket
+
+from ..scanner import HaScanner
 
 _LOGGER = logging.getLogger(__name__)
 _int = int
@@ -23,13 +24,18 @@ ADV_MONITOR_DEVICE_FOUND = 0x002F
 class BluetoothMGMTProtocol:
     """Bluetooth MGMT protocol."""
 
-    def __init__(self, connection_mode_future: asyncio.Future[None]) -> None:
+    def __init__(
+        self,
+        connection_mode_future: asyncio.Future[None],
+        scanners: dict[int, HaScanner],
+    ) -> None:
         """Initialize the protocol."""
         self.transport: asyncio.Transport | None = None
         self.connection_mode_future = connection_mode_future
         self._buffer: bytes | None = None
         self._buffer_len = 0
         self._pos = 0
+        self._scanners = scanners
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         """Handle connection made."""
@@ -130,14 +136,17 @@ class BluetoothMGMTProtocol:
 
             # Skip AD_Data_Length (2 bytes) at parse_offset+12 and +13
             data = header[parse_offset + 14 : self._pos]
-            print(
-                f"controller_idx: {controller_idx}, "
-                f"address: {address.hex()}, address_type: {address_type}, "
-                f"rssi: {rssi}, flags: {flags}, "
-                f"data: {data.hex()}"
-            )
-            print(parse_advertisement_data_bytes(data))
             self._remove_from_buffer()
+            if (scanner := self._scanners.get(controller_idx)) is not None:
+                # We have a scanner for this controller, so we can
+                # pass the data to it.
+                scanner._async_on_raw_advertisement(
+                    address,
+                    address_type,
+                    rssi,
+                    flags,
+                    data,
+                )
 
     def _timeout_future(self, future: asyncio.Future[btmgmt_protocol.Response]) -> None:
         if future and not future.done():
@@ -153,12 +162,13 @@ class BluetoothMGMTProtocol:
 class MGMTBluetoothCtl:
     """Class to control interfaces using the BlueZ management API."""
 
-    def __init__(self, timeout: float) -> None:
+    def __init__(self, timeout: float, scanners: dict[int, HaScanner]) -> None:
         """Initialize the control class."""
         # Internal state
         self.timeout = timeout
         self.protocol: BluetoothMGMTProtocol | None = None
         self.sock: socket.socket | None = None
+        self.scanners = scanners
 
     async def close(self) -> None:
         """Close the management interface."""
@@ -179,7 +189,9 @@ class MGMTBluetoothCtl:
                 # see https://bugs.python.org/issue38285
                 _, protocol = await loop._create_connection_transport(  # type: ignore[attr-defined]
                     self.sock,
-                    lambda: BluetoothMGMTProtocol(connection_made_future),
+                    lambda: BluetoothMGMTProtocol(
+                        connection_made_future, self.scanners
+                    ),
                     None,
                     None,
                 )

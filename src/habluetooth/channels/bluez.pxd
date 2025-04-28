@@ -1,7 +1,7 @@
 
 import cython
 
-
+from ..scanner cimport HaScanner
 cdef bint TYPE_CHECKING
 
 cdef unsigned short DEVICE_FOUND
@@ -14,6 +14,7 @@ cdef class BluetoothMGMTProtocol:
     cdef bytes _buffer
     cdef unsigned int _buffer_len
     cdef unsigned int _pos
+    cdef dict _scanners
 
     @cython.locals(
         original_pos="unsigned int",
@@ -34,8 +35,9 @@ cdef class BluetoothMGMTProtocol:
         controller_idx="unsigned short",
         param_len="unsigned short",
         rssi="short",
-        flags="unsigned short",
+        flags="unsigned int",
         data="bytes",
         parse_offset="unsigned short",
+        scanner=HaScanner
     )
     cpdef void data_received(self, object data) except *

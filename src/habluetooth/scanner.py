@@ -31,6 +31,8 @@ from .const import (
 from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
 
+int_ = int
+
 SYSTEM = platform.system()
 IS_LINUX = SYSTEM == "Linux"
 IS_MACOS = SYSTEM == "Darwin"
@@ -240,6 +242,17 @@ class HaScanner(BaseHaScanner):
         """Return diagnostic information about the scanner."""
         base_diag = await super().async_diagnostics()
         return base_diag | {"adapter": self.adapter}
+
+    def _async_on_raw_advertisement(
+        self,
+        address: bytes,
+        address_type: int_,
+        rssi: int_,
+        flags: int_,
+        data: bytes,
+    ) -> None:
+        """Handle raw advertisement data."""
+        # TODO: Implement this method
 
     def _async_detection_callback(
         self,
