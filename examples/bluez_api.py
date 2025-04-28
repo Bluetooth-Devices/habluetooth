@@ -6,7 +6,7 @@ from habluetooth.channels.bluez import MGMTBluetoothCtl
 async def main() -> None:
     """Main function to test the Bluetooth management API."""
     # Create an instance of MGMTBluetoothCtl
-    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0)
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
 
     # Set up the management interface
     await mgmt_ctl.setup()
