@@ -17,6 +17,7 @@ _bytes = bytes
 HEADER_SIZE = 6
 # Header is event_code (2 bytes), controller_idx (2 bytes), param_len (2 bytes)
 DEVICE_FOUND = 0x0012
+DEVICE_FOUND_ALT = 0x002F
 
 
 class BluetoothMGMTProtocol:
@@ -111,7 +112,7 @@ class BluetoothMGMTProtocol:
                 # for more data to arrive.
                 return
             self._pos += param_len
-            if event_code != DEVICE_FOUND:
+            if event_code != DEVICE_FOUND and event_code != DEVICE_FOUND_ALT:
                 print(f"Unknown event code: {event_code}: {header[0:self._pos]!r}")
                 self._remove_from_buffer()
                 continue
