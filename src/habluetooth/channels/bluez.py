@@ -108,13 +108,13 @@ class BluetoothMGMTProtocol:
                 # for more data to arrive.
                 return
             self._pos += param_len
-            if event_code != DEVICE_FOUND and event_code != ADV_MONITOR_DEVICE_FOUND:
-                self._remove_from_buffer()
-                continue
             if event_code == DEVICE_FOUND:
                 parse_offset = 6
             elif event_code == ADV_MONITOR_DEVICE_FOUND:
                 parse_offset = 8
+            else:
+                self._remove_from_buffer()
+                continue
             address = header[parse_offset : parse_offset + 6]
             address_type = header[parse_offset + 6]
             rssi = header[parse_offset + 7]
