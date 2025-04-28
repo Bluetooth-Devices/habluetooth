@@ -10,7 +10,7 @@ from btsocket import btmgmt_protocol, btmgmt_socket
 
 _LOGGER = logging.getLogger(__name__)
 _int = int
-
+_bytes = bytes
 # Everything is little endian
 
 HEADER_SIZE = 6
@@ -89,7 +89,7 @@ class BluetoothMGMTProtocol:
         # above to verify we never try to read past the end of the buffer
         return cstr[original_pos:new_pos]
 
-    def data_received(self, data: bytes) -> None:
+    def data_received(self, data: _bytes) -> None:
         """Handle data received."""
         self._add_to_buffer(data)
         while self._buffer_len >= 6:
