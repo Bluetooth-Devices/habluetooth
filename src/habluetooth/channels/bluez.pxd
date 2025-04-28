@@ -5,7 +5,7 @@ import cython
 cdef bint TYPE_CHECKING
 
 cdef unsigned short DEVICE_FOUND
-cdef unsigned short DEVICE_FOUND_ALT
+cdef unsigned short ADV_MONITOR_DEVICE_FOUND
 
 cdef class BluetoothMGMTProtocol:
 
