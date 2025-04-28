@@ -103,10 +103,6 @@ class BluetoothMGMTProtocol:
             event_code = header[0] | (header[1] << 8)
             controller_idx = header[2] | (header[3] << 8)
             param_len = header[4] | (header[5] << 8)
-            print(
-                f"event_code: {event_code}, controller_idx: {controller_idx}, "
-                f"param_len: {param_len}"
-            )
             if self._buffer_len < self._pos + param_len:
                 # We don't have the entire frame yet, so we need to wait
                 # for more data to arrive.
@@ -135,6 +131,7 @@ class BluetoothMGMTProtocol:
             # Skip AD_Data_Length (2 bytes) at parse_offset+12 and +13
             data = header[parse_offset + 14 : self._pos]
             print(
+                f"controller_idx: {controller_idx}, "
                 f"address: {address.hex()}, address_type: {address_type}, "
                 f"rssi: {rssi}, flags: {flags}, "
                 f"data: {data.hex()}"
