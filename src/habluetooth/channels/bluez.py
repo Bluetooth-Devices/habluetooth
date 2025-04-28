@@ -17,7 +17,7 @@ _bytes = bytes
 HEADER_SIZE = 6
 # Header is event_code (2 bytes), controller_idx (2 bytes), param_len (2 bytes)
 DEVICE_FOUND = 0x0012
-DEVICE_FOUND_ALT = 0x002F
+ADV_MONITOR_DEVICE_FOUND = 0x002F
 
 
 class BluetoothMGMTProtocol:
@@ -112,25 +112,41 @@ class BluetoothMGMTProtocol:
                 # for more data to arrive.
                 return
             self._pos += param_len
-            if event_code != DEVICE_FOUND and event_code != DEVICE_FOUND_ALT:
-                print(f"Unknown event code: {event_code}: {header[0:self._pos]!r}")
+            if event_code != DEVICE_FOUND and event_code != ADV_MONITOR_DEVICE_FOUND:
                 self._remove_from_buffer()
                 continue
-            address = header[6:12]  # 6 bytes
-            address_type = header[12]  # 1 byte - unsigned
-            rssi = header[13]  # 1 byte - signed
-            if rssi > 128:
-                rssi = rssi - 256
-            flags = (
-                (header[17] << 24) | (header[16] << 16) | (header[15] << 8) | header[14]
-            )
-            edr_data = header[20 : self._pos]
+            if event_code == DEVICE_FOUND:
+                address = header[6:12]  # 6 bytes
+                address_type = header[12]  # 1 byte - unsigned
+                rssi = header[13]  # 1 byte - signed
+                if rssi > 128:
+                    rssi = rssi - 256
+                flags = (
+                    (header[17] << 24)
+                    | (header[16] << 16)
+                    | (header[15] << 8)
+                    | header[14]
+                )
+                data = header[20 : self._pos]
+            elif event_code == ADV_MONITOR_DEVICE_FOUND:
+                address = header[8:14]  # 6 bytes
+                address_type = header[14]
+                rssi = header[15]  # 1 byte - signed
+                if rssi > 128:
+                    rssi = rssi - 256
+                flags = (
+                    (header[19] << 24)
+                    | (header[18] << 16)
+                    | (header[17] << 8)
+                    | header[16]
+                )
+                data = header[22 : self._pos]
             print(
                 f"address: {address.hex()}, address_type: {address_type}, "
                 f"rssi: {rssi}, flags: {flags}, "
-                f"edr_data: {edr_data.hex()}"
+                f"data: {data.hex()}"
             )
-            print(parse_advertisement_data_bytes(edr_data))
+            print(parse_advertisement_data_bytes(data))
             self._remove_from_buffer()
 
     def _timeout_future(self, future: asyncio.Future[btmgmt_protocol.Response]) -> None:

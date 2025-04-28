@@ -35,6 +35,6 @@ cdef class BluetoothMGMTProtocol:
         param_len="unsigned short",
         rssi="short",
         flags="unsigned short",
-        edr_data="bytes"
+        data="bytes"
     )
     cpdef void data_received(self, object data) except *
