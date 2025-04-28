@@ -6,6 +6,7 @@ import socket
 from asyncio import timeout as asyncio_timeout
 from typing import TYPE_CHECKING, cast
 
+from bluetooth_data_tools import parse_advertisement_data_bytes
 from btsocket import btmgmt_protocol, btmgmt_socket
 
 _LOGGER = logging.getLogger(__name__)
@@ -127,6 +128,7 @@ class BluetoothMGMTProtocol:
                 f"rssi: {rssi}, flags: {flags}, "
                 f"edr_data: {edr_data.hex()}"
             )
+            print(parse_advertisement_data_bytes(edr_data))
             self._remove_from_buffer()
 
     def _timeout_future(self, future: asyncio.Future[btmgmt_protocol.Response]) -> None:
