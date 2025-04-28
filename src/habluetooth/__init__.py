@@ -25,6 +25,14 @@ from .models import (
 )
 from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
 from .scanner_device import BluetoothScannerDevice
+from .storage import (
+    DiscoveredDeviceAdvertisementData,
+    DiscoveredDeviceAdvertisementDataDict,
+    DiscoveryStorageType,
+    discovered_device_advertisement_data_from_dict,
+    discovered_device_advertisement_data_to_dict,
+    expire_stale_scanner_discovered_device_advertisement_data,
+)
 from .wrappers import HaBleakClientWrapper, HaBleakScannerWrapper
 
 __all__ = [
@@ -42,6 +50,9 @@ __all__ = [
     "BluetoothScanningMode",
     "BluetoothServiceInfo",
     "BluetoothServiceInfoBleak",
+    "DiscoveredDeviceAdvertisementData",
+    "DiscoveredDeviceAdvertisementDataDict",
+    "DiscoveryStorageType",
     "HaBleakClientWrapper",
     "HaBleakScannerWrapper",
     "HaBluetoothConnector",
@@ -51,6 +62,9 @@ __all__ = [
     "HaScannerRegistration",
     "HaScannerRegistrationEvent",
     "ScannerStartError",
+    "discovered_device_advertisement_data_from_dict",
+    "discovered_device_advertisement_data_to_dict",
+    "expire_stale_scanner_discovered_device_advertisement_data",
     "get_manager",
     "set_manager",
 ]
