@@ -27,7 +27,7 @@ cdef class HaScanner(BaseHaScanner):
         object advertisement_data
     )
 
-    cdef void _async_on_raw_bluez_advertisement(
+    cpdef void _async_on_raw_bluez_advertisement(
         self,
         bytes address,
         unsigned short address_type,
