@@ -112,6 +112,7 @@ class BluetoothMGMTProtocol:
                 return
             self._pos += param_len
             if event_code != DEVICE_FOUND:
+                print(f"Unknown event code: {event_code}: {header[0:self._pos]!r}")
                 self._remove_from_buffer()
                 continue
             address = header[6:12]  # 6 bytes
