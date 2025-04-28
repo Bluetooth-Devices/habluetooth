@@ -15,6 +15,7 @@ _bytes = bytes
 
 HEADER_SIZE = 6
 # Header is event_code (2 bytes), controller_idx (2 bytes), param_len (2 bytes)
+DEVICE_FOUND = 0x0012
 
 
 class BluetoothMGMTProtocol:
@@ -104,7 +105,26 @@ class BluetoothMGMTProtocol:
                 f"event_code: {event_code}, controller_idx: {controller_idx}, "
                 f"param_len: {param_len}"
             )
-            self._read(param_len)
+            if self._buffer_len < self._pos + param_len:
+                # We don't have the entire frame yet, so we need to wait
+                # for more data to arrive.
+                return
+            self._pos += param_len
+            if event_code != DEVICE_FOUND:
+                self._remove_from_buffer()
+                continue
+            address = header[6:12]  # 6 bytes
+            address_type = header[12]  # 1 byte - unsigned
+            rssi = header[13]  # 1 byte - signed
+            flags = header[14:18]  # 4 bytes
+            edr_data_length = header[18] | (header[19] << 8)
+            edr_data = header[20 : self._pos]
+            print(
+                f"address: {address.hex()}, address_type: {address_type}, "
+                f"rssi: {rssi}, flags: {flags.hex()}, "
+                f"edr_data_length: {edr_data_length}, "
+                f"edr_data: {edr_data.hex()}"
+            )
             self._remove_from_buffer()
 
     def _timeout_future(self, future: asyncio.Future[btmgmt_protocol.Response]) -> None:
