@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import timedelta
+from unittest.mock import ANY
 
 import pytest
 from bleak.backends.device import BLEDevice
@@ -23,6 +24,9 @@ from habluetooth.const import (
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
+)
+from habluetooth.storage import (
+    DiscoveredDeviceAdvertisementData,
 )
 
 from . import (
@@ -211,6 +215,20 @@ async def test_remote_scanner(name_2: str | None) -> None:
         in scanner.discovered_devices_and_advertisement_data[
             switchbot_device_2.address
         ][1].service_data
+    )
+
+    assert scanner.serialize_discovered_devices() == DiscoveredDeviceAdvertisementData(
+        connectable=True,
+        expire_seconds=195,
+        discovered_device_advertisement_datas={"44:44:33:11:23:45": ANY},
+        discovered_device_timestamps={"44:44:33:11:23:45": ANY},
+        discovered_device_raw={
+            "44:44:33:11:23:45": b"\x12!\x1a\x02"
+            b"\n\x05\n\xff"
+            b"\x062k\x03"
+            b"R\x00\x01\x04"
+            b"\t\x00\x04"
+        },
     )
 
     cancel()

@@ -23,7 +23,7 @@ class DiscoveredDeviceAdvertisementData:
         str, tuple[BLEDevice, AdvertisementData]
     ]
     discovered_device_timestamps: dict[str, float]
-    discovered_device_raw: dict[str, bytes] = field(default_factory=dict)
+    discovered_device_raw: dict[str, bytes | None] = field(default_factory=dict)
 
 
 CONNECTABLE: Final = "connectable"
@@ -40,7 +40,7 @@ class DiscoveredDeviceAdvertisementDataDict(TypedDict):
     expire_seconds: float
     discovered_device_advertisement_datas: dict[str, DiscoveredDeviceDict]
     discovered_device_timestamps: dict[str, float]
-    discovered_device_raw: dict[str, str]
+    discovered_device_raw: dict[str, str | None]
 
 
 ADDRESS: Final = "address"
@@ -291,19 +291,23 @@ def _serialize_discovered_device_timestamps(
 
 
 def _deserialize_discovered_device_raw(
-    discovered_device_raw: dict[str, str],
-) -> dict[str, bytes]:
+    discovered_device_raw: dict[str, str | None],
+) -> dict[str, bytes | None]:
     """Deserialize discovered_device_timestamps."""
     return {
-        address: bytes.fromhex(raw) for address, raw in discovered_device_raw.items()
+        address: None if raw is None else bytes.fromhex(raw)
+        for address, raw in discovered_device_raw.items()
     }
 
 
 def _serialize_discovered_device_raw(
-    discovered_device_raw: dict[str, bytes],
-) -> dict[str, str]:
+    discovered_device_raw: dict[str, bytes | None],
+) -> dict[str, str | None]:
     """Serialize discovered_device_timestamps."""
-    return {address: raw.hex() for address, raw in discovered_device_raw.items()}
+    return {
+        address: None if raw is None else raw.hex()
+        for address, raw in discovered_device_raw.items()
+    }
 
 
 DiscoveryStorageType = dict[str, DiscoveredDeviceAdvertisementDataDict]
