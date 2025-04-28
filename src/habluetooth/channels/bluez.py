@@ -116,13 +116,15 @@ class BluetoothMGMTProtocol:
             address = header[6:12]  # 6 bytes
             address_type = header[12]  # 1 byte - unsigned
             rssi = header[13]  # 1 byte - signed
-            flags = header[14:18]  # 4 bytes
-            edr_data_length = header[18] | (header[19] << 8)
+            if rssi > 128:
+                rssi = rssi - 256
+            flags = (
+                (header[17] << 24) | (header[16] << 16) | (header[15] << 8) | header[14]
+            )
             edr_data = header[20 : self._pos]
             print(
                 f"address: {address.hex()}, address_type: {address_type}, "
-                f"rssi: {rssi}, flags: {flags.hex()}, "
-                f"edr_data_length: {edr_data_length}, "
+                f"rssi: {rssi}, flags: {flags}, "
                 f"edr_data: {edr_data.hex()}"
             )
             self._remove_from_buffer()

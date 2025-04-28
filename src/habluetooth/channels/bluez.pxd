@@ -31,6 +31,9 @@ cdef class BluetoothMGMTProtocol:
         header="const unsigned char *",
         event_code="unsigned short",
         controller_idx="unsigned short",
-        param_len="unsigned short"
+        param_len="unsigned short",
+        rssi="short",
+        flags="unsigned short",
+        edr_data="bytes"
     )
     cpdef void data_received(self, object data) except *
