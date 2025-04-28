@@ -116,31 +116,24 @@ class BluetoothMGMTProtocol:
                 self._remove_from_buffer()
                 continue
             if event_code == DEVICE_FOUND:
-                address = header[6:12]  # 6 bytes
-                address_type = header[12]  # 1 byte - unsigned
-                rssi = header[13]  # 1 byte - signed
-                if rssi > 128:
-                    rssi = rssi - 256
-                flags = (
-                    (header[17] << 24)
-                    | (header[16] << 16)
-                    | (header[15] << 8)
-                    | header[14]
-                )
-                data = header[20 : self._pos]
+                parse_offset = 6
             elif event_code == ADV_MONITOR_DEVICE_FOUND:
-                address = header[8:14]  # 6 bytes
-                address_type = header[14]
-                rssi = header[15]  # 1 byte - signed
-                if rssi > 128:
-                    rssi = rssi - 256
-                flags = (
-                    (header[19] << 24)
-                    | (header[18] << 16)
-                    | (header[17] << 8)
-                    | header[16]
-                )
-                data = header[22 : self._pos]
+                parse_offset = 8
+            address = header[parse_offset : parse_offset + 6]
+            address_type = header[parse_offset + 6]
+            rssi = header[parse_offset + 7]
+            if rssi > 128:
+                rssi -= 256
+
+            flags = (
+                header[parse_offset + 8]
+                | (header[parse_offset + 9] << 8)
+                | (header[parse_offset + 10] << 16)
+                | (header[parse_offset + 11] << 24)
+            )
+
+            # Skip AD_Data_Length (2 bytes) at parse_offset+12 and +13
+            data = header[parse_offset + 14 : self._pos]
             print(
                 f"address: {address.hex()}, address_type: {address_type}, "
                 f"rssi: {rssi}, flags: {flags}, "
