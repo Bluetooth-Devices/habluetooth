@@ -31,6 +31,7 @@ cdef class BaseHaScanner:
     cdef public dict _previous_service_info
     cdef public double _expire_seconds
     cdef public dict _details
+    cdef public object _cancel_track
 
     cpdef tuple get_discovered_device_advertisement_data(self, str address)
 
@@ -97,7 +98,6 @@ cdef class BaseHaScanner:
 
 cdef class BaseHaRemoteScanner(BaseHaScanner):
 
-    cdef public object _cancel_track
 
 
     cpdef void _schedule_expire_devices(self)

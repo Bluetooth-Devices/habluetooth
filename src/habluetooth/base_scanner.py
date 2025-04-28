@@ -43,6 +43,7 @@ class BaseHaScanner:
     """Base class for high availability BLE scanners."""
 
     __slots__ = (
+        "_cancel_track",
         "_cancel_watchdog",
         "_connecting",
         "_details",
@@ -98,6 +99,7 @@ class BaseHaScanner:
         # will handle taking care of availability for non-connectable devices
         self._expire_seconds = CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
         self._details: dict[str, str | HaBluetoothConnector] = {"source": source}
+        self._cancel_track: asyncio.TimerHandle | None = None
 
     def time_since_last_detection(self) -> float:
         """Return the time since the last detection."""
@@ -106,6 +108,7 @@ class BaseHaScanner:
     def async_setup(self) -> CALLBACK_TYPE:
         """Set up the scanner."""
         self._loop = asyncio.get_running_loop()
+        self._schedule_expire_devices()
         return self._unsetup
 
     def _async_stop_scanner_watchdog(self) -> None:
@@ -168,6 +171,7 @@ class BaseHaScanner:
 
     def _unsetup(self) -> None:
         """Unset up the scanner."""
+        self._cancel_expire_devices()
 
     @contextmanager
     def connecting(self) -> Generator[None, None, None]:
@@ -489,44 +493,11 @@ class BaseHaScanner:
         for address in expired:
             del self._previous_service_info[address]
 
-
-class BaseHaRemoteScanner(BaseHaScanner):
-    """Base class for a high availability remote BLE scanner."""
-
-    __slots__ = ("_cancel_track",)
-
-    def __init__(
-        self,
-        scanner_id: str,
-        name: str,
-        connector: HaBluetoothConnector | None,
-        connectable: bool,
-        requested_mode: BluetoothScanningMode | None = None,
-        current_mode: BluetoothScanningMode | None = None,
-    ) -> None:
-        """Initialize the scanner."""
-        super().__init__(
-            scanner_id, name, connector, connectable, requested_mode, current_mode
-        )
-        self._cancel_track: asyncio.TimerHandle | None = None
-
     def _cancel_expire_devices(self) -> None:
         """Cancel the expiration of old devices."""
         if self._cancel_track:
             self._cancel_track.cancel()
             self._cancel_track = None
-
-    def _unsetup(self) -> None:
-        """Unset up the scanner."""
-        self._async_stop_scanner_watchdog()
-        self._cancel_expire_devices()
-
-    def async_setup(self) -> CALLBACK_TYPE:
-        """Set up the scanner."""
-        super().async_setup()
-        self._schedule_expire_devices()
-        self._async_setup_scanner_watchdog()
-        return self._unsetup
 
     def _schedule_expire_devices(self) -> None:
         """Schedule the expiration of old devices."""
@@ -542,6 +513,21 @@ class BaseHaRemoteScanner(BaseHaScanner):
         """Expire old devices and schedule the next expiration."""
         self._async_expire_devices()
         self._schedule_expire_devices()
+
+
+class BaseHaRemoteScanner(BaseHaScanner):
+    """Base class for a high availability remote BLE scanner."""
+
+    def _unsetup(self) -> None:
+        """Unset up the scanner."""
+        super()._unsetup()
+        self._async_stop_scanner_watchdog()
+
+    def async_setup(self) -> CALLBACK_TYPE:
+        """Set up the scanner."""
+        super().async_setup()
+        self._async_setup_scanner_watchdog()
+        return self._unsetup
 
     @property
     def discovered_devices(self) -> list[BLEDevice]:
