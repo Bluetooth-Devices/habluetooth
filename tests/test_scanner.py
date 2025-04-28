@@ -21,7 +21,11 @@ from habluetooth import (
     scanner,
     set_manager,
 )
-from habluetooth.scanner import InvalidMessageError
+from habluetooth.scanner import (
+    InvalidMessageError,
+    bytes_mac_to_str,
+    make_bluez_details,
+)
 
 from . import (
     async_fire_time_changed,
@@ -56,6 +60,20 @@ def manager():
     manager = BluetoothManager(adapters, slot_manager)
     set_manager(manager)
     return manager
+
+
+def test_bytes_mac_to_str() -> None:
+    """Test bytes_mac_to_str."""
+    assert bytes_mac_to_str(b"\xaa\xbb\xcc\xdd\xee\xff") == "AA:BB:CC:DD:EE:FF"
+    assert bytes_mac_to_str(b"\xaa\xbb\xcc\xdd\xee\xff") == "AA:BB:CC:DD:EE:FF"
+
+
+def test_make_bluez_details() -> None:
+    """Test make_bluez_details."""
+    assert make_bluez_details("AA:BB:CC:DD:EE:FF", "hci0") == {
+        "path": "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF",
+        "props": {"Adapter": "/org/bluez/hci0"},
+    }
 
 
 @pytest.mark.asyncio

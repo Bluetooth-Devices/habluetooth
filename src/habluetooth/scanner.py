@@ -115,12 +115,6 @@ SCANNER_WATCHDOG_MULTIPLE = (
 )
 
 
-@lru_cache(maxsize=512)
-def bytes_mac_to_str(mac: bytes) -> str:
-    """Convert a mac address in bytes to a string."""
-    return ":".join(f"{b:02X}" for b in mac)
-
-
 class _AbortStartError(Exception):
     """Error to indicate that the start should be aborted."""
 
@@ -169,6 +163,12 @@ def _error_indicates_wait_for_adapter_to_init(error_str: str) -> bool:
     return any(
         wait_error in error_str for wait_error in WAIT_FOR_ADAPTER_TO_INIT_ERRORS
     )
+
+
+@lru_cache(maxsize=512)
+def bytes_mac_to_str(mac: bytes) -> str:
+    """Convert a mac address in bytes to a string."""
+    return ":".join(f"{b:02X}" for b in mac)
 
 
 @lru_cache(maxsize=512)
