@@ -203,7 +203,7 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                 "discovered_device_raw": {},
                 "discovered_device_timestamps": {
                     "AA:BB:CC:DD:EE:FF": now,
-                    "CC:DD:EE:FF:AA:BB": now - 100,
+                    "CC:DD:EE:FF:AA:BB": now - 101,
                 },
                 "expire_seconds": 100,
             }
@@ -233,7 +233,7 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                     }
                 },
                 "discovered_device_raw": {},
-                "discovered_device_timestamps": {"CC:DD:EE:FF:AA:BB": now - 100},
+                "discovered_device_timestamps": {"CC:DD:EE:FF:AA:BB": now - 101},
                 "expire_seconds": 100,
             }
         ),
@@ -298,7 +298,7 @@ def test_expire_future_discovered_device_advertisement_data(
                 },
                 "discovered_device_timestamps": {
                     "AA:BB:CC:DD:EE:FF": now,
-                    "CC:DD:EE:FF:AA:BB": now - 100,
+                    "CC:DD:EE:FF:AA:BB": now - 101,
                 },
                 "discovered_device_raw": {},
                 "expire_seconds": 100,
