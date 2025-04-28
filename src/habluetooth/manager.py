@@ -314,6 +314,7 @@ class BluetoothManager:
         await self._async_refresh_adapters()
         install_multiple_bleak_catcher()
         self.async_setup_unavailable_tracking()
+        # TODO: connect management socket
 
     def async_stop(self) -> None:
         """Stop the Bluetooth integration at shutdown."""
