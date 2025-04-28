@@ -290,6 +290,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             self._expire_seconds,
             self._build_discovered_device_advertisement_datas(),
             self._build_discovered_device_timestamps(),
+            self._build_discovered_device_raw(),
         )
 
     @property
@@ -322,6 +323,12 @@ class BaseHaRemoteScanner(BaseHaScanner):
         """Return a dict of discovered device timestamps."""
         return {
             address: info.time for address, info in self._previous_service_info.items()
+        }
+
+    def _build_discovered_device_raw(self) -> dict[str, bytes | None]:
+        """Return a dict of discovered device raw advertisement data."""
+        return {
+            address: info.raw for address, info in self._previous_service_info.items()
         }
 
     def _cancel_expire_devices(self) -> None:
