@@ -327,20 +327,21 @@ class BluetoothManager:
         await self._async_refresh_adapters()
         install_multiple_bleak_catcher()
         self.async_setup_unavailable_tracking()
-        if IS_LINUX:
-            self._mgmt_ctl = MGMTBluetoothCtl(10.0, self._side_channel_scanners)
-            try:
-                await self._mgmt_ctl.setup()
-            except (
-                BluetoothSocketError,
-                OSError,
-                asyncio.TimeoutError,
-                PermissionError,
-            ) as ex:
-                _LOGGER.debug("Cannot start Bluetooth Management API: %s", ex)
-                self._mgmt_ctl = None
-            else:
-                self.has_advertising_side_channel = True
+        if not IS_LINUX:
+            return
+        self._mgmt_ctl = MGMTBluetoothCtl(10.0, self._side_channel_scanners)
+        try:
+            await self._mgmt_ctl.setup()
+        except (
+            BluetoothSocketError,
+            OSError,
+            asyncio.TimeoutError,
+            PermissionError,
+        ) as ex:
+            _LOGGER.debug("Cannot start Bluetooth Management API: %s", ex)
+            self._mgmt_ctl = None
+        else:
+            self.has_advertising_side_channel = True
 
     def async_stop(self) -> None:
         """Stop the Bluetooth integration at shutdown."""
