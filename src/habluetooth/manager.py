@@ -775,10 +775,9 @@ class BluetoothManager:
         self._allocations.pop(scanner.source, None)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
-        if isinstance(scanner, HaScanner):
-            self._side_channel_scanners.pop(
-                int(scanner.adapter.removeprefix("hci")), None
-            )
+        if scanner.adapter.startswith("hci"):
+            idx = int(scanner.adapter.removeprefix("hci"))
+            self._side_channel_scanners.pop(idx, None)
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.REMOVED)
 
     def async_register_scanner(
@@ -798,10 +797,9 @@ class BluetoothManager:
         scanners.add(scanner)
         self._sources[scanner.source] = scanner
         self._adapter_sources[scanner.adapter] = scanner.source
-        if isinstance(scanner, HaScanner):
-            self._side_channel_scanners[int(scanner.adapter.removeprefix("hci"))] = (
-                scanner
-            )
+        if scanner.adapter.startswith("hci"):
+            idx = int(scanner.adapter.removeprefix("hci"))
+            self._side_channel_scanners[idx] = scanner  # type: ignore[assignment]
         if connection_slots:
             self.slot_manager.register_adapter(scanner.adapter, connection_slots)
             self.async_on_allocation_changed(
