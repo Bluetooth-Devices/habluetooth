@@ -96,11 +96,9 @@ cdef class BaseHaScanner:
     @cython.locals(now=double, timestamp=double, info=BluetoothServiceInfoBleak)
     cpdef void _async_expire_devices(self)
 
-cdef class BaseHaRemoteScanner(BaseHaScanner):
-
-
-
     cpdef void _schedule_expire_devices(self)
+
+cdef class BaseHaRemoteScanner(BaseHaScanner):
 
     @cython.locals(info=BluetoothServiceInfoBleak)
     cpdef tuple get_discovered_device_advertisement_data(self, str address)
