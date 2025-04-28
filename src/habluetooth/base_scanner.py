@@ -45,9 +45,12 @@ class BaseHaScanner:
     __slots__ = (
         "_cancel_watchdog",
         "_connecting",
+        "_details",
+        "_expire_seconds",
         "_last_detection",
         "_loop",
         "_manager",
+        "_previous_service_info",
         "_start_time",
         "adapter",
         "connectable",
@@ -90,6 +93,11 @@ class BaseHaScanner:
             name=self.name,
             adapter=self.adapter,
         )
+        self._previous_service_info: dict[str, BluetoothServiceInfoBleak] = {}
+        # Scanners only care about connectable devices. The manager
+        # will handle taking care of availability for non-connectable devices
+        self._expire_seconds = CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
+        self._details: dict[str, str | HaBluetoothConnector] = {"source": source}
 
     def time_since_last_detection(self) -> float:
         """Return the time since the last detection."""
@@ -221,37 +229,6 @@ class BaseHaScanner:
             ],
         }
 
-
-class BaseHaRemoteScanner(BaseHaScanner):
-    """Base class for a high availability remote BLE scanner."""
-
-    __slots__ = (
-        "_cancel_track",
-        "_details",
-        "_expire_seconds",
-        "_previous_service_info",
-    )
-
-    def __init__(
-        self,
-        scanner_id: str,
-        name: str,
-        connector: HaBluetoothConnector | None,
-        connectable: bool,
-        requested_mode: BluetoothScanningMode | None = None,
-        current_mode: BluetoothScanningMode | None = None,
-    ) -> None:
-        """Initialize the scanner."""
-        super().__init__(
-            scanner_id, name, connector, connectable, requested_mode, current_mode
-        )
-        self._details: dict[str, str | HaBluetoothConnector] = {"source": scanner_id}
-        # Scanners only care about connectable devices. The manager
-        # will handle taking care of availability for non-connectable devices
-        self._expire_seconds = CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
-        self._cancel_track: asyncio.TimerHandle | None = None
-        self._previous_service_info: dict[str, BluetoothServiceInfoBleak] = {}
-
     def restore_discovered_devices(
         self, history: DiscoveredDeviceAdvertisementData
     ) -> None:
@@ -330,76 +307,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
         return {
             address: info.raw for address, info in self._previous_service_info.items()
         }
-
-    def _cancel_expire_devices(self) -> None:
-        """Cancel the expiration of old devices."""
-        if self._cancel_track:
-            self._cancel_track.cancel()
-            self._cancel_track = None
-
-    def _unsetup(self) -> None:
-        """Unset up the scanner."""
-        self._async_stop_scanner_watchdog()
-        self._cancel_expire_devices()
-
-    def async_setup(self) -> CALLBACK_TYPE:
-        """Set up the scanner."""
-        super().async_setup()
-        self._schedule_expire_devices()
-        self._async_setup_scanner_watchdog()
-        return self._unsetup
-
-    def _schedule_expire_devices(self) -> None:
-        """Schedule the expiration of old devices."""
-        loop = self._loop
-        if TYPE_CHECKING:
-            assert loop is not None
-        self._cancel_expire_devices()
-        self._cancel_track = loop.call_at(
-            loop.time() + 30, self._async_expire_devices_schedule_next
-        )
-
-    def _async_expire_devices_schedule_next(self) -> None:
-        """Expire old devices and schedule the next expiration."""
-        self._async_expire_devices()
-        self._schedule_expire_devices()
-
-    def _async_expire_devices(self) -> None:
-        """Expire old devices."""
-        now = monotonic_time_coarse()
-        expired = [
-            address
-            for address, info in self._previous_service_info.items()
-            if now - info.time > self._expire_seconds
-        ]
-        for address in expired:
-            del self._previous_service_info[address]
-
-    @property
-    def discovered_devices(self) -> list[BLEDevice]:
-        """Return a list of discovered devices."""
-        infos = self._previous_service_info.values()
-        return [device_advertisement_data.device for device_advertisement_data in infos]
-
-    @property
-    def discovered_devices_and_advertisement_data(
-        self,
-    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
-        """Return a list of discovered devices and advertisement data."""
-        return self._build_discovered_device_advertisement_datas()
-
-    @property
-    def discovered_addresses(self) -> Iterable[str]:
-        """Return an iterable of discovered devices."""
-        return self._previous_service_info
-
-    def get_discovered_device_advertisement_data(
-        self, address: str
-    ) -> tuple[BLEDevice, AdvertisementData] | None:
-        """Return the advertisement data for a discovered device."""
-        if (info := self._previous_service_info.get(address)) is not None:
-            return info.device, info.advertisement
-        return None
 
     def _async_on_raw_advertisement(
         self,
@@ -570,6 +477,97 @@ class BaseHaRemoteScanner(BaseHaScanner):
         info.raw = raw
         self._previous_service_info[address] = info
         self._manager.scanner_adv_received(info)
+
+    def _async_expire_devices(self) -> None:
+        """Expire old devices."""
+        now = monotonic_time_coarse()
+        expired = [
+            address
+            for address, info in self._previous_service_info.items()
+            if now - info.time > self._expire_seconds
+        ]
+        for address in expired:
+            del self._previous_service_info[address]
+
+
+class BaseHaRemoteScanner(BaseHaScanner):
+    """Base class for a high availability remote BLE scanner."""
+
+    __slots__ = ("_cancel_track",)
+
+    def __init__(
+        self,
+        scanner_id: str,
+        name: str,
+        connector: HaBluetoothConnector | None,
+        connectable: bool,
+        requested_mode: BluetoothScanningMode | None = None,
+        current_mode: BluetoothScanningMode | None = None,
+    ) -> None:
+        """Initialize the scanner."""
+        super().__init__(
+            scanner_id, name, connector, connectable, requested_mode, current_mode
+        )
+        self._cancel_track: asyncio.TimerHandle | None = None
+
+    def _cancel_expire_devices(self) -> None:
+        """Cancel the expiration of old devices."""
+        if self._cancel_track:
+            self._cancel_track.cancel()
+            self._cancel_track = None
+
+    def _unsetup(self) -> None:
+        """Unset up the scanner."""
+        self._async_stop_scanner_watchdog()
+        self._cancel_expire_devices()
+
+    def async_setup(self) -> CALLBACK_TYPE:
+        """Set up the scanner."""
+        super().async_setup()
+        self._schedule_expire_devices()
+        self._async_setup_scanner_watchdog()
+        return self._unsetup
+
+    def _schedule_expire_devices(self) -> None:
+        """Schedule the expiration of old devices."""
+        loop = self._loop
+        if TYPE_CHECKING:
+            assert loop is not None
+        self._cancel_expire_devices()
+        self._cancel_track = loop.call_at(
+            loop.time() + 30, self._async_expire_devices_schedule_next
+        )
+
+    def _async_expire_devices_schedule_next(self) -> None:
+        """Expire old devices and schedule the next expiration."""
+        self._async_expire_devices()
+        self._schedule_expire_devices()
+
+    @property
+    def discovered_devices(self) -> list[BLEDevice]:
+        """Return a list of discovered devices."""
+        infos = self._previous_service_info.values()
+        return [device_advertisement_data.device for device_advertisement_data in infos]
+
+    @property
+    def discovered_devices_and_advertisement_data(
+        self,
+    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
+        """Return a list of discovered devices and advertisement data."""
+        return self._build_discovered_device_advertisement_datas()
+
+    @property
+    def discovered_addresses(self) -> Iterable[str]:
+        """Return an iterable of discovered devices."""
+        return self._previous_service_info
+
+    def get_discovered_device_advertisement_data(
+        self, address: str
+    ) -> tuple[BLEDevice, AdvertisementData] | None:
+        """Return the advertisement data for a discovered device."""
+        if (info := self._previous_service_info.get(address)) is not None:
+            return info.device, info.advertisement
+        return None
 
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""

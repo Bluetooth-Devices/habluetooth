@@ -140,7 +140,7 @@ class BluetoothMGMTProtocol:
             if (scanner := self._scanners.get(controller_idx)) is not None:
                 # We have a scanner for this controller, so we can
                 # pass the data to it.
-                scanner._async_on_raw_advertisement(
+                scanner._async_on_raw_bluez_advertisement(
                     address,
                     address_type,
                     rssi,

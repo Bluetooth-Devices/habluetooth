@@ -28,18 +28,19 @@ cdef class BaseHaScanner:
     cdef public object details
     cdef public object current_mode
     cdef public object requested_mode
+    cdef public dict _previous_service_info
+    cdef public double _expire_seconds
+    cdef public dict _details
 
     cpdef tuple get_discovered_device_advertisement_data(self, str address)
 
     cpdef float time_since_last_detection(self)
 
+    @cython.locals(info=BluetoothServiceInfoBleak)
+    cdef dict _build_discovered_device_advertisement_datas(self)
 
-cdef class BaseHaRemoteScanner(BaseHaScanner):
-
-    cdef public dict _details
-    cdef public double _expire_seconds
-    cdef public object _cancel_track
-    cdef public dict _previous_service_info
+    @cython.locals(info=BluetoothServiceInfoBleak)
+    cdef dict _build_discovered_device_timestamps(self)
 
     @cython.locals(parsed=tuple)
     cpdef void _async_on_raw_advertisement(
@@ -94,13 +95,12 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
     @cython.locals(now=double, timestamp=double, info=BluetoothServiceInfoBleak)
     cpdef void _async_expire_devices(self)
 
+cdef class BaseHaRemoteScanner(BaseHaScanner):
+
+    cdef public object _cancel_track
+
+
     cpdef void _schedule_expire_devices(self)
 
     @cython.locals(info=BluetoothServiceInfoBleak)
     cpdef tuple get_discovered_device_advertisement_data(self, str address)
-
-    @cython.locals(info=BluetoothServiceInfoBleak)
-    cdef dict _build_discovered_device_advertisement_datas(self)
-
-    @cython.locals(info=BluetoothServiceInfoBleak)
-    cdef dict _build_discovered_device_timestamps(self)

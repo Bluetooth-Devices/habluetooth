@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
+from functools import lru_cache
 from typing import Any, Coroutine, Iterable, no_type_check
 
 import async_interrupt
@@ -114,6 +115,12 @@ SCANNER_WATCHDOG_MULTIPLE = (
 )
 
 
+@lru_cache(maxsize=512)
+def bytes_mac_to_str(mac: bytes) -> str:
+    """Convert a mac address in bytes to a string."""
+    return ":".join(f"{b:02X}" for b in mac)
+
+
 class _AbortStartError(Exception):
     """Error to indicate that the start should be aborted."""
 
@@ -161,6 +168,18 @@ def _error_indicates_wait_for_adapter_to_init(error_str: str) -> bool:
     return any(
         wait_error in error_str for wait_error in WAIT_FOR_ADAPTER_TO_INIT_ERRORS
     )
+
+
+@lru_cache(maxsize=512)
+def make_bluez_details(address: str, adapter: str) -> dict[str, Any]:
+    """Make the details for a bluez advertisement."""
+    base_path = f"/org/bluez/{adapter}"
+    return {
+        "path": f"{base_path}/dev_{address.replace(':', '_')}",
+        "props": {
+            "Adapter": base_path,
+        },
+    }
 
 
 class HaScanner(BaseHaScanner):
@@ -243,7 +262,7 @@ class HaScanner(BaseHaScanner):
         base_diag = await super().async_diagnostics()
         return base_diag | {"adapter": self.adapter}
 
-    def _async_on_raw_advertisement(
+    def _async_on_raw_bluez_advertisement(
         self,
         address: bytes,
         address_type: int_,
@@ -252,7 +271,14 @@ class HaScanner(BaseHaScanner):
         data: bytes,
     ) -> None:
         """Handle raw advertisement data."""
-        # TODO: Implement this method
+        address_str = bytes_mac_to_str(address)
+        self._async_on_raw_advertisement(
+            address_str,
+            rssi,
+            data,
+            make_bluez_details(address_str, self.adapter),
+            monotonic_time_coarse(),
+        )
 
     def _async_detection_callback(
         self,
