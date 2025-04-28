@@ -99,9 +99,9 @@ class BluetoothMGMTProtocol:
                 assert self._buffer is not None, "Buffer should be set"
             self._pos = 6
             header = self._buffer
-            event_code = (header[0] << 8) | header[1]
-            controller_idx = (header[2] << 8) | header[3]
-            param_len = (header[4] << 8) | header[5]
+            event_code = header[0] | (header[1] << 8)
+            controller_idx = header[2] | (header[3] << 8)
+            param_len = header[4] | (header[5] << 8)
             print(
                 f"event_code: {event_code}, controller_idx: {controller_idx}, "
                 f"param_len: {param_len}"
