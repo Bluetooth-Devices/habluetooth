@@ -15,7 +15,7 @@ async def main() -> None:
         await asyncio.Event().wait()
     finally:
         # Close the management interface when done
-        await mgmt_ctl.close()
+        mgmt_ctl.close()
 
 
 if __name__ == "__main__":
