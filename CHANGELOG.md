@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.43.0 (2025-04-28)
+
+### Features
+
+
+- Migrate storage code from bluetooth_adapters (#216) ([`5d671f9`](https://github.com/Bluetooth-Devices/habluetooth/commit/5d671f95b9a7964bfa871c7b42061a71a98ce80e))
+
+
 ## v3.42.0 (2025-04-27)
 
 ### Features
