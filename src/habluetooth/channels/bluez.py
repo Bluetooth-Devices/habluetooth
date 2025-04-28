@@ -170,7 +170,7 @@ class MGMTBluetoothCtl:
         self.sock: socket.socket | None = None
         self.scanners = scanners
 
-    async def close(self) -> None:
+    def close(self) -> None:
         """Close the management interface."""
         if self.protocol and self.protocol.transport:
             self.protocol.transport.close()
@@ -183,7 +183,7 @@ class MGMTBluetoothCtl:
         loop = asyncio.get_running_loop()
         connection_made_future: asyncio.Future[None] = loop.create_future()
         try:
-            async with asyncio_timeout(5):
+            async with asyncio_timeout(self.timeout):
                 # _create_connection_transport accessed
                 # directly to avoid SOCK_STREAM check
                 # see https://bugs.python.org/issue38285

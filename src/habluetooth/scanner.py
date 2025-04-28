@@ -130,15 +130,16 @@ class ScannerStartError(Exception):
 
 
 def create_bleak_scanner(
-    detection_callback: AdvertisementDataCallback,
+    detection_callback: AdvertisementDataCallback | None,
     scanning_mode: BluetoothScanningMode,
     adapter: str | None,
 ) -> bleak.BleakScanner:
     """Create a Bleak scanner."""
     scanner_kwargs: dict[str, Any] = {
-        "detection_callback": detection_callback,
         "scanning_mode": SCANNING_MODE_TO_BLEAK[scanning_mode],
     }
+    if detection_callback:
+        scanner_kwargs["detection_callback"] = detection_callback
     if IS_LINUX:
         # Only Linux supports multiple adapters
         if adapter:
@@ -371,7 +372,13 @@ class HaScanner(BaseHaScanner):
 
         assert self.current_mode is not None  # noqa: S101
         self.scanner = create_bleak_scanner(
-            self._async_detection_callback, self.current_mode, self.adapter
+            (
+                None
+                if self._manager.has_advertising_side_channel
+                else self._async_detection_callback
+            ),
+            self.current_mode,
+            self.adapter,
         )
         self._log_start_attempt(attempt)
         self._start_future = self._loop.create_future()

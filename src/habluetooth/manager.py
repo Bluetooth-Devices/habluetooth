@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import platform
 from collections.abc import Callable, Iterable
 from dataclasses import asdict
 from functools import partial
@@ -30,6 +31,7 @@ from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
     AdvertisementTracker,
 )
+from .channels.bluez import MGMTBluetoothCtl
 from .const import (
     ADV_RSSI_SWITCH_THRESHOLD,
     CALLBACK_TYPE,
@@ -52,7 +54,11 @@ if TYPE_CHECKING:
     from bleak.backends.scanner import AdvertisementData
 
     from .base_scanner import BaseHaScanner
+    from .scanner import HaScanner
 
+
+SYSTEM = platform.system()
+IS_LINUX = SYSTEM == "Linux"
 
 FILTER_UUIDS: Final = "UUIDs"
 
@@ -122,12 +128,15 @@ class BluetoothManager:
         "_fallback_intervals",
         "_intervals",
         "_loop",
+        "_mgmt_ctl",
         "_non_connectable_scanners",
         "_recovery_lock",
         "_scanner_registration_callbacks",
+        "_side_channel_scanners",
         "_sources",
         "_subclass_discover_info",
         "_unavailable_callbacks",
+        "has_advertising_side_channel",
         "shutdown",
         "slot_manager",
     )
@@ -169,6 +178,8 @@ class BluetoothManager:
         )
         self._debug = _LOGGER.isEnabledFor(logging.DEBUG)
         self.shutdown = False
+        self.has_advertising_side_channel = False
+        self._side_channel_scanners: dict[int, HaScanner] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._adapter_refresh_future: asyncio.Future[None] | None = None
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
@@ -180,6 +191,7 @@ class BluetoothManager:
             str | None, set[Callable[[HaScannerRegistration], None]]
         ] = {}
         self._subclass_discover_info = self._discover_service_info
+        self._mgmt_ctl: MGMTBluetoothCtl | None = None
         if (
             self._discover_service_info.__func__  # type: ignore[attr-defined]
             is BluetoothManager._discover_service_info
@@ -314,7 +326,15 @@ class BluetoothManager:
         await self._async_refresh_adapters()
         install_multiple_bleak_catcher()
         self.async_setup_unavailable_tracking()
-        # TODO: connect management socket
+        if IS_LINUX:
+            self._mgmt_ctl = MGMTBluetoothCtl(10.0, self._side_channel_scanners)
+            try:
+                await self._mgmt_ctl.setup()
+            except (OSError, asyncio.TimeoutError, PermissionError) as ex:
+                _LOGGER.debug("Cannot start Bluetooth Management API: %s", ex)
+                self._mgmt_ctl = None
+            else:
+                self.has_advertising_side_channel = True
 
     def async_stop(self) -> None:
         """Stop the Bluetooth integration at shutdown."""
@@ -325,6 +345,9 @@ class BluetoothManager:
             self._cancel_unavailable_tracking = None
         uninstall_multiple_bleak_catcher()
         self._cancel_allocation_callbacks()
+        if self._mgmt_ctl:
+            self._mgmt_ctl.close()
+            self._mgmt_ctl = None
 
     def async_scanner_devices_by_address(
         self, address: str, connectable: bool
@@ -752,6 +775,10 @@ class BluetoothManager:
         self._allocations.pop(scanner.source, None)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
+        if isinstance(scanner, HaScanner):
+            self._side_channel_scanners.pop(
+                int(scanner.adapter.removeprefix("hci")), None
+            )
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.REMOVED)
 
     def async_register_scanner(
@@ -771,6 +798,10 @@ class BluetoothManager:
         scanners.add(scanner)
         self._sources[scanner.source] = scanner
         self._adapter_sources[scanner.adapter] = scanner.source
+        if isinstance(scanner, HaScanner):
+            self._side_channel_scanners[int(scanner.adapter.removeprefix("hci"))] = (
+                scanner
+            )
         if connection_slots:
             self.slot_manager.register_adapter(scanner.adapter, connection_slots)
             self.async_on_allocation_changed(
