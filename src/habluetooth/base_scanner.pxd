@@ -58,7 +58,6 @@ cdef class BaseHaRemoteScanner(BaseHaScanner):
         has_manufacturer_data=bint,
         has_service_data=bint,
         has_service_uuids=bint,
-        prev_details=dict,
         sub_value=bytes,
         super_value=bytes,
         info=BluetoothServiceInfoBleak,
