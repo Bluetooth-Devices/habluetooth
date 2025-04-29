@@ -494,8 +494,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
             #
             # https://github.com/hbldh/bleak/blob/222618b7747f0467dbb32bd3679f8cfaa19b1668/bleak/backends/scanner.py#L203
             #
-            prev_details: dict[str, Any] = info.device.details
-            prev_details.update(details)
             # _rssi is deprecated, will be removed in newer bleak
             # pylint: disable-next=protected-access
             info.device._rssi = rssi
