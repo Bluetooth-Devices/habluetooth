@@ -273,6 +273,9 @@ class HaScanner(BaseHaScanner):
     ) -> None:
         """Handle raw advertisement data."""
         address_str = bytes_mac_to_str(address)
+        _LOGGER.debug(
+            "%s: Raw advertisement data: [%s] %s", self.name, address_str, data
+        )
         self._async_on_raw_advertisement(
             address_str,
             rssi,
