@@ -102,16 +102,16 @@ class BleakCallback:
 class ConnectionHistory:
     """Connection history."""
 
-    __slots__ = ("_connect_failures", "_connecting")
+    __slots__ = ("_connecting", "_failures")
 
     def __init__(self) -> None:
         """Init connection history."""
-        self._connect_failures: dict[BaseHaScanner, dict[str, int]] = {}
+        self._failures: dict[BaseHaScanner, dict[str, int]] = {}
         self._connecting: dict[BaseHaScanner, dict[str, int]] = {}
 
     def clear(self, scanner: BaseHaScanner) -> None:
         """Clear the connection history for a scanner."""
-        self._connect_failures.pop(scanner, None)
+        self._failures.pop(scanner, None)
         self._connecting.pop(scanner, None)
 
     def finished_connecting(
@@ -124,23 +124,20 @@ class ConnectionHistory:
         else:
             self._add_connect_failure(scanner, address)
 
+    def _increase_ref_count(self, target: dict[str, int], address: str) -> None:
+        """Increase the reference count."""
+        if address in target:
+            target[address] += 1
+        else:
+            target[address] = 1
+
     def _add_connect_failure(self, scanner: BaseHaScanner, address: str) -> None:
         """Add a connect failure."""
-        addresses_by_scanner: dict[str, int] = self._connect_failures.setdefault(
-            scanner, {}
-        )
-        if address in addresses_by_scanner:
-            addresses_by_scanner[address] += 1
-        else:
-            addresses_by_scanner[address] = 1
+        self._increase_ref_count(self._failures.setdefault(scanner, {}), address)
 
     def add_connecting(self, scanner: BaseHaScanner, address: str) -> None:
         """Add a connecting."""
-        addresses_by_scanner: dict[str, int] = self._connecting.setdefault(scanner, {})
-        if address in addresses_by_scanner:
-            addresses_by_scanner[address] += 1
-        else:
-            addresses_by_scanner[address] = 1
+        self._increase_ref_count(self._connecting.setdefault(scanner, {}), address)
 
     def _remove_connecting(self, scanner: BaseHaScanner, address: str) -> None:
         """Remove a connecting."""
@@ -154,14 +151,11 @@ class ConnectionHistory:
 
     def _clear_connect_failure(self, scanner: BaseHaScanner, address: str) -> None:
         """Clear a connect failure."""
-        if (
-            scanner not in self._connect_failures
-            or address not in self._connect_failures[scanner]
-        ):
+        if scanner not in self._failures or address not in self._failures[scanner]:
             return
-        del self._connect_failures[scanner][address]
-        if not self._connect_failures[scanner]:
-            del self._connect_failures[scanner]
+        del self._failures[scanner][address]
+        if not self._failures[scanner]:
+            del self._failures[scanner]
 
     def score_connection_paths(
         self, rssi_diff: int, scanner_device: BluetoothScannerDevice
@@ -171,7 +165,7 @@ class ConnectionHistory:
         address = scanner_device.ble_device.address
         score: float = scanner_device.advertisement.rssi or NO_RSSI_VALUE
         scanner_connections_in_progress: int = len(self._connecting.get(scanner, ()))
-        previous_failures: int = self._connect_failures.get(scanner, {}).get(address, 0)
+        previous_failures: int = self._failures.get(scanner, {}).get(address, 0)
         if scanner_connections_in_progress:
             # Very large penalty for multiple connections in progress
             # to avoid overloading the adapter
@@ -192,12 +186,9 @@ class ConnectionHistory:
         """Return the number of failures."""
         scanner = scanner_device.scanner
         address = scanner_device.ble_device.address
-        if (
-            scanner not in self._connect_failures
-            or address not in self._connect_failures[scanner]
-        ):
+        if scanner not in self._failures or address not in self._failures[scanner]:
             return 0
-        return self._connect_failures[scanner][address]
+        return self._failures[scanner][address]
 
 
 class BluetoothManager:

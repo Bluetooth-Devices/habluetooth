@@ -36,14 +36,14 @@ cdef class BleakCallback:
 
 cdef class ConnectionHistory:
 
-    cdef public object _loop
-    cdef public dict _connect_failures
+    cdef public dict _failures
     cdef public dict _connecting
-    cdef public dict _wait_futures
 
     cpdef clear(self, BaseHaScanner scanner)
 
     cpdef finished_connecting(self, BaseHaScanner scanner, str address, bint connected)
+
+    cdef _increase_ref_count(self, target dict, str address)
 
     cdef _add_connect_failure(self, BaseHaScanner scanner, str address)
 
