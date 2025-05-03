@@ -28,6 +28,37 @@ cdef class BaseHaScanner:
     cdef public object details
     cdef public object current_mode
     cdef public object requested_mode
+    cdef public dict _connect_failures
+    cdef public dict _connect_in_progress
+
+    cpdef void _clear_connection_history(self) except *
+
+    cpdef void _finished_connecting(self, str address, bint connected) except *
+
+    cdef void _increase_count(self, dict target, str address) except *
+
+    cdef void _add_connect_failure(self, str address) except *
+
+    cpdef void _add_connecting(self, str address) except *
+
+    cdef void _remove_connecting(self, str address) except *
+
+    cdef void _clear_connect_failure(self, str address) except *
+
+    @cython.locals(
+        in_progress=Py_ssize_t,
+        count=Py_ssize_t
+    )
+    cpdef _connections_in_progress(self)
+
+    cpdef _connection_failures(self, str address)
+
+    @cython.locals(
+        score=double,
+        scanner_connections_in_progress=Py_ssize_t,
+        previous_failures=Py_ssize_t
+    )
+    cpdef _score_connection_paths(self, int rssi_diff, object scanner_device)
 
     cpdef tuple get_discovered_device_advertisement_data(self, str address)
 

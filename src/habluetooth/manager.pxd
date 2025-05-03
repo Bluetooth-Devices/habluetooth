@@ -34,38 +34,6 @@ cdef class BleakCallback:
     cdef public object callback
     cdef public dict filters
 
-cdef class ConnectionHistory:
-
-    cdef public dict _failures
-    cdef public dict _connecting
-
-    cpdef void clear(self, BaseHaScanner scanner) except *
-
-    cpdef void finished_connecting(self, BaseHaScanner scanner, str address, bint connected) except *
-
-    cdef void _increase_ref_count(self, dict target, str address) except *
-
-    cdef void _add_connect_failure(self, BaseHaScanner scanner, str address) except *
-
-    cpdef void add_connecting(self, BaseHaScanner scanner, str address) except *
-
-    cdef void _remove_connecting(self, BaseHaScanner scanner, str address) except *
-
-    cdef void _clear_connect_failure(self, BaseHaScanner scanner, str address) except *
-
-    @cython.locals(
-        in_progress=Py_ssize_t
-    )
-    cpdef in_progress(self, BaseHaScanner scanner)
-
-    cpdef failures(self, BaseHaScanner scanner, str address)
-
-    @cython.locals(
-        score=double,
-        scanner_connections_in_progress=Py_ssize_t,
-        previous_failures=Py_ssize_t
-    )
-    cpdef score_connection_paths(self, int rssi_diff, object scanner_device)
 
 cdef class BluetoothManager:
 
@@ -84,7 +52,6 @@ cdef class BluetoothManager:
     cdef public dict _sources
     cdef public object _bluetooth_adapters
     cdef public object slot_manager
-    cdef public ConnectionHistory _connection_history
     cdef public bint _debug
     cdef public bint shutdown
     cdef public object _loop

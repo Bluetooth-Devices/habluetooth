@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Final, Iterable, final
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from bleak_retry_connector import NO_RSSI_VALUE
 from bluetooth_adapters import adapter_human_name
 from bluetooth_data_tools import monotonic_time_coarse, parse_advertisement_data_bytes
 
@@ -27,6 +28,7 @@ from .models import (
     HaBluetoothConnector,
     HaScannerDetails,
 )
+from .scanner_device import BluetoothScannerDevice
 from .storage import DiscoveredDeviceAdvertisementData
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
@@ -44,6 +46,9 @@ class BaseHaScanner:
 
     __slots__ = (
         "_cancel_watchdog",
+        "_connect_failures",
+        "_connect_in_progress",
+        "_connecting",
         "_connecting",
         "_last_detection",
         "_loop",
@@ -90,6 +95,78 @@ class BaseHaScanner:
             name=self.name,
             adapter=self.adapter,
         )
+        self._connect_failures: dict[str, int] = {}
+        self._connect_in_progress: dict[str, int] = {}
+
+    def _clear_connection_history(self) -> None:
+        """Clear the connection history for a scanner."""
+        self._connect_failures.clear()
+        self._connect_in_progress.clear()
+
+    def _finished_connecting(self, address: str, connected: bool) -> None:
+        """Finished connecting."""
+        self._remove_connecting(address)
+        if connected:
+            self._clear_connect_failure(address)
+        else:
+            self._add_connect_failure(address)
+
+    def _increase_count(self, target: dict[str, int], address: str) -> None:
+        """Increase the reference count."""
+        if address in target:
+            target[address] += 1
+        else:
+            target[address] = 1
+
+    def _add_connect_failure(self, address: str) -> None:
+        """Add a connect failure."""
+        self._increase_count(self._connect_failures, address)
+
+    def _add_connecting(self, address: str) -> None:
+        """Add a connecting."""
+        self._increase_count(self._connect_in_progress, address)
+
+    def _remove_connecting(self, address: str) -> None:
+        """Remove a connecting."""
+        if address not in self._connect_in_progress:
+            _LOGGER.warning(
+                "Removing a non-existing connecting %s %s", self.name, address
+            )
+            return
+        self._connect_in_progress[address] -= 1
+        if not self._connect_in_progress[address]:
+            del self._connect_in_progress[address]
+
+    def _clear_connect_failure(self, address: str) -> None:
+        """Clear a connect failure."""
+        self._connect_failures.pop(address, None)
+
+    def _score_connection_paths(
+        self, rssi_diff: _int, scanner_device: BluetoothScannerDevice
+    ) -> float:
+        """Score the connection paths."""
+        address = scanner_device.ble_device.address
+        score = scanner_device.advertisement.rssi or NO_RSSI_VALUE
+        scanner_connections_in_progress = len(self._connect_in_progress)
+        previous_failures = self._connect_failures.get(address, 0)
+        if scanner_connections_in_progress:
+            # Very large penalty for multiple connections in progress
+            # to avoid overloading the adapter
+            score -= rssi_diff * scanner_connections_in_progress * 1.01
+        if previous_failures:
+            score -= rssi_diff * previous_failures * 0.51
+        return score
+
+    def _connections_in_progress(self) -> int:
+        """Return if the connection is in progress."""
+        in_progress = 0
+        for count in self._connect_in_progress.values():
+            in_progress += count
+        return in_progress
+
+    def _connection_failures(self, address: str) -> int:
+        """Return the number of failures."""
+        return self._connect_failures.get(address, 0)
 
     def time_since_last_detection(self) -> float:
         """Return the time since the last detection."""

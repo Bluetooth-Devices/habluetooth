@@ -30,6 +30,7 @@ from habluetooth.storage import (
 )
 
 from . import (
+    HCI0_SOURCE_ADDRESS,
     MockBleakClient,
     async_fire_time_changed,
     generate_advertisement_data,
@@ -694,3 +695,51 @@ async def test_filter_apple_data() -> None:
     assert discovered_adv_data.manufacturer_data == device_adv.manufacturer_data
     unsetup()
     cancel()
+
+
+@pytest.mark.usefixtures("register_hci0_scanner")
+def test_connection_history_count_in_progress() -> None:
+    """Test connection history in process counting."""
+    manager = get_manager()
+    device1_address = "44:44:33:11:23:12"
+    device2_address = "44:44:33:11:23:13"
+    hci0_scanner = manager.async_scanner_by_source(HCI0_SOURCE_ADDRESS)
+    assert hci0_scanner is not None
+    hci0_scanner._add_connecting(device1_address)
+    assert hci0_scanner._connections_in_progress() == 1
+    hci0_scanner._add_connecting(device1_address)
+    hci0_scanner._add_connecting(device2_address)
+    assert hci0_scanner._connections_in_progress() == 3
+    hci0_scanner._finished_connecting(device1_address, True)
+    assert hci0_scanner._connections_in_progress() == 2
+    hci0_scanner._finished_connecting(device1_address, False)
+    assert hci0_scanner._connections_in_progress() == 1
+    hci0_scanner._finished_connecting(device2_address, False)
+    assert hci0_scanner._connections_in_progress() == 0
+
+
+@pytest.mark.usefixtures("register_hci0_scanner")
+def test_connection_history_failure_count(caplog: pytest.LogCaptureFixture) -> None:
+    """Test connection history failure count."""
+    manager = get_manager()
+    device1_address = "44:44:33:11:23:12"
+    device2_address = "44:44:33:11:23:13"
+    hci0_scanner = manager.async_scanner_by_source(HCI0_SOURCE_ADDRESS)
+    assert hci0_scanner is not None
+    hci0_scanner._add_connecting(device1_address)
+    hci0_scanner._finished_connecting(device1_address, False)
+    assert hci0_scanner._connection_failures(device1_address) == 1
+    hci0_scanner._add_connecting(device1_address)
+    hci0_scanner._add_connecting(device2_address)
+    hci0_scanner._finished_connecting(device1_address, False)
+    assert hci0_scanner._connection_failures(device1_address) == 2
+    hci0_scanner._finished_connecting(device2_address, False)
+    assert hci0_scanner._connection_failures(device2_address) == 1
+    hci0_scanner._add_connecting(device1_address)
+    hci0_scanner._finished_connecting(device1_address, True)
+    # On success, we should reset the failure count
+    assert hci0_scanner._connection_failures(device1_address) == 0
+
+    assert "Removing a non-existing connecting" not in caplog.text
+    hci0_scanner._finished_connecting(device1_address, True)
+    assert "Removing a non-existing connecting" in caplog.text
