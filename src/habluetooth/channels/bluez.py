@@ -156,6 +156,8 @@ class BluetoothMGMTProtocol:
         """Handle connection lost."""
         if exc:
             _LOGGER.warning("Bluetooth management socket connection lost: %s", exc)
+        else:
+            _LOGGER.info("Bluetooth management socket connection closed")
         self.transport = None
 
 
