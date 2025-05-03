@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.47.0 (2025-05-03)
+
+### Bug fixes
+
+
+- Require bluetooth-auto-recovery >= 1.5.1 (#224) ([`8164ce5`](https://github.com/Bluetooth-Devices/habluetooth/commit/8164ce512084fe898cb80c5e44f664dde4751113))
+
+
+### Features
+
+
+- Avoid thundering heard of connections (#223) ([`943cc20`](https://github.com/Bluetooth-Devices/habluetooth/commit/943cc2043731f8d6fbb541f4d7ffcd37d8c6b4f3))
+
+
 ## v3.46.0 (2025-05-03)
 
 ### Features
