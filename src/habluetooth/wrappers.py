@@ -353,13 +353,14 @@ class HaBleakClientWrapper(BleakClient):
             key=lambda x: x.advertisement.rssi,
             reverse=True,
         )
+        connect_history = self.__connection_history
         if len(sorted_devices) > 1:
             rssi_diff = (
                 sorted_devices[0].advertisement.rssi
                 - sorted_devices[1].advertisement.rssi
             )
             adjusted_rssi_sorter = partial(
-                self.__connection_history.score_connection_paths,
+                connect_history.score_connection_paths,
                 rssi_diff,
             )
             sorted_devices = sorted(
@@ -377,8 +378,8 @@ class HaBleakClientWrapper(BleakClient):
                 ", ".join(
                     f"{device.scanner.name} "
                     f"(RSSI={device.advertisement.rssi}) "
-                    f"(failures={self.__connection_history.failures(device)}) "
-                    f"(in_progress={self.__connection_history.in_progress(device)}) "
+                    f"(failures={connect_history.failures(device.scanner, address)}) "
+                    f"(in_progress={connect_history.in_progress(device.scanner)}) "
                     f"(score={adjusted_rssi_sorter(device)})"
                     for device in sorted_devices
                 ),

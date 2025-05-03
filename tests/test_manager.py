@@ -1250,3 +1250,23 @@ async def test_subclassing_bluetooth_manager(caplog: pytest.LogCaptureFixture) -
 
     TestBluetoothManager2(bluetooth_adapters, slot_manager)
     assert "does not implement _discover_service_info" in caplog.text
+
+
+@pytest.mark.usefixtures("register_hci0_scanner")
+def test_connection_history_count_in_progress() -> None:
+    """Test connection history."""
+    manager = get_manager()
+    connection_history = manager.connection_history
+    device1_address = "44:44:33:11:23:12"
+    device2_address = "44:44:33:11:23:13"
+    hci0_scanner = manager.async_scanner_by_source(HCI0_SOURCE_ADDRESS)
+    assert hci0_scanner is not None
+    connection_history.add_connecting(hci0_scanner, device1_address)
+    assert connection_history.in_progress(hci0_scanner) == 1
+    connection_history.add_connecting(hci0_scanner, device1_address)
+    connection_history.add_connecting(hci0_scanner, device2_address)
+    assert connection_history.in_progress(hci0_scanner) == 2
+    connection_history.finished_connecting(hci0_scanner, device1_address, True)
+    assert connection_history.in_progress(hci0_scanner) == 1
+    connection_history.finished_connecting(hci0_scanner, device1_address, False)
+    assert connection_history.in_progress(hci0_scanner) == 0

@@ -53,9 +53,12 @@ cdef class ConnectionHistory:
 
     cdef void _clear_connect_failure(self, BaseHaScanner scanner, str address) except *
 
-    cpdef in_progress(self, object scanner_device)
+    @cython.locals(
+        in_progress=Py_ssize_t
+    )
+    cpdef in_progress(self, BaseHaScanner scanner, str address)
 
-    cpdef failures(self, object scanner_device)
+    cpdef failures(self, BaseHaScanner scanner, str address)
 
     @cython.locals(
         score=double,

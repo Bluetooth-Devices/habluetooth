@@ -175,18 +175,17 @@ class ConnectionHistory:
             score -= rssi_diff * previous_failures * 0.51
         return score
 
-    def in_progress(self, scanner_device: BluetoothScannerDevice) -> int:
+    def in_progress(self, scanner: BaseHaScanner) -> int:
         """Return if the connection is in progress."""
-        scanner = scanner_device.scanner
-        address = scanner_device.ble_device.address
-        if scanner not in self._connecting or address not in self._connecting[scanner]:
+        if scanner not in self._connecting:
             return 0
-        return self._connecting[scanner][address]
+        in_progress = 0
+        for count in self._connecting[scanner].values():
+            in_progress += count
+        return in_progress
 
-    def failures(self, scanner_device: BluetoothScannerDevice) -> int:
+    def failures(self, scanner: BaseHaScanner, address: str) -> int:
         """Return the number of failures."""
-        scanner = scanner_device.scanner
-        address = scanner_device.ble_device.address
         if scanner not in self._failures or address not in self._failures[scanner]:
             return 0
         return self._failures[scanner][address]
