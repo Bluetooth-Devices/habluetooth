@@ -361,14 +361,14 @@ async def test_we_switch_adapters_on_failure(
     ):
         assert await client.connect() is True
 
-    # If we replace the client, we should try hci0 again
+    # If we replace the client, we should remember hci0 is failing
     client = bleak.BleakClient(ble_device)
 
     with patch(
         "habluetooth.wrappers.get_platform_client_backend_type",
         return_value=FakeBleakClientFailsHCI0Only,
     ):
-        assert await client.connect() is False
+        assert await client.connect() is True
     cancel_hci0()
     cancel_hci1()
 
