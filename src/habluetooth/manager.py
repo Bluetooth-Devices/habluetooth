@@ -65,6 +65,7 @@ APPLE_FINDMY_START_BYTE: Final = 0x12  # FindMy network advertisements
 
 
 _str = str
+_int = int
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,6 +100,100 @@ class BleakCallback:
         self.filters = filters
 
 
+class ConnectionHistory:
+    """Connection history."""
+
+    __slots__ = ("_connecting", "_failures")
+
+    def __init__(self) -> None:
+        """Init connection history."""
+        self._failures: dict[BaseHaScanner, dict[str, int]] = {}
+        self._connecting: dict[BaseHaScanner, dict[str, int]] = {}
+
+    def clear(self, scanner: BaseHaScanner) -> None:
+        """Clear the connection history for a scanner."""
+        self._failures.pop(scanner, None)
+        self._connecting.pop(scanner, None)
+
+    def finished_connecting(
+        self, scanner: BaseHaScanner, address: str, connected: bool
+    ) -> None:
+        """Finished connecting."""
+        self._remove_connecting(scanner, address)
+        if connected:
+            self._clear_connect_failure(scanner, address)
+        else:
+            self._add_connect_failure(scanner, address)
+
+    def _increase_ref_count(self, target: dict[str, int], address: str) -> None:
+        """Increase the reference count."""
+        if address in target:
+            target[address] += 1
+        else:
+            target[address] = 1
+
+    def _add_connect_failure(self, scanner: BaseHaScanner, address: str) -> None:
+        """Add a connect failure."""
+        self._increase_ref_count(self._failures.setdefault(scanner, {}), address)
+
+    def add_connecting(self, scanner: BaseHaScanner, address: str) -> None:
+        """Add a connecting."""
+        self._increase_ref_count(self._connecting.setdefault(scanner, {}), address)
+
+    def _remove_connecting(self, scanner: BaseHaScanner, address: str) -> None:
+        """Remove a connecting."""
+        if scanner not in self._connecting or address not in self._connecting[scanner]:
+            _LOGGER.warning(
+                "Removing a non-existing connecting %s %s", scanner, address
+            )
+            return
+        self._connecting[scanner][address] -= 1
+        if not self._connecting[scanner][address]:
+            del self._connecting[scanner][address]
+        if not self._connecting[scanner]:
+            del self._connecting[scanner]
+
+    def _clear_connect_failure(self, scanner: BaseHaScanner, address: str) -> None:
+        """Clear a connect failure."""
+        if scanner not in self._failures or address not in self._failures[scanner]:
+            return
+        del self._failures[scanner][address]
+        if not self._failures[scanner]:
+            del self._failures[scanner]
+
+    def score_connection_paths(
+        self, rssi_diff: _int, scanner_device: BluetoothScannerDevice
+    ) -> float:
+        """Score the connection paths."""
+        scanner = scanner_device.scanner
+        address = scanner_device.ble_device.address
+        score = scanner_device.advertisement.rssi or NO_RSSI_VALUE
+        scanner_connections_in_progress = len(self._connecting.get(scanner, ()))
+        previous_failures = self._failures.get(scanner, {}).get(address, 0)
+        if scanner_connections_in_progress:
+            # Very large penalty for multiple connections in progress
+            # to avoid overloading the adapter
+            score -= rssi_diff * scanner_connections_in_progress * 1.01
+        if previous_failures:
+            score -= rssi_diff * previous_failures * 0.51
+        return score
+
+    def in_progress(self, scanner: BaseHaScanner) -> int:
+        """Return if the connection is in progress."""
+        if scanner not in self._connecting:
+            return 0
+        in_progress = 0
+        for count in self._connecting[scanner].values():
+            in_progress += count
+        return in_progress
+
+    def failures(self, scanner: BaseHaScanner, address: str) -> int:
+        """Return the number of failures."""
+        if scanner not in self._failures or address not in self._failures[scanner]:
+            return 0
+        return self._failures[scanner][address]
+
+
 class BluetoothManager:
     """Manage Bluetooth."""
 
@@ -117,6 +212,7 @@ class BluetoothManager:
         "_connectable_history",
         "_connectable_scanners",
         "_connectable_unavailable_callbacks",
+        "_connection_history",
         "_debug",
         "_disappeared_callbacks",
         "_fallback_intervals",
@@ -162,6 +258,7 @@ class BluetoothManager:
         self._sources: dict[str, BaseHaScanner] = {}
         self._bluetooth_adapters = bluetooth_adapters or get_adapters()
         self.slot_manager = slot_manager or BleakSlotManager()
+        self._connection_history = ConnectionHistory()
         self._cancel_allocation_callbacks = (
             self.slot_manager.register_allocation_callback(
                 self._async_slot_manager_changed
@@ -746,6 +843,7 @@ class BluetoothManager:
         _LOGGER.debug("Unregistering scanner %s", scanner.name)
         self._advertisement_tracker.async_remove_source(scanner.source)
         scanners.remove(scanner)
+        self._connection_history.clear(scanner)
         del self._sources[scanner.source]
         del self._adapter_sources[scanner.adapter]
         self._allocations.pop(scanner.source, None)
@@ -768,6 +866,7 @@ class BluetoothManager:
                 source=scanner.source, slots=0, free=0, allocated=[]
             )
         scanners.add(scanner)
+        self._connection_history.clear(scanner)
         self._sources[scanner.source] = scanner
         self._adapter_sources[scanner.adapter] = scanner.source
         if connection_slots:
