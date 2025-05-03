@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.48.0 (2025-05-03)
+
+### Features
+
+
+- Refactor scanner history to live on the scanner itself (#227) ([`ea0d2fc`](https://github.com/Bluetooth-Devices/habluetooth/commit/ea0d2fc088832a1b3f8c7859c82e2e05bf1261f9))
+
+
 ## v3.47.1 (2025-05-03)
 
 ### Bug fixes
