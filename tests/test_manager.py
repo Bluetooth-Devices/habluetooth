@@ -1275,7 +1275,7 @@ def test_connection_history_count_in_progress() -> None:
 
 
 @pytest.mark.usefixtures("register_hci0_scanner")
-def test_connection_history_failure_count() -> None:
+def test_connection_history_failure_count(caplog: pytest.LogCaptureFixture) -> None:
     """Test connection history failure count."""
     manager = get_manager()
     connection_history = manager.connection_history
@@ -1296,3 +1296,7 @@ def test_connection_history_failure_count() -> None:
     connection_history.finished_connecting(hci0_scanner, device1_address, True)
     # On success, we should reset the failure count
     assert connection_history.failures(hci0_scanner, device1_address) == 0
+
+    assert "Removing a non-existing connecting" not in caplog.text
+    connection_history.finished_connecting(hci0_scanner, device1_address, True)
+    assert "Removing a non-existing connecting" in caplog.text

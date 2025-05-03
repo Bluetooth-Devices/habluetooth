@@ -143,6 +143,9 @@ class ConnectionHistory:
     def _remove_connecting(self, scanner: BaseHaScanner, address: str) -> None:
         """Remove a connecting."""
         if scanner not in self._connecting or address not in self._connecting[scanner]:
+            _LOGGER.warning(
+                "Removing a non-existing connecting %s %s", scanner, address
+            )
             return
         self._connecting[scanner][address] -= 1
         if not self._connecting[scanner][address]:
