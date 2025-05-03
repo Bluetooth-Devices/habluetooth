@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.48.2 (2025-05-03)
+
+### Bug fixes
+
+
+- Remove duplicate _connecting slot from basehascanner (#229) ([`230bb03`](https://github.com/Bluetooth-Devices/habluetooth/commit/230bb038eea8ae07a3fe798ec15792489d06cd66))
+
+
 ## v3.48.1 (2025-05-03)
 
 ### Bug fixes
