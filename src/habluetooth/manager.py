@@ -65,6 +65,7 @@ APPLE_FINDMY_START_BYTE: Final = 0x12  # FindMy network advertisements
 
 
 _str = str
+_int = int
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -158,14 +159,14 @@ class ConnectionHistory:
             del self._failures[scanner]
 
     def score_connection_paths(
-        self, rssi_diff: int, scanner_device: BluetoothScannerDevice
+        self, rssi_diff: _int, scanner_device: BluetoothScannerDevice
     ) -> float:
         """Score the connection paths."""
         scanner = scanner_device.scanner
         address = scanner_device.ble_device.address
-        score: float = scanner_device.advertisement.rssi or NO_RSSI_VALUE
-        scanner_connections_in_progress: int = len(self._connecting.get(scanner, ()))
-        previous_failures: int = self._failures.get(scanner, {}).get(address, 0)
+        score = scanner_device.advertisement.rssi or NO_RSSI_VALUE
+        scanner_connections_in_progress = len(self._connecting.get(scanner, ()))
+        previous_failures = self._failures.get(scanner, {}).get(address, 0)
         if scanner_connections_in_progress:
             # Very large penalty for multiple connections in progress
             # to avoid overloading the adapter

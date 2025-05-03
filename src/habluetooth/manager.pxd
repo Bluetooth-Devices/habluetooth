@@ -39,20 +39,30 @@ cdef class ConnectionHistory:
     cdef public dict _failures
     cdef public dict _connecting
 
-    cpdef clear(self, BaseHaScanner scanner)
+    cpdef void clear(self, BaseHaScanner scanner) except *
 
-    cpdef finished_connecting(self, BaseHaScanner scanner, str address, bint connected)
+    cpdef void finished_connecting(self, BaseHaScanner scanner, str address, bint connected) except *
 
-    cdef _increase_ref_count(self, target dict, str address)
+    cdef void _increase_ref_count(self, dict target, str address) except *
 
-    cdef _add_connect_failure(self, BaseHaScanner scanner, str address)
+    cdef void _add_connect_failure(self, BaseHaScanner scanner, str address) except *
 
-    cpdef add_connecting(self, BaseHaScanner scanner, str address)
+    cpdef void add_connecting(self, BaseHaScanner scanner, str address) except *
 
-    cdef _remove_connecting(self, BaseHaScanner scanner, str address)
+    cdef void _remove_connecting(self, BaseHaScanner scanner, str address) except *
 
-    cdef _clear_connect_failure(self, BaseHaScanner scanner, str address)
+    cdef void _clear_connect_failure(self, BaseHaScanner scanner, str address) except *
 
+    cpdef in_progress(self, object scanner_device)
+
+    cpdef failures(self, object scanner_device)
+
+    @cython.locals(
+        score=double,
+        scanner_connections_in_progress=Py_ssize_t,
+        previous_failures=Py_ssize_t
+    )
+    cpdef score_connection_paths(self, int rssi_diff, object scanner_device)
 
 cdef class BluetoothManager:
 
