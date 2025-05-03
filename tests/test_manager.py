@@ -1254,7 +1254,7 @@ async def test_subclassing_bluetooth_manager(caplog: pytest.LogCaptureFixture) -
 
 @pytest.mark.usefixtures("register_hci0_scanner")
 def test_connection_history_count_in_progress() -> None:
-    """Test connection history."""
+    """Test connection history in process counting."""
     manager = get_manager()
     connection_history = manager.connection_history
     device1_address = "44:44:33:11:23:12"
@@ -1265,8 +1265,34 @@ def test_connection_history_count_in_progress() -> None:
     assert connection_history.in_progress(hci0_scanner) == 1
     connection_history.add_connecting(hci0_scanner, device1_address)
     connection_history.add_connecting(hci0_scanner, device2_address)
-    assert connection_history.in_progress(hci0_scanner) == 2
+    assert connection_history.in_progress(hci0_scanner) == 3
     connection_history.finished_connecting(hci0_scanner, device1_address, True)
-    assert connection_history.in_progress(hci0_scanner) == 1
+    assert connection_history.in_progress(hci0_scanner) == 2
     connection_history.finished_connecting(hci0_scanner, device1_address, False)
+    assert connection_history.in_progress(hci0_scanner) == 1
+    connection_history.finished_connecting(hci0_scanner, device2_address, False)
     assert connection_history.in_progress(hci0_scanner) == 0
+
+
+@pytest.mark.usefixtures("register_hci0_scanner")
+def test_connection_history_failure_count() -> None:
+    """Test connection history failure count."""
+    manager = get_manager()
+    connection_history = manager.connection_history
+    device1_address = "44:44:33:11:23:12"
+    device2_address = "44:44:33:11:23:13"
+    hci0_scanner = manager.async_scanner_by_source(HCI0_SOURCE_ADDRESS)
+    assert hci0_scanner is not None
+    connection_history.add_connecting(hci0_scanner, device1_address)
+    connection_history.finished_connecting(hci0_scanner, device1_address, False)
+    assert connection_history.failures(hci0_scanner, device1_address) == 1
+    connection_history.add_connecting(hci0_scanner, device1_address)
+    connection_history.add_connecting(hci0_scanner, device2_address)
+    connection_history.finished_connecting(hci0_scanner, device1_address, False)
+    assert connection_history.failures(hci0_scanner, device1_address) == 2
+    connection_history.finished_connecting(hci0_scanner, device2_address, False)
+    assert connection_history.failures(hci0_scanner, device2_address) == 1
+    connection_history.add_connecting(hci0_scanner, device1_address)
+    connection_history.finished_connecting(hci0_scanner, device1_address, True)
+    # On success, we should reset the failure count
+    assert connection_history.failures(hci0_scanner, device1_address) == 0
