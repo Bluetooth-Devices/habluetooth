@@ -161,17 +161,19 @@ class ConnectionHistory:
         if not self._connect_failures[scanner]:
             del self._connect_failures[scanner]
 
-    def score_connection_paths(self, scanner_device: BluetoothScannerDevice) -> int:
+    def score_connection_paths(
+        self, rssi_diff: int, scanner_device: BluetoothScannerDevice
+    ) -> float:
         """Score the connection paths."""
         scanner = scanner_device.scanner
         address = scanner_device.ble_device.address
-        score: int = scanner_device.advertisement.rssi or -1000
+        score: float = scanner_device.advertisement.rssi or NO_RSSI_VALUE
         scanner_connections_in_progress: int = len(self._connecting.get(scanner, ()))
         previous_failures: int = self._connect_failures.get(scanner, {}).get(address, 0)
-        if scanner_connections_in_progress > 0:
-            score -= 10 * scanner_connections_in_progress
-        if previous_failures > 0:
-            score -= 15 * previous_failures
+        if scanner_connections_in_progress:
+            score -= rssi_diff * scanner_connections_in_progress * 0.41
+        if previous_failures:
+            score -= rssi_diff * previous_failures * 0.51
         return score
 
     def in_progress(self, scanner_device: BluetoothScannerDevice) -> int:

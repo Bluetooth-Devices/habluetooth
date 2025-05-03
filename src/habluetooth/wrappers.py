@@ -346,9 +346,17 @@ class HaBleakClientWrapper(BleakClient):
         address = self.__address
         sorted_devices = manager.async_scanner_devices_by_address(self.__address, True)
         if len(sorted_devices) > 1:
+            rssi_diff = (
+                sorted_devices[0].advertisement.rssi
+                - sorted_devices[1].advertisement.rssi
+            )
+            adjusted_rssi_sorter = partial(
+                self.__connection_history.score_connection_paths,
+                rssi_diff,
+            )
             sorted_devices = sorted(
                 sorted_devices,
-                key=self.__connection_history.score_connection_paths,
+                key=adjusted_rssi_sorter,
                 reverse=True,
             )
 
