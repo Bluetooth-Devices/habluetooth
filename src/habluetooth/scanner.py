@@ -357,7 +357,7 @@ class HaScanner(BaseHaScanner):
         except asyncio.TimeoutError as ex:
             await self._async_stop_scanner()
             if attempt == 2:
-                await self._async_reset_adapter()
+                await self._async_reset_adapter(False)
             if attempt < START_ATTEMPTS:
                 self._log_start_timeout(attempt)
                 return False
@@ -373,7 +373,7 @@ class HaScanner(BaseHaScanner):
                 # If discovery is stuck on, try to force stop it
                 await self._async_force_stop_discovery()
             if attempt == 2 and _error_indicates_reset_needed(error_str):
-                await self._async_reset_adapter()
+                await self._async_reset_adapter(False)
             elif (
                 attempt != START_ATTEMPTS
                 and _error_indicates_wait_for_adapter_to_init(error_str)
@@ -537,7 +537,7 @@ class HaScanner(BaseHaScanner):
                 self._start_time == self._last_detection
                 or self.time_since_last_detection() > SCANNER_WATCHDOG_MULTIPLE
             ):
-                await self._async_reset_adapter()
+                await self._async_reset_adapter(True)
             try:
                 await self._async_start()
             except ScannerStartError as ex:
@@ -547,13 +547,13 @@ class HaScanner(BaseHaScanner):
                     ex,
                 )
 
-    async def _async_reset_adapter(self) -> None:
+    async def _async_reset_adapter(self, gone_silent: bool) -> None:
         """Reset the adapter."""
         # There is currently nothing the user can do to fix this
         # so we log at debug level. If we later come up with a repair
         # strategy, we will change this to raise a repair issue as well.
         _LOGGER.debug("%s: adapter stopped responding; executing reset", self.name)
-        result = await async_reset_adapter(self.adapter, self.mac_address)
+        result = await async_reset_adapter(self.adapter, self.mac_address, gone_silent)
         _LOGGER.debug("%s: adapter reset result: %s", self.name, result)
 
     async def async_stop(self) -> None:

@@ -301,7 +301,7 @@ class BluetoothManager:
                 for adapter, details in adapters.items()
                 if details[ADAPTER_ADDRESS] == FAILED_ADAPTER_MAC
             ]:
-                await async_reset_adapter(adapter, FAILED_ADAPTER_MAC)
+                await async_reset_adapter(adapter, FAILED_ADAPTER_MAC, False)
             await self._async_refresh_adapters()
 
     async def async_setup(self) -> None:
