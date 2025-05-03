@@ -344,7 +344,11 @@ class HaBleakClientWrapper(BleakClient):
         that has a free connection slot.
         """
         address = self.__address
-        sorted_devices = manager.async_scanner_devices_by_address(self.__address, True)
+        sorted_devices = sorted(
+            manager.async_scanner_devices_by_address(self.__address, True),
+            key=lambda x: x.advertisement.rssi,
+            reverse=True,
+        )
         if len(sorted_devices) > 1:
             rssi_diff = (
                 sorted_devices[0].advertisement.rssi

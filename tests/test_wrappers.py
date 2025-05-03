@@ -209,6 +209,7 @@ async def test_test_switch_adapters_when_out_of_slots(
 ) -> None:
     """Ensure we try another scanner when one runs out of slots."""
     manager = _get_manager()
+    # hci0 has an rssi of -60, hci1 has an rssi of -80
     hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
     # hci0 has 2 slots, hci1 has 1 slot
     with (
@@ -315,7 +316,7 @@ async def test_release_slot_on_connect_exception(
 
 
 @pytest.mark.asyncio
-async def test_we_switch_adapters_on_failure(
+async def test_switch_adapters_on_failure(
     two_adapters: None,
     enable_bluetooth: None,
     install_bleak_catcher: None,
@@ -339,36 +340,69 @@ async def test_we_switch_adapters_on_failure(
         "habluetooth.wrappers.get_platform_client_backend_type",
         return_value=FakeBleakClientFailsHCI0Only,
     ):
+        # Should try to connect to hci0 first
+        assert await client.connect() is False
+        # Should try to connect with hci0 again
         assert await client.connect() is False
 
-    with patch(
-        "habluetooth.wrappers.get_platform_client_backend_type",
-        return_value=FakeBleakClientFailsHCI0Only,
-    ):
-        assert await client.connect() is False
-
-    # After two tries we should switch to hci1
-    with patch(
-        "habluetooth.wrappers.get_platform_client_backend_type",
-        return_value=FakeBleakClientFailsHCI0Only,
-    ):
+        # After two tries we should switch to hci1
         assert await client.connect() is True
 
-    # ..and we remember that hci1 works as long as the client doesn't change
-    with patch(
-        "habluetooth.wrappers.get_platform_client_backend_type",
-        return_value=FakeBleakClientFailsHCI0Only,
-    ):
+        # ..and we remember that hci1 works as long as the client doesn't change
         assert await client.connect() is True
 
-    # If we replace the client, we should remember hci0 is failing
+        # If we replace the client, we should remember hci0 is failing
+        client = bleak.BleakClient(ble_device)
+
+        assert await client.connect() is True
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_switch_adapters_on_connecting(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Ensure we try the next best adapter after a failure."""
+    # hci0 has an rssi of -60, hci1 has an rssi of -80
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
     client = bleak.BleakClient(ble_device)
 
+    class FakeBleakClientSlowHCI0Connnect(BaseFakeBleakClient):
+        """Fake bleak client that connects instantly on hci1 and slow on hci0."""
+
+        async def connect(self, *args: Any, **kwargs: Any) -> bool:
+            """Connect."""
+            assert isinstance(self._device, BLEDevice)
+            if "/hci0/" in self._device.details["path"]:
+                await asyncio.sleep(0.4)
+                return True
+            return True
+
     with patch(
         "habluetooth.wrappers.get_platform_client_backend_type",
-        return_value=FakeBleakClientFailsHCI0Only,
+        return_value=FakeBleakClientSlowHCI0Connnect,
     ):
-        assert await client.connect() is True
+        task = asyncio.create_task(client.connect())
+        await asyncio.sleep(0.1)
+        assert not task.done()
+
+        task2 = asyncio.create_task(client.connect())
+        await asyncio.sleep(0.1)
+        assert task2.done()
+        assert await task2 is True
+
+        task3 = asyncio.create_task(client.connect())
+        await asyncio.sleep(0.1)
+        assert task3.done()
+        assert await task3 is True
+
+        assert await task is True
+
     cancel_hci0()
     cancel_hci1()
 

@@ -171,7 +171,9 @@ class ConnectionHistory:
         scanner_connections_in_progress: int = len(self._connecting.get(scanner, ()))
         previous_failures: int = self._connect_failures.get(scanner, {}).get(address, 0)
         if scanner_connections_in_progress:
-            score -= rssi_diff * scanner_connections_in_progress * 0.41
+            # Very large penalty for multiple connections in progress
+            # to avoid overloading the adapter
+            score -= rssi_diff * scanner_connections_in_progress * 1.01
         if previous_failures:
             score -= rssi_diff * previous_failures * 0.51
         return score
@@ -868,6 +870,7 @@ class BluetoothManager:
                 source=scanner.source, slots=0, free=0, allocated=[]
             )
         scanners.add(scanner)
+        self.connection_history.clear(scanner)
         self._sources[scanner.source] = scanner
         self._adapter_sources[scanner.adapter] = scanner.source
         if connection_slots:
