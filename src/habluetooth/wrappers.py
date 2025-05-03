@@ -35,7 +35,6 @@ _LOGGER = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from .base_scanner import BaseHaScanner
     from .manager import BluetoothManager
-    from .scanner_device import BluetoothScannerDevice
 
 
 @dataclass(slots=True)
@@ -190,13 +189,6 @@ class HaBleakScannerWrapper(BaseBleakScanner):
                 asyncio.get_running_loop().call_soon_threadsafe(self._detection_cancel)
 
 
-def _bluetooth_scanner_device_rssi(
-    device: BluetoothScannerDevice,
-) -> float:
-    """Return the rssi of the device."""
-    return device.advertisement.rssi
-
-
 class HaBleakClientWrapper(BleakClient):
     """
     Wrap the BleakClient to ensure it does not shutdown our scanner.
@@ -226,7 +218,6 @@ class HaBleakClientWrapper(BleakClient):
             self.__address = str(address_or_ble_device)
         self.__disconnected_callback = disconnected_callback
         self.__manager = get_manager()
-        self.__connection_history = self.__manager._connection_history
         self.__timeout = timeout
         self._backend: BaseBleakClient | None = None
 
@@ -306,10 +297,10 @@ class HaBleakClientWrapper(BleakClient):
         connected = False
         address = device.address
         try:
-            self.__connection_history.add_connecting(scanner, address)
+            scanner._add_connecting(address)
             connected = await super().connect(**kwargs)
         finally:
-            self.__connection_history.finished_connecting(scanner, address, connected)
+            scanner._finished_connecting(address, connected)
             # If we failed to connect and its a local adapter (no source)
             # we release the connection slot
             if not connected and not wrapped_backend.source:
@@ -361,20 +352,14 @@ class HaBleakClientWrapper(BleakClient):
             key=lambda x: x.advertisement.rssi,
             reverse=True,
         )
-        connect_history = self.__connection_history
-        adjusted_rssi_sorter = _bluetooth_scanner_device_rssi
         if len(sorted_devices) > 1:
             rssi_diff = (
                 sorted_devices[0].advertisement.rssi
                 - sorted_devices[1].advertisement.rssi
             )
-            adjusted_rssi_sorter = partial(
-                connect_history.score_connection_paths,
-                rssi_diff,
-            )
             sorted_devices = sorted(
                 sorted_devices,
-                key=adjusted_rssi_sorter,
+                key=lambda device: device.score_connection_path(rssi_diff),
                 reverse=True,
             )
 
@@ -387,9 +372,9 @@ class HaBleakClientWrapper(BleakClient):
                 ", ".join(
                     f"{device.scanner.name} "
                     f"(RSSI={device.advertisement.rssi}) "
-                    f"(failures={connect_history.failures(device.scanner, address)}) "
-                    f"(in_progress={connect_history.in_progress(device.scanner)}) "
-                    f"(score={adjusted_rssi_sorter(device)})"
+                    f"(failures={device.scanner._connection_failures(address)}) "
+                    f"(in_progress={device.scanner._connections_in_progress()}) "
+                    f"(score={device.score_connection_path(0)})"
                     for device in sorted_devices
                 ),
             )

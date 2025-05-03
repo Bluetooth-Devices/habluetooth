@@ -19,3 +19,7 @@ class BluetoothScannerDevice:
     scanner: BaseHaScanner
     ble_device: BLEDevice
     advertisement: AdvertisementData
+
+    def score_connection_path(self, rssi_diff: int) -> float:
+        """Return a score for the connection path to this device."""
+        return self.scanner._score_connection_paths(rssi_diff, self)
