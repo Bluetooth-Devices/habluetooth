@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.47.1 (2025-05-03)
+
+### Bug fixes
+
+
+- Ensure logging does not fail when there is only a single scanner (#225) ([`d81378e`](https://github.com/Bluetooth-Devices/habluetooth/commit/d81378e6b4adedead6d04ab23be7b655cd3785fb))
+
+
 ## v3.47.0 (2025-05-03)
 
 ### Bug fixes
