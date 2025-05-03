@@ -273,6 +273,7 @@ class HaScanner(BaseHaScanner):
     ) -> None:
         """Handle raw advertisement data."""
         address_str = bytes_mac_to_str(address)
+        # XXX: TODO: remove the debug logging in the hot path
         _LOGGER.debug(
             "%s: Raw advertisement data: [%s] %s", self.name, address_str, data
         )
