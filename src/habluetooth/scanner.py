@@ -391,7 +391,9 @@ class HaScanner(BaseHaScanner):
         # hci0: Controller not accepting commands anymore: ncmd = 0
         # hci0: Injecting HCI hardware error event
         # hci0: hardware error 0x00
+        _LOGGER.warning("%s: Force stopping bluetooth discovery", self.name)
         await self._async_force_stop_discovery()
+        _LOGGER.warning("%s: Done force stopping bluetooth discovery", self.name)
         self._log_start_attempt(attempt)
         self._start_future = self._loop.create_future()
         try:
