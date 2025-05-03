@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.46.0 (2025-05-03)
+
+### Features
+
+
+- Improve recovery when adapter has gone silent and needs a usb reset (#222) ([`a4dd395`](https://github.com/Bluetooth-Devices/habluetooth/commit/a4dd395b7a8e70cb0ae94d97422d35eb638daaa5))
+
+
 ## v3.45.0 (2025-04-29)
 
 ### Features
