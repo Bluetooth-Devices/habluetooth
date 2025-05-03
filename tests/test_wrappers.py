@@ -24,6 +24,7 @@ from habluetooth.usage import (
 from habluetooth.wrappers import HaBleakScannerWrapper
 
 from . import (
+    HCI0_SOURCE_ADDRESS,
     generate_advertisement_data,
     generate_ble_device,
     inject_advertisement,
@@ -426,6 +427,43 @@ async def test_switch_adapters_on_connecting(
 
     cancel_hci0()
     cancel_hci1()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth", "install_bleak_catcher")
+async def test_single_adapter_connection_history(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test connection history failure count."""
+    manager = _get_manager()
+    scanner_hci0 = FakeScanner(HCI0_SOURCE_ADDRESS, "hci0", None, True)
+    unsub_hci0 = manager.async_register_scanner(scanner_hci0, connection_slots=2)
+    ble_device, adv_data = _generate_ble_device_and_adv_data(
+        "hci0", "00:00:00:00:00:11", rssi=-60
+    )
+    scanner_hci0.inject_advertisement(ble_device, adv_data)
+    service_info = manager.async_last_service_info(
+        ble_device.address, connectable=False
+    )
+    assert service_info is not None
+    assert service_info.source == HCI0_SOURCE_ADDRESS
+
+    client = bleak.BleakClient(ble_device)
+
+    class FakeBleakClientFastConnect(BaseFakeBleakClient):
+        """Fake bleak client that connects instantly on hci1 and slow on hci0."""
+
+        async def connect(self, *args: Any, **kwargs: Any) -> bool:
+            """Connect."""
+            assert isinstance(self._device, BLEDevice)
+            return "/hci0/" in self._device.details["path"]
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=FakeBleakClientFastConnect,
+    ):
+        assert await client.connect() is True
+    unsub_hci0()
 
 
 @pytest.mark.asyncio

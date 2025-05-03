@@ -35,6 +35,7 @@ _LOGGER = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from .base_scanner import BaseHaScanner
     from .manager import BluetoothManager
+    from .scanner_device import BluetoothScannerDevice
 
 
 @dataclass(slots=True)
@@ -187,6 +188,13 @@ class HaBleakScannerWrapper(BaseBleakScanner):
             # Nothing to do if event loop is already closed
             with contextlib.suppress(RuntimeError):
                 asyncio.get_running_loop().call_soon_threadsafe(self._detection_cancel)
+
+
+def _bluetooth_scanner_device_rssi(
+    device: BluetoothScannerDevice,
+) -> float:
+    """Return the rssi of the device."""
+    return device.advertisement.rssi
 
 
 class HaBleakClientWrapper(BleakClient):
@@ -354,6 +362,7 @@ class HaBleakClientWrapper(BleakClient):
             reverse=True,
         )
         connect_history = self.__connection_history
+        adjusted_rssi_sorter = _bluetooth_scanner_device_rssi
         if len(sorted_devices) > 1:
             rssi_diff = (
                 sorted_devices[0].advertisement.rssi
