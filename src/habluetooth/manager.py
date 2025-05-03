@@ -146,7 +146,9 @@ class ConnectionHistory:
         """Remove a connecting."""
         if scanner not in self._connecting or address not in self._connecting[scanner]:
             return
-        del self._connecting[scanner][address]
+        self._connecting[scanner][address] -= 1
+        if not self._connecting[scanner][address]:
+            del self._connecting[scanner][address]
         if not self._connecting[scanner]:
             del self._connecting[scanner]
 
