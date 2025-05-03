@@ -143,8 +143,8 @@ async def test_async_recover_failed_adapters() -> None:
 
     assert mock_async_reset_adapter.call_count == 2
     assert mock_async_reset_adapter.call_args_list == [
-        (("hci1", "00:00:00:00:00:00"),),
-        (("hci2", "00:00:00:00:00:00"),),
+        (("hci1", "00:00:00:00:00:00", False),),
+        (("hci2", "00:00:00:00:00:00", False),),
     ]
 
 
