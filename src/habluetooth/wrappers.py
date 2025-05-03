@@ -309,7 +309,11 @@ class HaBleakClientWrapper(BleakClient):
 
         if debug_logging:
             _LOGGER.debug(
-                "%s: Connected via %s (last rssi: %s)", description, scanner.name, rssi
+                "%s: %s via %s (last rssi: %s)",
+                description,
+                "Connected" if connected else "Failed to connect",
+                scanner.name,
+                rssi,
             )
         return connected
 
