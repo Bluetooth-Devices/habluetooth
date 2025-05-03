@@ -369,8 +369,9 @@ class HaBleakClientWrapper(BleakClient):
                 ", ".join(
                     f"{device.scanner.name} "
                     f"(RSSI={device.advertisement.rssi}) "
-                    f"(failures={self.__connection_history.failures(device)})"
-                    f"(in_progress={self.__connection_history.in_progress(device)})"
+                    f"(failures={self.__connection_history.failures(device)}) "
+                    f"(in_progress={self.__connection_history.in_progress(device)}) "
+                    f"(score={adjusted_rssi_sorter(device)})"
                     for device in sorted_devices
                 ),
             )
