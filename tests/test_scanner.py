@@ -451,6 +451,12 @@ async def test_adapter_recovery() -> None:
             await asyncio.sleep(0)
 
         assert len(mock_recover_adapter.mock_calls) == 1
+        assert mock_recover_adapter.call_args_list[0][0] == (
+            0,
+            "AA:BB:CC:DD:EE:FF",
+            True,
+        )
+
         assert called_start == 2
         await scanner.async_stop()
 
