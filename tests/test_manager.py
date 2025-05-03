@@ -1256,7 +1256,7 @@ async def test_subclassing_bluetooth_manager(caplog: pytest.LogCaptureFixture) -
 def test_connection_history_count_in_progress() -> None:
     """Test connection history in process counting."""
     manager = get_manager()
-    connection_history = manager.connection_history
+    connection_history = manager._connection_history
     device1_address = "44:44:33:11:23:12"
     device2_address = "44:44:33:11:23:13"
     hci0_scanner = manager.async_scanner_by_source(HCI0_SOURCE_ADDRESS)
@@ -1278,7 +1278,7 @@ def test_connection_history_count_in_progress() -> None:
 def test_connection_history_failure_count(caplog: pytest.LogCaptureFixture) -> None:
     """Test connection history failure count."""
     manager = get_manager()
-    connection_history = manager.connection_history
+    connection_history = manager._connection_history
     device1_address = "44:44:33:11:23:12"
     device2_address = "44:44:33:11:23:13"
     hci0_scanner = manager.async_scanner_by_source(HCI0_SOURCE_ADDRESS)

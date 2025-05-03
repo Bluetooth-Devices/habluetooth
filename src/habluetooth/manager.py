@@ -212,6 +212,7 @@ class BluetoothManager:
         "_connectable_history",
         "_connectable_scanners",
         "_connectable_unavailable_callbacks",
+        "_connection_history",
         "_debug",
         "_disappeared_callbacks",
         "_fallback_intervals",
@@ -223,7 +224,6 @@ class BluetoothManager:
         "_sources",
         "_subclass_discover_info",
         "_unavailable_callbacks",
-        "connection_history",
         "shutdown",
         "slot_manager",
     )
@@ -258,7 +258,7 @@ class BluetoothManager:
         self._sources: dict[str, BaseHaScanner] = {}
         self._bluetooth_adapters = bluetooth_adapters or get_adapters()
         self.slot_manager = slot_manager or BleakSlotManager()
-        self.connection_history = ConnectionHistory()
+        self._connection_history = ConnectionHistory()
         self._cancel_allocation_callbacks = (
             self.slot_manager.register_allocation_callback(
                 self._async_slot_manager_changed
@@ -843,7 +843,7 @@ class BluetoothManager:
         _LOGGER.debug("Unregistering scanner %s", scanner.name)
         self._advertisement_tracker.async_remove_source(scanner.source)
         scanners.remove(scanner)
-        self.connection_history.clear(scanner)
+        self._connection_history.clear(scanner)
         del self._sources[scanner.source]
         del self._adapter_sources[scanner.adapter]
         self._allocations.pop(scanner.source, None)
@@ -866,7 +866,7 @@ class BluetoothManager:
                 source=scanner.source, slots=0, free=0, allocated=[]
             )
         scanners.add(scanner)
-        self.connection_history.clear(scanner)
+        self._connection_history.clear(scanner)
         self._sources[scanner.source] = scanner
         self._adapter_sources[scanner.adapter] = scanner.source
         if connection_slots:

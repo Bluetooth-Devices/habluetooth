@@ -84,7 +84,7 @@ cdef class BluetoothManager:
     cdef public dict _sources
     cdef public object _bluetooth_adapters
     cdef public object slot_manager
-    cdef public ConnectionHistory connection_history
+    cdef public ConnectionHistory _connection_history
     cdef public bint _debug
     cdef public bint shutdown
     cdef public object _loop

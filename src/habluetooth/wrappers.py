@@ -218,7 +218,7 @@ class HaBleakClientWrapper(BleakClient):
             self.__address = str(address_or_ble_device)
         self.__disconnected_callback = disconnected_callback
         self.__manager = get_manager()
-        self.__connection_history = self.__manager.connection_history
+        self.__connection_history = self.__manager._connection_history
         self.__timeout = timeout
         self._backend: BaseBleakClient | None = None
 
