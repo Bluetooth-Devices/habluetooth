@@ -327,12 +327,22 @@ async def test_switch_adapters_on_failure(
     client = bleak.BleakClient(ble_device)
 
     class FakeBleakClientFailsHCI0Only(BaseFakeBleakClient):
-        """Fake bleak client that fails to connect."""
+        """Fake bleak client that fails to connect on hci0."""
 
         async def connect(self, *args: Any, **kwargs: Any) -> bool:
             """Connect."""
             assert isinstance(self._device, BLEDevice)
             if "/hci0/" in self._device.details["path"]:
+                return False
+            return True
+
+    class FakeBleakClientFailsHCI1Only(BaseFakeBleakClient):
+        """Fake bleak client that fails to connect on hci1."""
+
+        async def connect(self, *args: Any, **kwargs: Any) -> bool:
+            """Connect."""
+            assert isinstance(self._device, BLEDevice)
+            if "/hci1/" in self._device.details["path"]:
                 return False
             return True
 
@@ -354,6 +364,17 @@ async def test_switch_adapters_on_failure(
         # If we replace the client, we should remember hci0 is failing
         client = bleak.BleakClient(ble_device)
 
+        assert await client.connect() is True
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=FakeBleakClientFailsHCI1Only,
+    ):
+        # Should try to connect to hci1 first
+        assert await client.connect() is False
+        # Should try to connect with hci0 next
+        assert await client.connect() is True
+        # Next attempt should also use hci0
         assert await client.connect() is True
 
     cancel_hci0()
