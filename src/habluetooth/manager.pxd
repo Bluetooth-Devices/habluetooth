@@ -34,6 +34,26 @@ cdef class BleakCallback:
     cdef public object callback
     cdef public dict filters
 
+cdef class ConnectionHistory:
+
+    cdef public object _loop
+    cdef public dict _connect_failures
+    cdef public dict _connecting
+    cdef public dict _wait_futures
+
+    cpdef clear(self, BaseHaScanner scanner)
+
+    cpdef finished_connecting(self, BaseHaScanner scanner, str address, bint connected)
+
+    cdef _add_connect_failure(self, BaseHaScanner scanner, str address)
+
+    cpdef add_connecting(self, BaseHaScanner scanner, str address)
+
+    cdef _remove_connecting(self, BaseHaScanner scanner, str address)
+
+    cdef _clear_connect_failure(self, BaseHaScanner scanner, str address)
+
+
 cdef class BluetoothManager:
 
     cdef public object _cancel_unavailable_tracking
@@ -51,6 +71,7 @@ cdef class BluetoothManager:
     cdef public dict _sources
     cdef public object _bluetooth_adapters
     cdef public object slot_manager
+    cdef public ConnectionHistory connection_history
     cdef public bint _debug
     cdef public bint shutdown
     cdef public object _loop
