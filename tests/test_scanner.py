@@ -64,8 +64,8 @@ def manager():
 
 def test_bytes_mac_to_str() -> None:
     """Test bytes_mac_to_str."""
-    assert bytes_mac_to_str(b"\xaa\xbb\xcc\xdd\xee\xff") == "AA:BB:CC:DD:EE:FF"
-    assert bytes_mac_to_str(b"\xaa\xbb\xcc\xdd\xee\xff") == "AA:BB:CC:DD:EE:FF"
+    assert bytes_mac_to_str(b"\xff\xee\xdd\xcc\xbb\xaa") == "AA:BB:CC:DD:EE:FF"
+    assert bytes_mac_to_str(b"\xff\xee\xdd\xcc\xbb\xaa") == "AA:BB:CC:DD:EE:FF"
 
 
 def test_make_bluez_details() -> None:

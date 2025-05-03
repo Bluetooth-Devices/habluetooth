@@ -167,8 +167,8 @@ def _error_indicates_wait_for_adapter_to_init(error_str: str) -> bool:
 
 @lru_cache(maxsize=512)
 def bytes_mac_to_str(mac: bytes) -> str:
-    """Convert a mac address in bytes to a string."""
-    return ":".join(f"{b:02X}" for b in mac)
+    """Convert a MAC address in bytes to a string in big-endian (MSB-first) order."""
+    return ":".join(f"{b:02X}" for b in reversed(mac))
 
 
 @lru_cache(maxsize=512)
