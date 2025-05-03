@@ -46,7 +46,8 @@ cdef class BaseHaScanner:
     cdef void _clear_connect_failure(self, str address) except *
 
     @cython.locals(
-        in_progress=Py_ssize_t
+        in_progress=Py_ssize_t,
+        count=Py_ssize_t
     )
     cpdef _connections_in_progress(self)
 
