@@ -384,6 +384,14 @@ class HaScanner(BaseHaScanner):
             self.current_mode,
             self.adapter,
         )
+        # If the scanner is already running, trying to start it again
+        # can result in a deadlock. So we need to stop it first.
+        # hci0: Opcode 0x200b failed: -110
+        # hci0: start background scanning failed: -110
+        # hci0: Controller not accepting commands anymore: ncmd = 0
+        # hci0: Injecting HCI hardware error event
+        # hci0: hardware error 0x00
+        await self._async_force_stop_discovery()
         self._log_start_attempt(attempt)
         self._start_future = self._loop.create_future()
         try:
