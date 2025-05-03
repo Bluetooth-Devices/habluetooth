@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.48.1 (2025-05-03)
+
+### Bug fixes
+
+
+- Pin cython to <3.1 (#228) ([`21dc734`](https://github.com/Bluetooth-Devices/habluetooth/commit/21dc7340c548713c4539d8d8a067a2a574623906))
+
+
 ## v3.48.0 (2025-05-03)
 
 ### Features
