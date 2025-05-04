@@ -50,7 +50,6 @@ class BaseHaScanner:
         "_connect_failures",
         "_connect_in_progress",
         "_connecting",
-        "_connecting",
         "_details",
         "_expire_seconds",
         "_last_detection",

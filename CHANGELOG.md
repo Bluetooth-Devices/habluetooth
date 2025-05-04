@@ -1,5 +1,29 @@
 # Changelog
 
+## v3.48.2 (2025-05-03)
+
+### Bug fixes
+
+
+- Remove duplicate _connecting slot from basehascanner (#229) ([`230bb03`](https://github.com/Bluetooth-Devices/habluetooth/commit/230bb038eea8ae07a3fe798ec15792489d06cd66))
+
+
+## v3.48.1 (2025-05-03)
+
+### Bug fixes
+
+
+- Pin cython to <3.1 (#228) ([`21dc734`](https://github.com/Bluetooth-Devices/habluetooth/commit/21dc7340c548713c4539d8d8a067a2a574623906))
+
+
+## v3.48.0 (2025-05-03)
+
+### Features
+
+
+- Refactor scanner history to live on the scanner itself (#227) ([`ea0d2fc`](https://github.com/Bluetooth-Devices/habluetooth/commit/ea0d2fc088832a1b3f8c7859c82e2e05bf1261f9))
+
+
 ## v3.47.1 (2025-05-03)
 
 ### Bug fixes
