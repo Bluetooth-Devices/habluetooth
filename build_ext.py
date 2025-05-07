@@ -19,6 +19,7 @@ TO_CYTHONIZE = [
     "src/habluetooth/manager.py",
     "src/habluetooth/models.py",
     "src/habluetooth/scanner.py",
+    "src/habluetooth/channels/bluez.py",
 ]
 
 EXTENSIONS = [
