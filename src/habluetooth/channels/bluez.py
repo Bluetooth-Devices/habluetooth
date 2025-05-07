@@ -235,6 +235,7 @@ class MGMTBluetoothCtl:
 
     async def _establish_connection(self) -> None:
         """Establish a connection to the Bluetooth management socket."""
+        _LOGGER.debug("Establishing Bluetooth management socket connection")
         self.sock = btmgmt_socket.open()
         loop = asyncio.get_running_loop()
         connection_made_future: asyncio.Future[None] = loop.create_future()
@@ -255,6 +256,7 @@ class MGMTBluetoothCtl:
         except asyncio.TimeoutError:
             btmgmt_socket.close(self.sock)
             raise
+        _LOGGER.debug("Bluetooth management socket connection established")
         self.protocol = cast(BluetoothMGMTProtocol, protocol)
         self._on_connection_lost_future = loop.create_future()
 
