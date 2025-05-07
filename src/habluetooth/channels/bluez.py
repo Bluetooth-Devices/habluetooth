@@ -213,6 +213,7 @@ class MGMTBluetoothCtl:
 
     def _on_connection_lost(self) -> None:
         """Handle connection lost."""
+        _LOGGER.debug("Bluetooth management socket connection lost, reconnecting")
         if (
             self._on_connection_lost_future
             and not self._on_connection_lost_future.done()
@@ -225,6 +226,7 @@ class MGMTBluetoothCtl:
         while True:
             if self._on_connection_lost_future:
                 await self._on_connection_lost_future
+            _LOGGER.debug("Reconnecting to Bluetooth management socket")
             try:
                 await self._establish_connection()
             except CONNECTION_ERRORS:
