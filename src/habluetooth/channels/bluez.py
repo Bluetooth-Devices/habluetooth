@@ -4,7 +4,7 @@ import asyncio
 import logging
 import socket
 from asyncio import timeout as asyncio_timeout
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Callable, cast
 
 from btsocket import btmgmt_protocol, btmgmt_socket
 
@@ -28,6 +28,7 @@ class BluetoothMGMTProtocol:
         self,
         connection_mode_future: asyncio.Future[None],
         scanners: dict[int, HaScanner],
+        on_connection_lost: Callable[[], None],
     ) -> None:
         """Initialize the protocol."""
         self.transport: asyncio.Transport | None = None
@@ -36,6 +37,7 @@ class BluetoothMGMTProtocol:
         self._buffer_len = 0
         self._pos = 0
         self._scanners = scanners
+        self._on_connection_lost = on_connection_lost
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         """Handle connection made."""
@@ -159,6 +161,7 @@ class BluetoothMGMTProtocol:
         else:
             _LOGGER.info("Bluetooth management socket connection closed")
         self.transport = None
+        self._on_connection_lost()
 
 
 class MGMTBluetoothCtl:
@@ -171,16 +174,42 @@ class MGMTBluetoothCtl:
         self.protocol: BluetoothMGMTProtocol | None = None
         self.sock: socket.socket | None = None
         self.scanners = scanners
+        self._reconnect_task: asyncio.Task[None] | None = None
+        self._on_connection_lost_future: asyncio.Future[None] | None = None
 
     def close(self) -> None:
         """Close the management interface."""
+        if self._reconnect_task:
+            self._reconnect_task.cancel()
         if self.protocol and self.protocol.transport:
             self.protocol.transport.close()
             self.protocol = None
         btmgmt_socket.close(self.sock)
 
-    async def setup(self) -> None:
-        """Set up management interface."""
+    def _on_connection_lost(self) -> None:
+        """Handle connection lost."""
+        if (
+            self._on_connection_lost_future
+            and not self._on_connection_lost_future.done()
+        ):
+            self._on_connection_lost_future.set_result(None)
+            self._on_connection_lost_future = None
+
+    async def reconnect_task(self) -> None:
+        """Monitor the connection and reconnect if needed."""
+        while True:
+            if self._on_connection_lost_future:
+                await self._on_connection_lost_future
+            try:
+                await self.establish_connection()
+            except asyncio.TimeoutError:
+                _LOGGER.debug("Bluetooth management socket connection timed out")
+                # If we get a timeout, we should try to reconnect
+                # after a short delay
+                await asyncio.sleep(1)
+
+    async def establish_connection(self) -> None:
+        """Establish a connection to the Bluetooth management socket."""
         self.sock = btmgmt_socket.open()
         loop = asyncio.get_running_loop()
         connection_made_future: asyncio.Future[None] = loop.create_future()
@@ -192,7 +221,7 @@ class MGMTBluetoothCtl:
                 _, protocol = await loop._create_connection_transport(  # type: ignore[attr-defined]
                     self.sock,
                     lambda: BluetoothMGMTProtocol(
-                        connection_made_future, self.scanners
+                        connection_made_future, self.scanners, self._on_connection_lost
                     ),
                     None,
                     None,
@@ -202,3 +231,9 @@ class MGMTBluetoothCtl:
             btmgmt_socket.close(self.sock)
             raise
         self.protocol = cast(BluetoothMGMTProtocol, protocol)
+        self._on_connection_lost_future = loop.create_future()
+
+    async def setup(self) -> None:
+        """Set up management interface."""
+        await self.establish_connection()
+        self._reconnect_task = asyncio.create_task(self.reconnect_task())
