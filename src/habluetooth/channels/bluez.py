@@ -124,7 +124,6 @@ class BluetoothMGMTProtocol:
                 # for more data to arrive.
                 return
             self._pos += param_len
-            _LOGGER.debug("Bluetooth MGMT event code: %s", hex(event_code))
             if event_code == DEVICE_FOUND:
                 parse_offset = 6
             elif event_code == ADV_MONITOR_DEVICE_FOUND:
@@ -152,27 +151,12 @@ class BluetoothMGMTProtocol:
             if (scanner := self._scanners.get(controller_idx)) is not None:
                 # We have a scanner for this controller, so we can
                 # pass the data to it.
-                _LOGGER.debug(
-                    "Sending data to scanner: %s - address: %s - "
-                    "address_type: %s - rssi: %s - flags: %s - data: %s",
-                    scanner,
-                    address,
-                    address_type,
-                    rssi,
-                    flags,
-                    data,
-                )
                 scanner._async_on_raw_bluez_advertisement(
                     address,
                     address_type,
                     rssi,
                     flags,
                     data,
-                )
-            else:
-                _LOGGER.debug(
-                    "No scanner for controller %s, ignoring data",
-                    controller_idx,
                 )
 
     def _timeout_future(self, future: asyncio.Future[btmgmt_protocol.Response]) -> None:
