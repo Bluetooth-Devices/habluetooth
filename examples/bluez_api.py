@@ -2,7 +2,6 @@ import asyncio
 import logging
 
 from habluetooth import BluetoothManager, BluetoothScanningMode
-from habluetooth.channels.bluez import MGMTBluetoothCtl
 from habluetooth.scanner import HaScanner
 
 int_ = int
@@ -32,21 +31,19 @@ async def main() -> None:
     logging.basicConfig(level=logging.DEBUG)
     logger = logging.getLogger("habluetooth")
     logger.setLevel(logging.DEBUG)
-    await BluetoothManager().async_setup()
+    manager = BluetoothManager()
+    await manager.async_setup()
     # Create an instance of MGMTBluetoothCtl
     scanner = LoggingHaScanner(
         BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF"
     )
-    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={0: scanner})
-
-    # Set up the management interface
-    await mgmt_ctl.setup()
+    manager.async_register_scanner(scanner)
 
     try:
         await asyncio.Event().wait()
     finally:
         # Close the management interface when done
-        mgmt_ctl.close()
+        manager.async_stop()
 
 
 if __name__ == "__main__":
