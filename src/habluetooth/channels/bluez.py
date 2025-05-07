@@ -201,14 +201,14 @@ class MGMTBluetoothCtl:
             if self._on_connection_lost_future:
                 await self._on_connection_lost_future
             try:
-                await self.establish_connection()
+                await self._establish_connection()
             except asyncio.TimeoutError:
                 _LOGGER.debug("Bluetooth management socket connection timed out")
                 # If we get a timeout, we should try to reconnect
                 # after a short delay
                 await asyncio.sleep(1)
 
-    async def establish_connection(self) -> None:
+    async def _establish_connection(self) -> None:
         """Establish a connection to the Bluetooth management socket."""
         self.sock = btmgmt_socket.open()
         loop = asyncio.get_running_loop()
@@ -235,5 +235,5 @@ class MGMTBluetoothCtl:
 
     async def setup(self) -> None:
         """Set up management interface."""
-        await self.establish_connection()
+        await self._establish_connection()
         self._reconnect_task = asyncio.create_task(self.reconnect_task())
