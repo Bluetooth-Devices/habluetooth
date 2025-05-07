@@ -7,6 +7,7 @@ from asyncio import timeout as asyncio_timeout
 from typing import TYPE_CHECKING, Callable, cast
 
 from btsocket import btmgmt_protocol, btmgmt_socket
+from btsocket.btmgmt_socket import BluetoothSocketError
 
 from ..scanner import HaScanner
 
@@ -19,6 +20,13 @@ HEADER_SIZE = 6
 # Header is event_code (2 bytes), controller_idx (2 bytes), param_len (2 bytes)
 DEVICE_FOUND = 0x0012
 ADV_MONITOR_DEVICE_FOUND = 0x002F
+
+CONNECTION_ERRORS = (
+    BluetoothSocketError,
+    OSError,
+    asyncio.TimeoutError,
+    PermissionError,
+)
 
 
 class BluetoothMGMTProtocol:
@@ -202,7 +210,7 @@ class MGMTBluetoothCtl:
                 await self._on_connection_lost_future
             try:
                 await self._establish_connection()
-            except asyncio.TimeoutError:
+            except CONNECTION_ERRORS:
                 _LOGGER.debug("Bluetooth management socket connection timed out")
                 # If we get a timeout, we should try to reconnect
                 # after a short delay

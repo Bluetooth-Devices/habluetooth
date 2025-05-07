@@ -26,13 +26,12 @@ from bluetooth_adapters import (
     get_adapters,
 )
 from bluetooth_data_tools import monotonic_time_coarse
-from btsocket.btmgmt_socket import BluetoothSocketError
 
 from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
     AdvertisementTracker,
 )
-from .channels.bluez import MGMTBluetoothCtl
+from .channels.bluez import CONNECTION_ERRORS, MGMTBluetoothCtl
 from .const import (
     ADV_RSSI_SWITCH_THRESHOLD,
     CALLBACK_TYPE,
@@ -334,12 +333,7 @@ class BluetoothManager:
         self._mgmt_ctl = MGMTBluetoothCtl(10.0, self._side_channel_scanners)
         try:
             await self._mgmt_ctl.setup()
-        except (
-            BluetoothSocketError,
-            OSError,
-            asyncio.TimeoutError,
-            PermissionError,
-        ) as ex:
+        except CONNECTION_ERRORS as ex:
             _LOGGER.debug("Cannot start Bluetooth Management API: %s", ex)
             self._mgmt_ctl = None
         else:
