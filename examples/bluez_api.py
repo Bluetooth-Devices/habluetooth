@@ -1,6 +1,6 @@
 import asyncio
 
-from habluetooth import BluetoothScanningMode
+from habluetooth import BluetoothManager, BluetoothScanningMode
 from habluetooth.channels.bluez import MGMTBluetoothCtl
 from habluetooth.scanner import HaScanner
 
@@ -27,6 +27,7 @@ class LoggingHaScanner(HaScanner):
 
 async def main() -> None:
     """Main function to test the Bluetooth management API."""
+    await BluetoothManager().async_setup()
     # Create an instance of MGMTBluetoothCtl
     scanner = LoggingHaScanner(
         BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF"
