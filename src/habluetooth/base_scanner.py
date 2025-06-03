@@ -651,6 +651,10 @@ class BaseHaRemoteScanner(BaseHaScanner):
         discovered_device_timestamps = self._build_discovered_device_timestamps()
         return await super().async_diagnostics() | {
             "discovered_device_timestamps": discovered_device_timestamps,
+            "raw_advertisement_data": {
+                address: info.raw
+                for address, info in self._previous_service_info.items()
+            },
             "time_since_last_device_detection": {
                 address: now - timestamp
                 for address, timestamp in discovered_device_timestamps.items()
