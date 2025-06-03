@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.49.0 (2025-06-03)
+
+### Features
+
+
+- Add raw_advertisement_data to diagnostics (#238) ([`a77933b`](https://github.com/Bluetooth-Devices/habluetooth/commit/a77933b8dd0195ab827907ea918c572cd1686750))
+
+
 ## v3.48.2 (2025-05-03)
 
 ### Bug fixes
