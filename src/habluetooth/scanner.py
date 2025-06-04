@@ -255,7 +255,6 @@ class HaScanner(BaseHaScanner):
             # as the adapter is in a failure
             # state if all the data is empty.
             self._last_detection = callback_time
-            self._restart_attempts = 0  # Reset counter on valid advertisement
         name = local_name or device.name or address
         if name is not None and type(name) is not str:
             name = str(name)
@@ -294,6 +293,7 @@ class HaScanner(BaseHaScanner):
     async def _async_on_successful_start(self) -> None:
         """Run when the scanner has successfully started."""
         self.scanning = True
+        self._restart_attempts = 0
         self._async_setup_scanner_watchdog()
         await restore_discoveries(self.scanner, self.adapter)
 
@@ -526,7 +526,7 @@ class HaScanner(BaseHaScanner):
             await self._async_stop_scanner()
             self._restart_attempts += 1
             _LOGGER.debug(
-                "%s: Restart attempt %s/%s",
+                "%s: Gone silent restart attempt %s/%s",
                 self.name,
                 self._restart_attempts,
                 RESTART_ATTEMPT_TO_DECLARE_GONE_SILENT,
