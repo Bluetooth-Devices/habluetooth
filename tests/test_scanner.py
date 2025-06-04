@@ -795,7 +795,12 @@ async def test_adapter_reset_on_third_restart_attempt(
         scanner._last_detection = mock_monotonic_time.current_time + 1
 
         # Now trigger multiple watchdog timeouts
+        # Note: _restart_attempts is reset to 0 after each successful restart
+        # so we need to manually set it to simulate consecutive restarts
         for i in range(4):
+            # Set the restart counter to simulate consecutive restarts
+            scanner._restart_attempts = i
+
             # Advance time to trigger watchdog (no advertisements seen)
             mock_monotonic_time.current_time = base_time + (i + 1) * (
                 SCANNER_WATCHDOG_TIMEOUT + 10
@@ -867,7 +872,10 @@ async def test_adapter_reset_on_third_restart_attempt_direct(
         scanner._last_detection = time.monotonic()
 
         # Directly call restart method multiple times
+        # Note: _restart_attempts is reset to 0 after each successful restart
         for i in range(1, 5):
+            # Manually set counter to simulate consecutive restarts
+            scanner._restart_attempts = i - 1
             await scanner._async_restart_scanner()
             # Simulate advertisement after restart to avoid immediate reset
             scanner._last_detection = time.monotonic()
@@ -875,11 +883,9 @@ async def test_adapter_reset_on_third_restart_attempt_direct(
             if i < 3:
                 # First two restarts should not reset adapter
                 assert mock_reset_adapter.call_count == 0
-                assert scanner._restart_attempts == i
             else:
                 # Third and subsequent restarts should reset adapter
                 assert mock_reset_adapter.call_count == i - 2
-                assert scanner._restart_attempts == i
 
         await scanner.async_stop()
 
