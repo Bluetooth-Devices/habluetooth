@@ -95,7 +95,7 @@ NEED_RESET_ERRORS = [
 WAIT_FOR_ADAPTER_TO_INIT_ERRORS = ["org.freedesktop.DBus.Error.UnknownObject"]
 ADAPTER_INIT_TIME = 1.5
 
-START_ATTEMPTS = 4
+START_ATTEMPTS = 5
 
 SCANNING_MODE_TO_BLEAK = {
     BluetoothScanningMode.ACTIVE: "active",
@@ -314,7 +314,8 @@ class HaScanner(BaseHaScanner):
         # 1st attempt - no auto reset
         # 2nd attempt - try to reset the adapter and wait a bit
         # 3th attempt - no auto reset
-        # 4th attempt - fallback to passive if available
+        # 4th attempt - try one last time before falling back to passive
+        # 5th attempt - fallback to passive if available
 
         if (
             IS_LINUX
@@ -555,6 +556,7 @@ class HaScanner(BaseHaScanner):
         _LOGGER.debug("%s: adapter stopped responding; executing reset", self.name)
         result = await async_reset_adapter(self.adapter, self.mac_address, gone_silent)
         _LOGGER.debug("%s: adapter reset result: %s", self.name, result)
+        await self._async_force_stop_discovery()
 
     async def async_stop(self) -> None:
         """Stop bluetooth scanner."""
