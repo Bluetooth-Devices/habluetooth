@@ -4,7 +4,7 @@ import asyncio
 import time
 from datetime import timedelta
 from typing import Any
-from unittest.mock import ANY, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from bleak import BleakError
@@ -435,8 +435,9 @@ async def test_adapter_recovery() -> None:
 
         assert called_start == 1
 
-        # We hit the timer with no detections, so we
-        # reset the adapter and restart the scanner
+        # We hit the timer with no detections, so we restart the scanner
+        # Since no advertisements have been seen (start_time == last_detection),
+        # adapter reset happens on the first restart
         with (
             patch_bluetooth_time(
                 start_time_monotonic
@@ -541,7 +542,7 @@ async def test_adapter_scanner_fails_to_start_first_time() -> None:
         assert called_start == 1
 
         # We hit the timer with no detections,
-        # so we reset the adapter and restart the scanner
+        # Since no advertisements have been seen, adapter reset happens on first restart
         with (
             patch_bluetooth_time(
                 start_time_monotonic
@@ -601,6 +602,8 @@ async def test_adapter_fails_to_start_and_takes_a_bit_to_init(
                 raise BleakError("org.bluez.Error.InProgress")
             if called_start == 3:
                 raise BleakError("org.bluez.Error.InProgress")
+            if called_start == 4:
+                raise asyncio.TimeoutError()
 
         async def stop(self, *args, **kwargs):
             """Mock Start."""
@@ -643,7 +646,7 @@ async def test_adapter_fails_to_start_and_takes_a_bit_to_init(
         scanner.async_setup()
         await scanner.async_start()
 
-        assert called_start == 4
+        assert called_start == 5
 
         assert len(mock_recover_adapter.mock_calls) == 1
         assert "Waiting for adapter to initialize" in caplog.text
@@ -725,6 +728,171 @@ async def test_restart_takes_longer_than_watchdog_time(
 
 
 @pytest.mark.asyncio
+async def test_adapter_reset_on_third_restart_attempt(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that adapter reset only happens on the 3rd restart attempt."""
+    mock_reset_adapter = AsyncMock(return_value=True)
+    called_start = 0
+
+    class MockBleakScanner:
+        async def start(self, *args, **kwargs):
+            """Mock Start."""
+            nonlocal called_start
+            called_start += 1
+
+        async def stop(self, *args, **kwargs):
+            """Mock Stop."""
+
+        @property
+        def discovered_devices(self):
+            """Mock discovered_devices."""
+            return []
+
+        @property
+        def discovered_devices_and_advertisement_data(self):
+            """Mock discovered_devices_and_advertisement_data."""
+            return {}
+
+        def register_detection_callback(
+            self, callback: AdvertisementDataCallback
+        ) -> None:
+            """Mock Register Detection Callback."""
+
+    mock_scanner = MockBleakScanner()
+
+    # We need to simulate continued silence
+    base_time = time.monotonic()
+
+    # Create a proper mock class to avoid mypy errors
+    class MockMonotonicTime:
+        def __init__(self):
+            self.current_time = base_time
+
+        def __call__(self):
+            return self.current_time
+
+    mock_monotonic_time = MockMonotonicTime()
+
+    with (
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner",
+            return_value=mock_scanner,
+        ),
+        patch("habluetooth.scanner.async_reset_adapter", mock_reset_adapter),
+        patch("habluetooth.scanner.restore_discoveries", AsyncMock()),
+        patch("bleak_retry_connector.bluez.stop_discovery", AsyncMock()),
+        patch("habluetooth.base_scanner.monotonic_time_coarse", mock_monotonic_time),
+        patch("bluetooth_data_tools.monotonic_time_coarse", mock_monotonic_time),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+
+        # Start the scanner
+        await scanner.async_start()
+
+        # Simulate receiving an advertisement to avoid immediate reset
+        scanner._last_detection = mock_monotonic_time.current_time + 1
+
+        # Now trigger multiple watchdog timeouts
+        # Note: _restart_attempts is reset to 0 after each successful restart
+        # so we need to manually set it to simulate consecutive restarts
+        for i in range(4):
+            # Set the restart counter to simulate consecutive restarts
+            scanner._restart_attempts = i
+
+            # Advance time to trigger watchdog (no advertisements seen)
+            mock_monotonic_time.current_time = base_time + (i + 1) * (
+                SCANNER_WATCHDOG_TIMEOUT + 10
+            )
+
+            # Trigger watchdog
+            async_fire_time_changed(utcnow() + SCANNER_WATCHDOG_INTERVAL)
+            # Wait for watchdog and restart to complete
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+            # Simulate advertisement after restart to avoid immediate reset
+            if i < 2:  # Only for first two iterations
+                scanner._last_detection = mock_monotonic_time.current_time + 1
+
+            if i < 2:
+                # First two restarts should not reset adapter
+                assert mock_reset_adapter.call_count == 0
+            else:
+                # Third and subsequent restarts should reset adapter
+                assert mock_reset_adapter.call_count > 0
+
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_adapter_reset_on_third_restart_attempt_direct(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test adapter reset by directly calling restart method."""
+    mock_reset_adapter = AsyncMock(return_value=True)
+
+    class MockBleakScanner:
+        async def start(self, *args, **kwargs):
+            """Mock Start."""
+
+        async def stop(self, *args, **kwargs):
+            """Mock Stop."""
+
+        @property
+        def discovered_devices(self):
+            """Mock discovered_devices."""
+            return []
+
+        @property
+        def discovered_devices_and_advertisement_data(self):
+            """Mock discovered_devices_and_advertisement_data."""
+            return {}
+
+    mock_scanner = MockBleakScanner()
+
+    with (
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner",
+            return_value=mock_scanner,
+        ),
+        patch("habluetooth.scanner.async_reset_adapter", mock_reset_adapter),
+        patch("habluetooth.scanner.restore_discoveries", AsyncMock()),
+        patch("bleak_retry_connector.bluez.stop_discovery", AsyncMock()),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+
+        # Simulate receiving an advertisement to avoid immediate reset
+        scanner._last_detection = time.monotonic()
+
+        # Directly call restart method multiple times
+        # Note: _restart_attempts is reset to 0 after each successful restart
+        for i in range(1, 5):
+            # Manually set counter to simulate consecutive restarts
+            scanner._restart_attempts = i - 1
+            # Avoid immediate reset by making _last_detection != _start_time
+            scanner._last_detection = scanner._start_time + 1
+            await scanner._async_restart_scanner()
+            # Simulate advertisement after restart to avoid immediate reset
+            scanner._last_detection = time.monotonic()
+
+            if i < 3:
+                # First two restarts should not reset adapter
+                assert mock_reset_adapter.call_count == 0
+            else:
+                # Third and subsequent restarts should reset adapter
+                assert mock_reset_adapter.call_count == i - 2
+
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif("platform.system() != 'Darwin'")
 async def test_setup_and_stop_macos() -> None:
     """Test we enable use_bdaddr on MacOS."""
@@ -782,6 +950,8 @@ async def test_adapter_init_fails_fallback_to_passive(
                 raise BleakError("org.bluez.Error.InProgress")
             if called_start == 3:
                 raise BleakError("org.bluez.Error.InProgress")
+            if called_start == 4:
+                raise asyncio.TimeoutError()
 
         async def stop(self, *args, **kwargs):
             """Mock Start."""
@@ -833,7 +1003,7 @@ async def test_adapter_init_fails_fallback_to_passive(
         scanner.async_setup()
         await scanner.async_start()
 
-        assert called_start == 4
+        assert called_start == 5
 
         assert len(mock_recover_adapter.mock_calls) == 1
         assert "Waiting for adapter to initialize" in caplog.text
