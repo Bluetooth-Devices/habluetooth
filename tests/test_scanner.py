@@ -601,6 +601,8 @@ async def test_adapter_fails_to_start_and_takes_a_bit_to_init(
                 raise BleakError("org.bluez.Error.InProgress")
             if called_start == 3:
                 raise BleakError("org.bluez.Error.InProgress")
+            if called_start == 4:
+                raise asyncio.TimeoutError()
 
         async def stop(self, *args, **kwargs):
             """Mock Start."""
@@ -643,7 +645,7 @@ async def test_adapter_fails_to_start_and_takes_a_bit_to_init(
         scanner.async_setup()
         await scanner.async_start()
 
-        assert called_start == 4
+        assert called_start == 5
 
         assert len(mock_recover_adapter.mock_calls) == 1
         assert "Waiting for adapter to initialize" in caplog.text
@@ -782,6 +784,8 @@ async def test_adapter_init_fails_fallback_to_passive(
                 raise BleakError("org.bluez.Error.InProgress")
             if called_start == 3:
                 raise BleakError("org.bluez.Error.InProgress")
+            if called_start == 4:
+                raise asyncio.TimeoutError()
 
         async def stop(self, *args, **kwargs):
             """Mock Start."""
@@ -833,7 +837,7 @@ async def test_adapter_init_fails_fallback_to_passive(
         scanner.async_setup()
         await scanner.async_start()
 
-        assert called_start == 4
+        assert called_start == 5
 
         assert len(mock_recover_adapter.mock_calls) == 1
         assert "Waiting for adapter to initialize" in caplog.text
