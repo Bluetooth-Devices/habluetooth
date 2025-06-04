@@ -876,6 +876,8 @@ async def test_adapter_reset_on_third_restart_attempt_direct(
         for i in range(1, 5):
             # Manually set counter to simulate consecutive restarts
             scanner._restart_attempts = i - 1
+            # Avoid immediate reset by making _last_detection != _start_time
+            scanner._last_detection = scanner._start_time + 1
             await scanner._async_restart_scanner()
             # Simulate advertisement after restart to avoid immediate reset
             scanner._last_detection = time.monotonic()
