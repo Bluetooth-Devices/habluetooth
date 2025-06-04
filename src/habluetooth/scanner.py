@@ -22,8 +22,6 @@ from bluetooth_data_tools import monotonic_time_coarse
 from .base_scanner import BaseHaScanner
 from .const import (
     CALLBACK_TYPE,
-    SCANNER_WATCHDOG_INTERVAL,
-    SCANNER_WATCHDOG_TIMEOUT,
     SOURCE_LOCAL,
     START_TIMEOUT,
     STOP_TIMEOUT,
@@ -96,20 +94,12 @@ WAIT_FOR_ADAPTER_TO_INIT_ERRORS = ["org.freedesktop.DBus.Error.UnknownObject"]
 ADAPTER_INIT_TIME = 1.5
 
 START_ATTEMPTS = 5
+RESTART_ATTEMPT_TO_DECLARE_GONE_SILENT = 3
 
 SCANNING_MODE_TO_BLEAK = {
     BluetoothScanningMode.ACTIVE: "active",
     BluetoothScanningMode.PASSIVE: "passive",
 }
-
-# The minimum number of seconds to know
-# the adapter has not had advertisements
-# and we already tried to restart the scanner
-# without success when the first time the watch
-# dog hit the failure path.
-SCANNER_WATCHDOG_MULTIPLE = (
-    SCANNER_WATCHDOG_TIMEOUT + SCANNER_WATCHDOG_INTERVAL.total_seconds()
-)
 
 
 class _AbortStartError(Exception):
@@ -175,6 +165,7 @@ class HaScanner(BaseHaScanner):
 
     __slots__ = (
         "_background_tasks",
+        "_restart_attempts",
         "_start_future",
         "_start_stop_lock",
         "mac_address",
@@ -197,6 +188,7 @@ class HaScanner(BaseHaScanner):
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.scanner: bleak.BleakScanner | None = None
         self._start_future: asyncio.Future[None] | None = None
+        self._restart_attempts = 0
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
@@ -263,6 +255,7 @@ class HaScanner(BaseHaScanner):
             # as the adapter is in a failure
             # state if all the data is empty.
             self._last_detection = callback_time
+            self._restart_attempts = 0  # Reset counter on valid advertisement
         name = local_name or device.name or address
         if name is not None and type(name) is not str:
             name = str(name)
@@ -531,12 +524,19 @@ class HaScanner(BaseHaScanner):
             # Stop the scanner but not the watchdog
             # since we want to try again later if it's still quiet
             await self._async_stop_scanner()
-            # If there have not been any valid advertisements,
-            # or the watchdog has hit the failure path multiple times,
-            # do the reset.
+            self._restart_attempts += 1
+            _LOGGER.debug(
+                "%s: Restart attempt %s/%s",
+                self.name,
+                self._restart_attempts,
+                RESTART_ATTEMPT_TO_DECLARE_GONE_SILENT,
+            )
+            # Reset the adapter if:
+            # 1. We've never seen any advertisements since start (immediate reset), OR
+            # 2. We've reached the 3rd restart attempt
             if (
                 self._start_time == self._last_detection
-                or self.time_since_last_detection() > SCANNER_WATCHDOG_MULTIPLE
+                or self._restart_attempts >= RESTART_ATTEMPT_TO_DECLARE_GONE_SILENT
             ):
                 await self._async_reset_adapter(True)
             try:
