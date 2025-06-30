@@ -60,10 +60,6 @@ def generate_ble_device(
         new["details"] = details
     for key, value in BLE_DEVICE_DEFAULTS.items():
         new.setdefault(key, value)
-    # Remove any args that are not in BLEDevice.__slots__ for bleak 1.0+
-    for arg in list(new.keys()):
-        if arg not in BLEDevice.__slots__:
-            new.pop(arg, None)
     return BLEDevice(**new)
 
 
