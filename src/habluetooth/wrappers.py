@@ -304,6 +304,11 @@ class HaBleakClientWrapper(BleakClient):
             scanner._add_connecting(address)
             await super().connect(**kwargs)
             connected = True
+        except Exception:
+            # Connection failed, ensure we clean up
+            connected = False
+            self._backend = None
+            raise
         finally:
             scanner._finished_connecting(address, connected)
             # If we failed to connect and its a local adapter (no source)

@@ -71,7 +71,6 @@ def test_discovered_device_advertisement_data_to_dict():
                     "address": "AA:BB:CC:DD:EE:FF",
                     "details": {"details": "test"},
                     "name": "Test Device",
-                    "rssi": -50,
                 },
             }
         },

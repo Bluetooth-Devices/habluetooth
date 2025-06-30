@@ -275,7 +275,7 @@ async def test_release_slot_on_connect_failure(
     two_adapters: None,
     enable_bluetooth: None,
     install_bleak_catcher: None,
-    mock_platform_client_that_fails_to_connect: None,
+    mock_platform_client_that_raises_on_connect: None,
 ) -> None:
     """Ensure the slot gets released on connection failure."""
     manager = _get_manager()
@@ -289,7 +289,8 @@ async def test_release_slot_on_connect_failure(
     ):
         ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
         client = bleak.BleakClient(ble_device)
-        await client.connect()
+        with pytest.raises(ConnectionError):
+            await client.connect()
         assert allocate_slot_mock.call_count == 1
         assert release_slot_mock.call_count == 1
 
@@ -340,46 +341,40 @@ async def test_switch_adapters_on_failure(
     class FakeBleakClientFailsHCI0Only(BaseFakeBleakClient):
         """Fake bleak client that fails to connect on hci0."""
 
-        valid = False
-
         async def connect(self, *args: Any, **kwargs: Any) -> None:
             """Connect."""
             assert isinstance(self._device, BLEDevice)
             if "/hci0/" in self._device.details["path"]:
-                self.valid = False
-            else:
-                self.valid = True
+                raise BleakError("Failed to connect on hci0")
 
         @property
         def is_connected(self) -> bool:
-            return self.valid
+            return True
 
     class FakeBleakClientFailsHCI1Only(BaseFakeBleakClient):
         """Fake bleak client that fails to connect on hci1."""
-
-        valid = False
 
         async def connect(self, *args: Any, **kwargs: Any) -> None:
             """Connect."""
             assert isinstance(self._device, BLEDevice)
             if "/hci1/" in self._device.details["path"]:
-                self.valid = False
-            else:
-                self.valid = True
+                raise BleakError("Failed to connect on hci1")
 
         @property
         def is_connected(self) -> bool:
-            return self.valid
+            return True
 
     with patch(
         "habluetooth.wrappers.get_platform_client_backend_type",
         return_value=FakeBleakClientFailsHCI0Only,
     ):
         # Should try to connect to hci0 first
-        await client.connect()
+        with pytest.raises(BleakError):
+            await client.connect()
         assert not client.is_connected
         # Should try to connect with hci0 again
-        await client.connect()
+        with pytest.raises(BleakError):
+            await client.connect()
         assert not client.is_connected
 
         # After two tries we should switch to hci1
@@ -402,8 +397,8 @@ async def test_switch_adapters_on_failure(
     ):
         # Should try to connect to hci1 first
         await client.connect()
-        assert not client.is_connected
-        # Should try to connect with hci0 next
+        assert client.is_connected
+        # Should work with hci0 on next attempt
         await client.connect()
         assert client.is_connected
         # Next attempt should also use hci0
