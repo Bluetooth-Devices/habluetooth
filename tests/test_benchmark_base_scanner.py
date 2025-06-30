@@ -44,7 +44,7 @@ async def test_inject_100_simple_advertisements(benchmark: BenchmarkFixture) -> 
     cancel = manager.async_register_scanner(scanner)
 
     _address = switchbot_device.address
-    _rssi = getattr(switchbot_device_adv, "rssi", 0)
+    _rssi = switchbot_device_adv.rssi
     _name = switchbot_device.name
     _service_uuids = switchbot_device_adv.service_uuids
     _service_data = switchbot_device_adv.service_data
@@ -100,7 +100,7 @@ async def test_inject_100_complex_advertisements(benchmark: BenchmarkFixture) ->
     cancel = manager.async_register_scanner(scanner)
 
     _address = switchbot_device.address
-    _rssi = getattr(switchbot_device_adv, "rssi", 0)
+    _rssi = switchbot_device_adv.rssi
     _name = switchbot_device.name
     _service_uuids = switchbot_device_adv.service_uuids
     _service_data = switchbot_device_adv.service_data
@@ -160,7 +160,7 @@ async def test_inject_100_different_advertisements(benchmark: BenchmarkFixture) 
     cancel = manager.async_register_scanner(scanner)
 
     _address = switchbot_device.address
-    _rssi = getattr(switchbot_device_adv, "rssi", 0)
+    _rssi = switchbot_device_adv.rssi
     _name = switchbot_device.name
     _service_uuids = switchbot_device_adv.service_uuids
     _service_data = switchbot_device_adv.service_data
@@ -221,7 +221,7 @@ async def test_inject_100_different_manufacturer_data(
     cancel = manager.async_register_scanner(scanner)
 
     _address = switchbot_device.address
-    _rssi = getattr(switchbot_device_adv, "rssi", 0)
+    _rssi = switchbot_device_adv.rssi
     _name = switchbot_device.name
     _service_uuids = switchbot_device_adv.service_uuids
     _service_data = switchbot_device_adv.service_data
@@ -282,7 +282,7 @@ async def test_inject_100_different_service_data(
     cancel = manager.async_register_scanner(scanner)
 
     _address = switchbot_device.address
-    _rssi = getattr(switchbot_device_adv, "rssi", 0)
+    _rssi = switchbot_device_adv.rssi
     _name = switchbot_device.name
     _service_uuids = switchbot_device_adv.service_uuids
     _service_data = switchbot_device_adv.service_data

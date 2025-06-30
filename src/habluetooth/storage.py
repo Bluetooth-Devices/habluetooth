@@ -10,8 +10,6 @@ from typing import Any, Final, TypedDict
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
-from .const import BLEAK_VERSION_1_API_BREAK
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -51,24 +49,12 @@ RSSI: Final = "rssi"
 DETAILS: Final = "details"
 
 
-if not BLEAK_VERSION_1_API_BREAK:
+class BLEDeviceDict(TypedDict):
+    """BLEDevice dict."""
 
-    class BLEDeviceDict(TypedDict):
-        """BLEDevice dict."""
-
-        address: str
-        name: str | None
-        rssi: int | None
-        details: dict[str, Any]
-
-else:
-
-    class BLEDeviceDict(TypedDict):  # type: ignore
-        """BLEDevice dict."""
-
-        address: str
-        name: str | None
-        details: dict[str, Any]
+    address: str
+    name: str | None
+    details: dict[str, Any]
 
 
 LOCAL_NAME: Final = "local_name"
@@ -227,7 +213,6 @@ def _ble_device_to_dict(
     return BLEDeviceDict(
         address=ble_device.address,
         name=ble_device.name,
-        rssi=advertisement_data.rssi,  # For backwards compatibility
         details=ble_device.details,
     )
 

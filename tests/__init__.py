@@ -3,12 +3,10 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import partial
-from importlib.metadata import version
-from typing import Any, Final, Generator
+from typing import Any, Generator
 from unittest.mock import MagicMock, patch
 
 from bleak.backends.scanner import AdvertisementData, BLEDevice
-from packaging.version import Version
 
 from habluetooth import get_manager
 from habluetooth.models import BluetoothServiceInfoBleak
@@ -34,12 +32,8 @@ ADVERTISEMENT_DATA_DEFAULTS = {
 
 BLE_DEVICE_DEFAULTS = {
     "name": None,
-    "rssi": -127,
     "details": None,
 }
-
-BLEAK_VERSION: Final[Version] = Version(version("bleak"))
-BLEAK_VERSION_1_API_BREAK = BLEAK_VERSION >= Version("1.0.0")
 
 
 def generate_advertisement_data(**kwargs: Any) -> AdvertisementData:
@@ -54,7 +48,6 @@ def generate_ble_device(
     address: str | None = None,
     name: str | None = None,
     details: Any | None = None,
-    rssi: int | None = None,
     **kwargs: Any,
 ) -> BLEDevice:
     """Generate a BLEDevice with defaults."""
@@ -65,14 +58,12 @@ def generate_ble_device(
         new["name"] = name
     if details is not None:
         new["details"] = details
-    if rssi is not None:
-        new["rssi"] = rssi
     for key, value in BLE_DEVICE_DEFAULTS.items():
         new.setdefault(key, value)
-    if BLEAK_VERSION >= Version("1.0.0"):
-        for arg in list(new.keys()):
-            if arg not in BLEDevice.__slots__:
-                new.pop(arg, None)
+    # Remove any args that are not in BLEDevice.__slots__ for bleak 1.0+
+    for arg in list(new.keys()):
+        if arg not in BLEDevice.__slots__:
+            new.pop(arg, None)
     return BLEDevice(**new)
 
 

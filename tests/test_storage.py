@@ -13,13 +13,12 @@ from habluetooth.storage import (
     expire_stale_scanner_discovered_device_advertisement_data,
 )
 
-from . import BLEAK_VERSION_1_API_BREAK, generate_ble_device
+from . import generate_ble_device
 
 
 def generate_ble_device_dict(**kwargs) -> BLEDeviceDict:  # type: ignore
     """Generates a BLEDeviceDict that's compatible with the version of bleak."""
-    if BLEAK_VERSION_1_API_BREAK:
-        kwargs.pop("rssi", None)
+    kwargs.pop("rssi", None)  # rssi is not in BLEDevice for bleak 1.0+
     return BLEDeviceDict(**kwargs)  # type: ignore
 
 
@@ -144,9 +143,6 @@ def test_discovered_device_advertisement_data_from_dict():
     assert out_ble_device.address == expected_ble_device.address
     assert out_ble_device.name == expected_ble_device.name
     assert out_ble_device.details == expected_ble_device.details
-    if not BLEAK_VERSION_1_API_BREAK:
-        assert out_ble_device.rssi == expected_ble_device.rssi
-        assert out_ble_device.metadata == expected_ble_device.metadata
     assert out_advertisement_data == expected_advertisement_data
 
     assert result == DiscoveredDeviceAdvertisementData(
