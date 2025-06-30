@@ -2,16 +2,25 @@ import time
 from unittest.mock import ANY
 
 import pytest
-from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
 from habluetooth.storage import (
+    BLEDeviceDict,
     DiscoveredDeviceAdvertisementData,
     DiscoveredDeviceAdvertisementDataDict,
     discovered_device_advertisement_data_from_dict,
     discovered_device_advertisement_data_to_dict,
     expire_stale_scanner_discovered_device_advertisement_data,
 )
+
+from . import BLEAK_VERSION_1_API_BREAK, generate_ble_device
+
+
+def generate_ble_device_dict(**kwargs) -> BLEDeviceDict:  # type: ignore
+    """Generates a BLEDeviceDict that's compatible with the version of bleak."""
+    if BLEAK_VERSION_1_API_BREAK:
+        kwargs.pop("rssi", None)
+    return BLEDeviceDict(**kwargs)  # type: ignore
 
 
 def test_discovered_device_advertisement_data_to_dict():
@@ -22,7 +31,7 @@ def test_discovered_device_advertisement_data_to_dict():
             100,
             {
                 "AA:BB:CC:DD:EE:FF": (
-                    BLEDevice(
+                    generate_ble_device(
                         address="AA:BB:CC:DD:EE:FF",
                         name="Test Device",
                         details={"details": "test"},
@@ -91,12 +100,14 @@ def test_discovered_device_advertisement_data_from_dict():
                         "tx_power": 50,
                         "platform_data": ["Test Device", ""],
                     },
-                    "device": {
-                        "address": "AA:BB:CC:DD:EE:FF",
-                        "details": {"details": "test"},
-                        "name": "Test Device",
-                        "rssi": -50,
-                    },
+                    "device": generate_ble_device_dict(
+                        **{
+                            "address": "AA:BB:CC:DD:EE:FF",
+                            "details": {"details": "test"},
+                            "name": "Test Device",
+                            "rssi": -50,
+                        }
+                    ),
                 }
             },
             "discovered_device_timestamps": {"AA:BB:CC:DD:EE:FF": now},
@@ -107,7 +118,7 @@ def test_discovered_device_advertisement_data_from_dict():
         }
     )
 
-    expected_ble_device = BLEDevice(
+    expected_ble_device = generate_ble_device(
         address="AA:BB:CC:DD:EE:FF",
         name="Test Device",
         details={"details": "test"},
@@ -133,8 +144,9 @@ def test_discovered_device_advertisement_data_from_dict():
     assert out_ble_device.address == expected_ble_device.address
     assert out_ble_device.name == expected_ble_device.name
     assert out_ble_device.details == expected_ble_device.details
-    assert out_ble_device.rssi == expected_ble_device.rssi
-    assert out_ble_device.metadata == expected_ble_device.metadata
+    if not BLEAK_VERSION_1_API_BREAK:
+        assert out_ble_device.rssi == expected_ble_device.rssi
+        assert out_ble_device.metadata == expected_ble_device.metadata
     assert out_advertisement_data == expected_advertisement_data
 
     assert result == DiscoveredDeviceAdvertisementData(
@@ -173,12 +185,14 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                             "tx_power": 50,
                             "platform_data": ["Test Device", ""],
                         },
-                        "device": {
-                            "address": "AA:BB:CC:DD:EE:FF",
-                            "details": {"details": "test"},
-                            "name": "Test Device",
-                            "rssi": -50,
-                        },
+                        "device": generate_ble_device_dict(
+                            **{
+                                "address": "AA:BB:CC:DD:EE:FF",
+                                "details": {"details": "test"},
+                                "name": "Test Device",
+                                "rssi": -50,
+                            }
+                        ),
                     },
                     "CC:DD:EE:FF:AA:BB": {
                         "advertisement_data": {
@@ -192,12 +206,14 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                             "tx_power": 50,
                             "platform_data": ["Test Device", ""],
                         },
-                        "device": {
-                            "address": "CC:DD:EE:FF:AA:BB",
-                            "details": {"details": "test"},
-                            "name": "Test Device Expired",
-                            "rssi": -50,
-                        },
+                        "device": generate_ble_device_dict(
+                            **{
+                                "address": "CC:DD:EE:FF:AA:BB",
+                                "details": {"details": "test"},
+                                "name": "Test Device Expired",
+                                "rssi": -50,
+                            }
+                        ),
                     },
                 },
                 "discovered_device_raw": {},
@@ -224,12 +240,14 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                             "tx_power": 50,
                             "platform_data": ["Test Device", ""],
                         },
-                        "device": {
-                            "address": "CC:DD:EE:FF:AA:BB",
-                            "details": {"details": "test"},
-                            "name": "Test Device Expired",
-                            "rssi": -50,
-                        },
+                        "device": generate_ble_device_dict(
+                            **{
+                                "address": "CC:DD:EE:FF:AA:BB",
+                                "details": {"details": "test"},
+                                "name": "Test Device Expired",
+                                "rssi": -50,
+                            }
+                        ),
                     }
                 },
                 "discovered_device_raw": {},
@@ -269,12 +287,14 @@ def test_expire_future_discovered_device_advertisement_data(
                             "tx_power": 50,
                             "platform_data": ["Test Device", ""],
                         },
-                        "device": {
-                            "address": "AA:BB:CC:DD:EE:FF",
-                            "details": {"details": "test"},
-                            "name": "Test Device",
-                            "rssi": -50,
-                        },
+                        "device": generate_ble_device_dict(
+                            **{
+                                "address": "AA:BB:CC:DD:EE:FF",
+                                "details": {"details": "test"},
+                                "name": "Test Device",
+                                "rssi": -50,
+                            }
+                        ),
                     },
                     "CC:DD:EE:FF:AA:BB": {
                         "advertisement_data": {
@@ -288,12 +308,14 @@ def test_expire_future_discovered_device_advertisement_data(
                             "tx_power": 50,
                             "platform_data": ["Test Device", ""],
                         },
-                        "device": {
-                            "address": "CC:DD:EE:FF:AA:BB",
-                            "details": {"details": "test"},
-                            "name": "Test Device Expired",
-                            "rssi": -50,
-                        },
+                        "device": generate_ble_device_dict(
+                            **{
+                                "address": "CC:DD:EE:FF:AA:BB",
+                                "details": {"details": "test"},
+                                "name": "Test Device Expired",
+                                "rssi": -50,
+                            }
+                        ),
                     },
                 },
                 "discovered_device_timestamps": {
@@ -320,12 +342,14 @@ def test_expire_future_discovered_device_advertisement_data(
                             "tx_power": 50,
                             "platform_data": ["Test Device", ""],
                         },
-                        "device": {
-                            "address": "CC:DD:EE:FF:AA:BB",
-                            "details": {"details": "test"},
-                            "name": "Test Device Expired",
-                            "rssi": -50,
-                        },
+                        "device": generate_ble_device_dict(
+                            **{
+                                "address": "CC:DD:EE:FF:AA:BB",
+                                "details": {"details": "test"},
+                                "name": "Test Device Expired",
+                                "rssi": -50,
+                            }
+                        ),
                     }
                 },
                 "discovered_device_timestamps": {"CC:DD:EE:FF:AA:BB": now + 1000000},

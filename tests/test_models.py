@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import time
 
-from bleak.backends.device import BLEDevice
-
 from habluetooth import BluetoothServiceInfo, BluetoothServiceInfoBleak
 
-from . import generate_advertisement_data
+from . import generate_advertisement_data, generate_ble_device
 
 SOURCE_LOCAL = "local"
 
@@ -40,7 +38,7 @@ def test_model():
 
 
 def test_model_from_bleak():
-    switchbot_device = BLEDevice("44:44:33:11:23:45", "wohand", {}, -127)
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand", {}, -127)
     switchbot_adv = generate_advertisement_data(
         local_name="wohand", service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
     )
@@ -56,7 +54,7 @@ def test_model_from_bleak():
 
 
 def test_model_from_scanner():
-    switchbot_device = BLEDevice("44:44:33:11:23:45", "wohand", {}, -127)
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand", {}, -127)
     switchbot_adv = generate_advertisement_data(
         local_name="wohand", service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
     )
@@ -92,7 +90,7 @@ def test_model_from_scanner():
 
 
 def test_construct_service_info_bleak():
-    switchbot_device = BLEDevice("44:44:33:11:23:45", "wohand", {}, -127)
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand", {}, -127)
     switchbot_adv = generate_advertisement_data(
         local_name="wohand", service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
     )
@@ -144,7 +142,7 @@ def test_from_device_and_advertisement_data():
 
     From a BLEDevice and AdvertisementData.
     """
-    switchbot_device = BLEDevice("44:44:33:11:23:45", "wohand", {}, -127)
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand", {}, -127)
     switchbot_adv = generate_advertisement_data(
         local_name="wohand", service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
     )
@@ -198,7 +196,7 @@ def test_pyobjc_compat():
     assert address == "44:44:33:11:23:45"
     assert rssi == -127
 
-    switchbot_device = BLEDevice(address, name, {}, rssi)
+    switchbot_device = generate_ble_device(address, name, {}, rssi)
     switchbot_adv = generate_advertisement_data(
         local_name=name, service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
     )
@@ -245,7 +243,7 @@ def test_pyobjc_compat():
 
 
 def test_as_connectable():
-    switchbot_device = BLEDevice("44:44:33:11:23:45", "wohand", {}, -127)
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand", {}, -127)
     switchbot_adv = generate_advertisement_data(
         local_name="wohand", service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
     )

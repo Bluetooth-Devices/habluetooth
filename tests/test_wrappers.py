@@ -100,12 +100,20 @@ class FakeBleakClient(BaseFakeBleakClient):
         """Connect."""
         return True
 
+    @property
+    def is_connected(self):
+        return False
+
 
 class FakeBleakClientFailsToConnect(BaseFakeBleakClient):
     """Fake bleak client that fails to connect."""
 
     async def connect(self, *args, **kwargs):
         """Connect."""
+        return None
+
+    @property
+    def is_connected(self):
         return False
 
 
@@ -220,8 +228,9 @@ async def test_test_switch_adapters_when_out_of_slots(
         ) as allocate_slot_mock,
     ):
         ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
-        client = bleak.BleakClient(ble_device)
-        assert await client.connect() is True
+        with patch.object(FakeBleakClient, "is_connected", return_value=True):
+            client = bleak.BleakClient(ble_device)
+            await client.connect()
         assert allocate_slot_mock.call_count == 1
         assert release_slot_mock.call_count == 0
 
@@ -252,8 +261,9 @@ async def test_test_switch_adapters_when_out_of_slots(
         ) as allocate_slot_mock,
     ):
         ble_device = hci0_device_advs["00:00:00:00:00:03"][0]
-        client = bleak.BleakClient(ble_device)
-        assert await client.connect() is True
+        with patch.object(FakeBleakClient, "is_connected", return_value=True):
+            client = bleak.BleakClient(ble_device)
+            await client.connect()
         assert release_slot_mock.call_count == 0
 
     cancel_hci0()
@@ -279,7 +289,7 @@ async def test_release_slot_on_connect_failure(
     ):
         ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
         client = bleak.BleakClient(ble_device)
-        assert await client.connect() is False
+        await client.connect()
         assert allocate_slot_mock.call_count == 1
         assert release_slot_mock.call_count == 1
 
@@ -330,53 +340,75 @@ async def test_switch_adapters_on_failure(
     class FakeBleakClientFailsHCI0Only(BaseFakeBleakClient):
         """Fake bleak client that fails to connect on hci0."""
 
-        async def connect(self, *args: Any, **kwargs: Any) -> bool:
+        valid = False
+
+        async def connect(self, *args: Any, **kwargs: Any) -> None:
             """Connect."""
             assert isinstance(self._device, BLEDevice)
             if "/hci0/" in self._device.details["path"]:
-                return False
-            return True
+                self.valid = False
+            else:
+                self.valid = True
+
+        @property
+        def is_connected(self) -> bool:
+            return self.valid
 
     class FakeBleakClientFailsHCI1Only(BaseFakeBleakClient):
         """Fake bleak client that fails to connect on hci1."""
 
-        async def connect(self, *args: Any, **kwargs: Any) -> bool:
+        valid = False
+
+        async def connect(self, *args: Any, **kwargs: Any) -> None:
             """Connect."""
             assert isinstance(self._device, BLEDevice)
             if "/hci1/" in self._device.details["path"]:
-                return False
-            return True
+                self.valid = False
+            else:
+                self.valid = True
+
+        @property
+        def is_connected(self) -> bool:
+            return self.valid
 
     with patch(
         "habluetooth.wrappers.get_platform_client_backend_type",
         return_value=FakeBleakClientFailsHCI0Only,
     ):
         # Should try to connect to hci0 first
-        assert await client.connect() is False
+        await client.connect()
+        assert not client.is_connected
         # Should try to connect with hci0 again
-        assert await client.connect() is False
+        await client.connect()
+        assert not client.is_connected
 
         # After two tries we should switch to hci1
-        assert await client.connect() is True
+        await client.connect()
+        assert client.is_connected
 
         # ..and we remember that hci1 works as long as the client doesn't change
-        assert await client.connect() is True
+        await client.connect()
+        assert client.is_connected
 
         # If we replace the client, we should remember hci0 is failing
         client = bleak.BleakClient(ble_device)
 
-        assert await client.connect() is True
+        await client.connect()
+        assert client.is_connected
 
     with patch(
         "habluetooth.wrappers.get_platform_client_backend_type",
         return_value=FakeBleakClientFailsHCI1Only,
     ):
         # Should try to connect to hci1 first
-        assert await client.connect() is False
+        await client.connect()
+        assert not client.is_connected
         # Should try to connect with hci0 next
-        assert await client.connect() is True
+        await client.connect()
+        assert client.is_connected
         # Next attempt should also use hci0
-        assert await client.connect() is True
+        await client.connect()
+        assert client.is_connected
 
     cancel_hci0()
     cancel_hci1()
@@ -397,13 +429,20 @@ async def test_switch_adapters_on_connecting(
     class FakeBleakClientSlowHCI0Connnect(BaseFakeBleakClient):
         """Fake bleak client that connects instantly on hci1 and slow on hci0."""
 
-        async def connect(self, *args: Any, **kwargs: Any) -> bool:
+        valid = False
+
+        async def connect(self, *args: Any, **kwargs: Any) -> None:
             """Connect."""
             assert isinstance(self._device, BLEDevice)
             if "/hci0/" in self._device.details["path"]:
                 await asyncio.sleep(0.4)
-                return True
-            return True
+                self.valid = True
+            else:
+                self.valid = True
+
+        @property
+        def is_connected(self) -> bool:
+            return self.valid
 
     with patch(
         "habluetooth.wrappers.get_platform_client_backend_type",
@@ -416,14 +455,17 @@ async def test_switch_adapters_on_connecting(
         task2 = asyncio.create_task(client.connect())
         await asyncio.sleep(0.1)
         assert task2.done()
-        assert await task2 is True
+        await task2
+        assert client.is_connected
 
         task3 = asyncio.create_task(client.connect())
         await asyncio.sleep(0.1)
         assert task3.done()
-        assert await task3 is True
+        await task3
+        assert client.is_connected
 
-        assert await task is True
+        await task
+        assert client.is_connected
 
     cancel_hci0()
     cancel_hci1()
@@ -453,10 +495,16 @@ async def test_single_adapter_connection_history(
     class FakeBleakClientFastConnect(BaseFakeBleakClient):
         """Fake bleak client that connects instantly on hci1 and slow on hci0."""
 
-        async def connect(self, *args: Any, **kwargs: Any) -> bool:
+        valid = False
+
+        async def connect(self, *args: Any, **kwargs: Any) -> None:
             """Connect."""
             assert isinstance(self._device, BLEDevice)
-            return "/hci0/" in self._device.details["path"]
+            self.valid = "/hci0/" in self._device.details["path"]
+
+        @property
+        def is_connected(self) -> bool:
+            return self.valid
 
     with patch(
         "habluetooth.wrappers.get_platform_client_backend_type",
@@ -486,6 +534,10 @@ async def test_passing_subclassed_str_as_address(
 
         async def connect(self, *args, **kwargs):
             """Connect."""
+            return None
+
+        @property
+        def is_connected(self) -> bool:
             return True
 
     with patch(

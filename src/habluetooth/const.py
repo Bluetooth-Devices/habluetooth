@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from importlib.metadata import version
 from typing import Callable, Final
+
+from packaging.version import Version
 
 CALLBACK_TYPE = Callable[[], None]
 
@@ -61,3 +64,7 @@ ADV_RSSI_SWITCH_THRESHOLD: Final = 16
 # Note that this does not affect the connection
 # selection that uses RSSI_SWITCH_THRESHOLD from
 # bleak_retry_connector
+
+
+BLEAK_VERSION: Final[Version] = Version(version("bleak"))
+BLEAK_VERSION_1_API_BREAK = BLEAK_VERSION >= Version("1.0.0")

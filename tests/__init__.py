@@ -3,10 +3,12 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import partial
-from typing import Any, Generator
+from importlib.metadata import version
+from typing import Any, Final, Generator
 from unittest.mock import MagicMock, patch
 
 from bleak.backends.scanner import AdvertisementData, BLEDevice
+from packaging.version import Version
 
 from habluetooth import get_manager
 from habluetooth.models import BluetoothServiceInfoBleak
@@ -36,6 +38,9 @@ BLE_DEVICE_DEFAULTS = {
     "details": None,
 }
 
+BLEAK_VERSION: Final[Version] = Version(version("bleak"))
+BLEAK_VERSION_1_API_BREAK = BLEAK_VERSION >= Version("1.0.0")
+
 
 def generate_advertisement_data(**kwargs: Any) -> AdvertisementData:
     """Generate advertisement data with defaults."""
@@ -64,6 +69,10 @@ def generate_ble_device(
         new["rssi"] = rssi
     for key, value in BLE_DEVICE_DEFAULTS.items():
         new.setdefault(key, value)
+    if BLEAK_VERSION >= Version("1.0.0"):
+        for arg in list(new.keys()):
+            if arg not in BLEDevice.__slots__:
+                new.pop(arg, None)
     return BLEDevice(**new)
 
 

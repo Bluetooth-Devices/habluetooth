@@ -220,6 +220,10 @@ class HaBleakClientWrapper(BleakClient):
         self.__manager = get_manager()
         self.__timeout = timeout
         self._backend: BaseBleakClient | None = None
+        # @TODO - Should we call super and override the correct classes?
+        #   I do not know enough about how this should operate
+        # super(self.__class__, self).__init__(address_or_ble_device, *args, **kwargs)
+        self._pair_before_connect = False
 
     @property
     def is_connected(self) -> bool:
@@ -298,7 +302,8 @@ class HaBleakClientWrapper(BleakClient):
         address = device.address
         try:
             scanner._add_connecting(address)
-            connected = await super().connect(**kwargs)
+            await super().connect(**kwargs)
+            connected = super().is_connected
         finally:
             scanner._finished_connecting(address, connected)
             # If we failed to connect and its a local adapter (no source)

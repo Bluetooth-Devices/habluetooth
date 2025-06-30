@@ -1,7 +1,6 @@
 from unittest.mock import ANY
 
 import pytest
-from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bleak_retry_connector import BleakSlotManager
 from bluetooth_adapters import BluetoothAdapters
@@ -15,6 +14,8 @@ from habluetooth import (
     HaScanner,
     set_manager,
 )
+
+from . import BLEAK_VERSION_1_API_BREAK, generate_ble_device
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -80,7 +81,7 @@ def test__async_on_advertisement():
         details,
         1.0,
     )
-    ble_device = BLEDevice(
+    ble_device = generate_ble_device(
         "AA:BB:CC:DD:EE:FF",
         "name",
         details,
@@ -90,7 +91,8 @@ def test__async_on_advertisement():
     assert first_device.address == ble_device.address
     assert first_device.details == ble_device.details
     assert first_device.name == ble_device.name
-    assert first_device.rssi == ble_device.rssi
+    if not BLEAK_VERSION_1_API_BREAK:
+        assert first_device.rssi == ble_device.rssi
     assert "AA:BB:CC:DD:EE:FF" in scanner.discovered_devices_and_advertisement_data
     adv = scanner.discovered_devices_and_advertisement_data["AA:BB:CC:DD:EE:FF"][1]
     assert set(adv.service_data) == {"service_uuid", "service_uuid2"}
@@ -112,14 +114,19 @@ def test__async_on_advertisement():
     assert len(scanner.discovered_devices) == 1
     assert scanner.discovered_devices[0].address == "AA:BB:CC:DD:EE:FF"
     assert len(scanner.discovered_devices_and_advertisement_data) == 1
-    assert (
-        scanner.discovered_devices_and_advertisement_data["AA:BB:CC:DD:EE:FF"][0].rssi
-        == -21
-    )
-    assert (
-        scanner.discovered_devices_and_advertisement_data["AA:BB:CC:DD:EE:FF"][1].rssi
-        == -21
-    )
+    if not BLEAK_VERSION_1_API_BREAK:
+        assert (
+            scanner.discovered_devices_and_advertisement_data["AA:BB:CC:DD:EE:FF"][
+                0
+            ].rssi
+            == -21
+        )
+        assert (
+            scanner.discovered_devices_and_advertisement_data["AA:BB:CC:DD:EE:FF"][
+                1
+            ].rssi
+            == -21
+        )
     assert "AA:BB:CC:DD:EE:FF" in scanner.discovered_addresses
     device_adv = scanner.get_discovered_device_advertisement_data("AA:BB:CC:DD:EE:FF")
     assert device_adv is not None

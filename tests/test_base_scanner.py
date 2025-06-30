@@ -11,6 +11,7 @@ import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bluetooth_data_tools import monotonic_time_coarse
+from packaging.version import Version
 
 from habluetooth import (
     BaseHaRemoteScanner,
@@ -30,6 +31,7 @@ from habluetooth.storage import (
 )
 
 from . import (
+    BLEAK_VERSION,
     HCI0_SOURCE_ADDRESS,
     MockBleakClient,
     async_fire_time_changed,
@@ -205,11 +207,18 @@ async def test_remote_scanner(name_2: str | None) -> None:
         ][1].service_data
     )
 
-    scanner.inject_raw_advertisement(
-        switchbot_device_2.address,
-        switchbot_device_2.rssi,
-        b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x04",
-    )
+    if BLEAK_VERSION < Version("1.0.0"):
+        scanner.inject_raw_advertisement(
+            switchbot_device_2.address,
+            switchbot_device_2.rssi,
+            b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x04",
+        )
+    else:
+        scanner.inject_raw_advertisement(
+            switchbot_device_2.address,
+            0,
+            b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x04",
+        )
 
     assert (
         "00090401-0052-036b-3206-ff0a050a021a"

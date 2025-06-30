@@ -17,6 +17,7 @@ from bluetooth_data_tools import monotonic_time_coarse, parse_advertisement_data
 
 from .central_manager import get_manager
 from .const import (
+    BLEAK_VERSION_1_API_BREAK,
     CALLBACK_TYPE,
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     SCANNER_WATCHDOG_INTERVAL,
@@ -546,12 +547,19 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
-            info.device = BLEDevice(
-                address,
-                local_name,
-                {**self._details, **details},
-                rssi,  # deprecated, will be removed in newer bleak
-            )
+            if not BLEAK_VERSION_1_API_BREAK:
+                info.device = BLEDevice(
+                    address,
+                    local_name,
+                    {**self._details, **details},
+                    rssi,  # deprecated, will be removed in newer bleak
+                )
+            else:
+                info.device = BLEDevice(
+                    address,
+                    local_name,
+                    {**self._details, **details},
+                )
             info.manufacturer_data = manufacturer_data
             info.service_data = service_data
             info.service_uuids = service_uuids
@@ -572,7 +580,8 @@ class BaseHaRemoteScanner(BaseHaScanner):
             #
             # _rssi is deprecated, will be removed in newer bleak
             # pylint: disable-next=protected-access
-            info.device._rssi = rssi
+            if not BLEAK_VERSION_1_API_BREAK:
+                info.device._rssi = rssi
             if prev_name is not None and (
                 prev_name is local_name
                 or not local_name
