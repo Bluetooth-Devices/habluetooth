@@ -303,7 +303,7 @@ class HaBleakClientWrapper(BleakClient):
         try:
             scanner._add_connecting(address)
             await super().connect(**kwargs)
-            connected = super().is_connected
+            connected = True
         finally:
             scanner._finished_connecting(address, connected)
             # If we failed to connect and its a local adapter (no source)
