@@ -65,14 +65,12 @@ class FakeScanner(BaseHaRemoteScanner):
     def inject_raw_advertisement(
         self,
         address: str,
-        rssi: int,
         adv: bytes,
         now: float | None = None,
     ) -> None:
         """Inject a raw advertisement."""
         self._async_on_raw_advertisement(
             address,
-            rssi,
             adv,
             {"scanner_specific_data": "test"},
             now or monotonic_time_coarse(),
@@ -207,7 +205,6 @@ async def test_remote_scanner(name_2: str | None) -> None:
 
     scanner.inject_raw_advertisement(
         switchbot_device_2.address,
-        switchbot_device_2.rssi,
         b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x04",
     )
 

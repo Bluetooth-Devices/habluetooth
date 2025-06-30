@@ -480,7 +480,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
     def _async_on_raw_advertisement(
         self,
         address: _str,
-        rssi: _int,
         raw: _bytes,
         details: dict[str, Any],
         advertisement_monotonic_time: _float,
@@ -488,7 +487,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
         parsed = parse_advertisement_data_bytes(raw)
         self._async_on_advertisement_internal(
             address,
-            rssi,
             parsed[0],
             parsed[1],
             parsed[2],
@@ -513,7 +511,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
     ) -> None:
         self._async_on_advertisement_internal(
             address,
-            rssi,
             local_name,
             service_uuids,
             service_data,
@@ -527,7 +524,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
     def _async_on_advertisement_internal(
         self,
         address: _str,
-        rssi: _int,
         local_name: _str | None,
         service_uuids: list[str],
         service_data: dict[str, bytes],
@@ -546,11 +542,12 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
+            self._details.pop("rssi", None)
+            details.pop("rssi", None)
             info.device = BLEDevice(
                 address,
                 local_name,
                 {**self._details, **details},
-                rssi,  # deprecated, will be removed in newer bleak
             )
             info.manufacturer_data = manufacturer_data
             info.service_data = service_data
@@ -570,9 +567,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
             #
             # https://github.com/hbldh/bleak/blob/222618b7747f0467dbb32bd3679f8cfaa19b1668/bleak/backends/scanner.py#L203
             #
-            # _rssi is deprecated, will be removed in newer bleak
             # pylint: disable-next=protected-access
-            info.device._rssi = rssi
             if prev_name is not None and (
                 prev_name is local_name
                 or not local_name

@@ -60,10 +60,9 @@ def generate_ble_device(
         new["name"] = name
     if details is not None:
         new["details"] = details
-    if rssi is not None:
-        new["rssi"] = rssi
     for key, value in BLE_DEVICE_DEFAULTS.items():
         new.setdefault(key, value)
+    new.pop("rssi", None)
     return BLEDevice(**new)
 
 
