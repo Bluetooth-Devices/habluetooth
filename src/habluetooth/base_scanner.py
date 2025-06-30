@@ -568,8 +568,6 @@ class BaseHaRemoteScanner(BaseHaScanner):
             # change.
             #
             # https://github.com/hbldh/bleak/blob/222618b7747f0467dbb32bd3679f8cfaa19b1668/bleak/backends/scanner.py#L203
-            #
-            # _rssi is deprecated, will be removed in newer bleak
             if prev_name is not None and (
                 prev_name is local_name
                 or not local_name
