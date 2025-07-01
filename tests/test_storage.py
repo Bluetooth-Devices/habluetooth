@@ -26,7 +26,6 @@ def test_discovered_device_advertisement_data_to_dict():
                         address="AA:BB:CC:DD:EE:FF",
                         name="Test Device",
                         details={"details": "test"},
-                        rssi=-50,
                     ),
                     AdvertisementData(
                         local_name="Test Device",
@@ -63,7 +62,6 @@ def test_discovered_device_advertisement_data_to_dict():
                     "address": "AA:BB:CC:DD:EE:FF",
                     "details": {"details": "test"},
                     "name": "Test Device",
-                    "rssi": -50,
                 },
             }
         },
@@ -95,7 +93,6 @@ def test_discovered_device_advertisement_data_from_dict():
                         "address": "AA:BB:CC:DD:EE:FF",
                         "details": {"details": "test"},
                         "name": "Test Device",
-                        "rssi": -50,
                     },
                 }
             },
@@ -111,7 +108,6 @@ def test_discovered_device_advertisement_data_from_dict():
         address="AA:BB:CC:DD:EE:FF",
         name="Test Device",
         details={"details": "test"},
-        rssi=-50,
     )
 
     expected_advertisement_data = AdvertisementData(
@@ -133,8 +129,8 @@ def test_discovered_device_advertisement_data_from_dict():
     assert out_ble_device.address == expected_ble_device.address
     assert out_ble_device.name == expected_ble_device.name
     assert out_ble_device.details == expected_ble_device.details
-    assert out_ble_device.rssi == expected_ble_device.rssi
-    assert out_ble_device.metadata == expected_ble_device.metadata
+    # BLEDevice no longer has rssi attribute in bleak 1.0+
+    # rssi is only available in AdvertisementData
     assert out_advertisement_data == expected_advertisement_data
 
     assert result == DiscoveredDeviceAdvertisementData(
@@ -177,7 +173,6 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                             "address": "AA:BB:CC:DD:EE:FF",
                             "details": {"details": "test"},
                             "name": "Test Device",
-                            "rssi": -50,
                         },
                     },
                     "CC:DD:EE:FF:AA:BB": {
@@ -196,7 +191,6 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                             "address": "CC:DD:EE:FF:AA:BB",
                             "details": {"details": "test"},
                             "name": "Test Device Expired",
-                            "rssi": -50,
                         },
                     },
                 },
@@ -228,7 +222,6 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                             "address": "CC:DD:EE:FF:AA:BB",
                             "details": {"details": "test"},
                             "name": "Test Device Expired",
-                            "rssi": -50,
                         },
                     }
                 },
@@ -273,7 +266,6 @@ def test_expire_future_discovered_device_advertisement_data(
                             "address": "AA:BB:CC:DD:EE:FF",
                             "details": {"details": "test"},
                             "name": "Test Device",
-                            "rssi": -50,
                         },
                     },
                     "CC:DD:EE:FF:AA:BB": {
@@ -292,7 +284,6 @@ def test_expire_future_discovered_device_advertisement_data(
                             "address": "CC:DD:EE:FF:AA:BB",
                             "details": {"details": "test"},
                             "name": "Test Device Expired",
-                            "rssi": -50,
                         },
                     },
                 },
@@ -324,7 +315,6 @@ def test_expire_future_discovered_device_advertisement_data(
                             "address": "CC:DD:EE:FF:AA:BB",
                             "details": {"details": "test"},
                             "name": "Test Device Expired",
-                            "rssi": -50,
                         },
                     }
                 },
@@ -357,7 +347,6 @@ def test_discovered_device_advertisement_data_from_dict_corrupt(caplog):
                     "advertisement_data": {
                         "local_name": "Test Device",
                         "manufacturer_data": {"76": "0215aabbccddeeff"},
-                        "rssi": -50,
                         "service_data": {
                             "0000180d-0000-1000-8000-00805f9b34fb": "00000000"
                         },
@@ -366,7 +355,6 @@ def test_discovered_device_advertisement_data_from_dict_corrupt(caplog):
                     "device": {  # type: ignore[typeddict-item]
                         "address": "AA:BB:CC:DD:EE:FF",
                         "details": {"details": "test"},
-                        "rssi": -50,
                     },
                 }
             },
