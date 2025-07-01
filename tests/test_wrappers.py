@@ -505,7 +505,7 @@ async def test_single_adapter_connection_history(
         "habluetooth.wrappers.get_platform_client_backend_type",
         return_value=FakeBleakClientFastConnect,
     ):
-        assert await client.connect() is True
+        await client.connect()
     unsub_hci0()
 
 
@@ -539,7 +539,7 @@ async def test_passing_subclassed_str_as_address(
         "habluetooth.wrappers.get_platform_client_backend_type",
         return_value=FakeBleakClient,
     ):
-        assert await client.connect() is True
+        await client.connect()
 
     cancel_hci0()
     cancel_hci1()

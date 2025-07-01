@@ -268,10 +268,10 @@ class HaBleakClientWrapper(BleakClient):
         """
         return None if callback is None else partial(callback, self)
 
-    async def connect(self, **kwargs: Any) -> bool:
+    async def connect(self, **kwargs: Any) -> None:
         """Connect to the specified GATT server."""
         if self.is_connected:
-            return True
+            return
         manager = self.__manager
         if manager.shutdown:
             raise BleakError("Bluetooth is already shutdown")
@@ -326,7 +326,7 @@ class HaBleakClientWrapper(BleakClient):
                 scanner.name,
                 rssi,
             )
-        return connected
+        return
 
     def _async_get_backend_for_ble_device(
         self, manager: BluetoothManager, scanner: BaseHaScanner, ble_device: BLEDevice
@@ -402,8 +402,8 @@ class HaBleakClientWrapper(BleakClient):
             f" {address} was found"
         )
 
-    async def disconnect(self) -> bool:
+    async def disconnect(self) -> None:
         """Disconnect from the device."""
         if self._backend is None:
-            return True
-        return await self._backend.disconnect()
+            return
+        await self._backend.disconnect()
