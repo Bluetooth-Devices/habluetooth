@@ -270,6 +270,8 @@ class HaBleakClientWrapper(BleakClient):
 
     async def connect(self, **kwargs: Any) -> bool:
         """Connect to the specified GATT server."""
+        if self.is_connected:
+            return True
         manager = self.__manager
         if manager.shutdown:
             raise BleakError("Bluetooth is already shutdown")
