@@ -313,7 +313,6 @@ class HaBleakClientWrapper(BleakClient):
             connected = True
         except Exception:
             # Connection failed, ensure we clean up
-            connected = False
             self._backend = None
             raise
         finally:

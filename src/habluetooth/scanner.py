@@ -37,18 +37,11 @@ IS_LINUX = SYSTEM == "Linux"
 IS_MACOS = SYSTEM == "Darwin"
 
 if IS_LINUX:
-    try:
-        # bleak>=1.0
-        from bleak.args.bluez import BlueZScannerArgs, OrPattern
-        from bleak.backends.bluezdbus.advertisement_monitor import (
-            AdvertisementMonitor,
-        )
-    except ImportError:
-        from bleak.backends.bluezdbus.advertisement_monitor import (
-            AdvertisementMonitor,
-            OrPattern,
-        )
-        from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
+    # bleak>=1.0
+    from bleak.args.bluez import BlueZScannerArgs, OrPattern
+    from bleak.backends.bluezdbus.advertisement_monitor import (
+        AdvertisementMonitor,
+    )
     from dbus_fast import InvalidMessageError
     from dbus_fast.service import method
 
