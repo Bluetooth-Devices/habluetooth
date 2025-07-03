@@ -93,7 +93,7 @@ exclude_lines = [
 ]
 
 [tool.ruff]
-target-version = "py38"
+target-version = "py311"
 line-length = 88
 ignore = [
     "E721", # type checks for cython
