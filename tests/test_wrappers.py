@@ -911,3 +911,195 @@ async def test_wrapped_instance_unsupported_filter(
         }
     )
     assert "Only UUIDs filters are supported" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_client_with_services_parameter(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Test that services parameter is passed correctly to the backend."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+
+    test_services = [
+        "00001800-0000-1000-8000-00805f9b34fb",
+        "00001801-0000-1000-8000-00805f9b34fb",
+    ]
+
+    # Track what services were passed to the backend
+    services_passed_to_backend = None
+
+    class FakeBleakClientTracksServices(BaseFakeBleakClient):
+        """Fake bleak client that tracks services parameter."""
+
+        def __init__(
+            self, address_or_ble_device: BLEDevice | str, **kwargs: Any
+        ) -> None:
+            """Initialize and capture services."""
+            super().__init__(address_or_ble_device, **kwargs)
+            nonlocal services_passed_to_backend
+            services_passed_to_backend = kwargs.get("services")
+
+        async def connect(self, *args, **kwargs):
+            """Connect."""
+            return True
+
+        @property
+        def is_connected(self):
+            return True
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=FakeBleakClientTracksServices,
+    ):
+        client = bleak.BleakClient(ble_device, services=test_services)
+        await client.connect()
+
+        # Verify services were normalized and passed as a set
+        assert services_passed_to_backend is not None
+        assert isinstance(services_passed_to_backend, set)
+        assert services_passed_to_backend == {
+            "00001800-0000-1000-8000-00805f9b34fb",
+            "00001801-0000-1000-8000-00805f9b34fb",
+        }
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_client_with_pair_parameter(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Test that pair parameter is set correctly on the wrapper."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+
+    # Test default pair=False
+    client = bleak.BleakClient(ble_device)
+    assert client._pair_before_connect is False
+
+    # Test pair=True
+    client = bleak.BleakClient(ble_device, pair=True)
+    assert client._pair_before_connect is True
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_client_services_normalization(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Test that service UUIDs are normalized correctly."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+
+    # Test with short UUIDs that need normalization
+    test_services = ["1800", "1801", "CBA20D00-224D-11E6-9FB8-0002A5D5C51B"]
+
+    services_passed_to_backend = None
+
+    class FakeBleakClientTracksServices(BaseFakeBleakClient):
+        """Fake bleak client that tracks services parameter."""
+
+        def __init__(
+            self, address_or_ble_device: BLEDevice | str, **kwargs: Any
+        ) -> None:
+            """Initialize and capture services."""
+            super().__init__(address_or_ble_device, **kwargs)
+            nonlocal services_passed_to_backend
+            services_passed_to_backend = kwargs.get("services")
+
+        async def connect(self, *args, **kwargs):
+            """Connect."""
+            return True
+
+        @property
+        def is_connected(self):
+            return True
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=FakeBleakClientTracksServices,
+    ):
+        client = bleak.BleakClient(ble_device, services=test_services)
+        await client.connect()
+
+        # Verify services were normalized
+        assert services_passed_to_backend is not None
+        assert isinstance(services_passed_to_backend, set)
+        assert services_passed_to_backend == {
+            "00001800-0000-1000-8000-00805f9b34fb",
+            "00001801-0000-1000-8000-00805f9b34fb",
+            "cba20d00-224d-11e6-9fb8-0002a5d5c51b",  # Should be lowercased
+        }
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_client_with_none_services(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Test that None services parameter is handled correctly."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+
+    services_passed_to_backend = "not_set"
+
+    class FakeBleakClientTracksServices(BaseFakeBleakClient):
+        """Fake bleak client that tracks services parameter."""
+
+        def __init__(
+            self, address_or_ble_device: BLEDevice | str, **kwargs: Any
+        ) -> None:
+            """Initialize and capture services."""
+            super().__init__(address_or_ble_device, **kwargs)
+            nonlocal services_passed_to_backend
+            services_passed_to_backend = kwargs.get("services", "not_set")
+
+        async def connect(self, *args, **kwargs):
+            """Connect."""
+            return True
+
+        @property
+        def is_connected(self):
+            return True
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=FakeBleakClientTracksServices,
+    ):
+        # Test with no services parameter (default None)
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+        assert services_passed_to_backend is None
+
+    # Reset the captured value
+    services_passed_to_backend = "not_set"  # type: ignore[unreachable]
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=FakeBleakClientTracksServices,
+    ):
+        # Test with explicit None
+        client = bleak.BleakClient(ble_device, services=None)
+        await client.connect()
+        assert services_passed_to_backend is None
+
+    cancel_hci0()
+    cancel_hci1()
