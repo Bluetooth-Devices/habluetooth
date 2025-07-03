@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final, Literal, overload
 
-from bleak import BleakClient, BleakError
+from bleak import BleakClient, BleakError, normalize_uuid_str
 from bleak.backends.client import BaseBleakClient, get_platform_client_backend_type
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import (
@@ -205,8 +205,10 @@ class HaBleakClientWrapper(BleakClient):
         self,
         address_or_ble_device: str | BLEDevice,
         disconnected_callback: Callable[[BleakClient], None] | None = None,
-        *args: Any,
+        services: list[str] | None = None,
+        *,
         timeout: float = 10.0,
+        pair: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the BleakClient."""
@@ -219,11 +221,9 @@ class HaBleakClientWrapper(BleakClient):
         self.__disconnected_callback = disconnected_callback
         self.__manager = get_manager()
         self.__timeout = timeout
+        self.__services = services
         self._backend: BaseBleakClient | None = None
-        # @TODO - Should we call super and override the correct classes?
-        #   I do not know enough about how this should operate
-        # super(self.__class__, self).__init__(address_or_ble_device, *args, **kwargs)
-        self._pair_before_connect = False
+        self._pair_before_connect = pair
 
     @property
     def is_connected(self) -> bool:
@@ -284,6 +284,11 @@ class HaBleakClientWrapper(BleakClient):
             device,
             disconnected_callback=self._make_disconnected_callback(
                 self.__disconnected_callback
+            ),
+            services=(
+                None
+                if self.__services is None
+                else set(map(normalize_uuid_str, self.__services))
             ),
             timeout=self.__timeout,
         )
