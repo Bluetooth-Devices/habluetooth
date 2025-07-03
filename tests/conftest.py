@@ -1,5 +1,4 @@
-from collections.abc import Iterable
-from typing import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator, Iterable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
