@@ -1,5 +1,13 @@
 # Changelog
 
+## v4.0.1 (2025-07-03)
+
+### Bug fixes
+
+
+- Small cleanups for bleak 1.x support ([`3cf74f4`](https://github.com/Bluetooth-Devices/habluetooth/commit/3cf74f492354c452469907fb84a74cac9c7edcd3))
+
+
 ## v4.0.0 (2025-07-03)
 
 ### Features
