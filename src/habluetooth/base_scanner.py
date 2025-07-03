@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import warnings
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Final, Iterable, final
+from typing import TYPE_CHECKING, Any, Final, final
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
