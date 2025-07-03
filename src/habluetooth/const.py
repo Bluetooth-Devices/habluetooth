@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Callable, Final
+from typing import Final
 
 CALLBACK_TYPE = Callable[[], None]
 
