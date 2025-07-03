@@ -35,10 +35,10 @@ script = "build_ext.py"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
-bleak = ">=0.21.1"
-bleak-retry-connector = ">=3.9.0"
+bleak = ">=1.0.1"
+bleak-retry-connector = ">=4"
 bluetooth-data-tools = ">=1.28.0"
-bluetooth-adapters = ">=0.16.1"
+bluetooth-adapters = ">=2"
 bluetooth-auto-recovery = ">=1.5.1"
 async-interrupt = ">=1.1.1"
 dbus-fast = { version = ">=2.30.2", markers = "platform_system == 'Linux'" }
