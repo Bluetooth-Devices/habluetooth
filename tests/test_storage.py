@@ -62,6 +62,7 @@ def test_discovered_device_advertisement_data_to_dict():
                     "address": "AA:BB:CC:DD:EE:FF",
                     "details": {"details": "test"},
                     "name": "Test Device",
+                    "rssi": -50,  # Now included for backward compatibility
                 },
             }
         },
@@ -93,7 +94,7 @@ def test_discovered_device_advertisement_data_from_dict():
                         "address": "AA:BB:CC:DD:EE:FF",
                         "details": {"details": "test"},
                         "name": "Test Device",
-                    },
+                    },  # type: ignore[typeddict-item]
                 }
             },
             "discovered_device_timestamps": {"AA:BB:CC:DD:EE:FF": now},
@@ -173,7 +174,7 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                             "address": "AA:BB:CC:DD:EE:FF",
                             "details": {"details": "test"},
                             "name": "Test Device",
-                        },
+                        },  # type: ignore[typeddict-item]
                     },
                     "CC:DD:EE:FF:AA:BB": {
                         "advertisement_data": {
@@ -191,7 +192,7 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                             "address": "CC:DD:EE:FF:AA:BB",
                             "details": {"details": "test"},
                             "name": "Test Device Expired",
-                        },
+                        },  # type: ignore[typeddict-item]
                     },
                 },
                 "discovered_device_raw": {},
@@ -222,7 +223,7 @@ def test_expire_stale_scanner_discovered_device_advertisement_data():
                             "address": "CC:DD:EE:FF:AA:BB",
                             "details": {"details": "test"},
                             "name": "Test Device Expired",
-                        },
+                        },  # type: ignore[typeddict-item]
                     }
                 },
                 "discovered_device_raw": {},
@@ -266,7 +267,7 @@ def test_expire_future_discovered_device_advertisement_data(
                             "address": "AA:BB:CC:DD:EE:FF",
                             "details": {"details": "test"},
                             "name": "Test Device",
-                        },
+                        },  # type: ignore[typeddict-item]
                     },
                     "CC:DD:EE:FF:AA:BB": {
                         "advertisement_data": {
@@ -284,7 +285,7 @@ def test_expire_future_discovered_device_advertisement_data(
                             "address": "CC:DD:EE:FF:AA:BB",
                             "details": {"details": "test"},
                             "name": "Test Device Expired",
-                        },
+                        },  # type: ignore[typeddict-item]
                     },
                 },
                 "discovered_device_timestamps": {
@@ -315,7 +316,7 @@ def test_expire_future_discovered_device_advertisement_data(
                             "address": "CC:DD:EE:FF:AA:BB",
                             "details": {"details": "test"},
                             "name": "Test Device Expired",
-                        },
+                        },  # type: ignore[typeddict-item]
                     }
                 },
                 "discovered_device_timestamps": {"CC:DD:EE:FF:AA:BB": now + 1000000},
@@ -364,3 +365,51 @@ def test_discovered_device_advertisement_data_from_dict_corrupt(caplog):
     )
     assert result is None
     assert "Error deserializing discovered_device_advertisement_data" in caplog.text
+
+
+def test_backward_compatibility_rssi_in_device_dict():
+    """Test that devices with RSSI in storage can still be loaded."""
+    now = time.time()
+    # Simulate old storage format where RSSI was stored in the device dict
+    result = discovered_device_advertisement_data_from_dict(
+        {
+            "connectable": True,
+            "discovered_device_advertisement_datas": {
+                "AA:BB:CC:DD:EE:FF": {
+                    "advertisement_data": {
+                        "local_name": "Test Device",
+                        "manufacturer_data": {"76": "0215aabbccddeeff"},
+                        "rssi": -50,
+                        "service_data": {
+                            "0000180d-0000-1000-8000-00805f9b34fb": "00000000"
+                        },
+                        "service_uuids": ["0000180d-0000-1000-8000-00805f9b34fb"],
+                        "tx_power": 50,
+                        "platform_data": ["Test Device", ""],
+                    },
+                    "device": {
+                        "address": "AA:BB:CC:DD:EE:FF",
+                        "details": {"details": "test"},
+                        "name": "Test Device",
+                        "rssi": -50,  # Old format included RSSI here
+                    },
+                }
+            },
+            "discovered_device_timestamps": {"AA:BB:CC:DD:EE:FF": now},
+            "expire_seconds": 100,
+            "discovered_device_raw": {},
+        }
+    )
+
+    # Should successfully deserialize without errors
+    assert result is not None
+    assert result.connectable is True
+    assert result.expire_seconds == 100
+
+    # Check that the device was properly created
+    ble_device, adv_data = result.discovered_device_advertisement_datas[
+        "AA:BB:CC:DD:EE:FF"
+    ]
+    assert ble_device.address == "AA:BB:CC:DD:EE:FF"
+    assert ble_device.name == "Test Device"
+    assert adv_data.rssi == -50
