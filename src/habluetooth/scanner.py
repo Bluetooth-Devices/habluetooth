@@ -15,9 +15,9 @@ from bleak.assigned_numbers import AdvertisementDataType
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 from bleak_retry_connector import restore_discoveries
+from bleak_retry_connector.bluez import stop_discovery
 from bluetooth_adapters import DEFAULT_ADDRESS
 from bluetooth_data_tools import monotonic_time_coarse
-from dbus_fast import InvalidMessageError
 
 from .base_scanner import BaseHaScanner
 from .const import (
@@ -41,6 +41,7 @@ if IS_LINUX:
         OrPattern,
     )
     from bleak.backends.bluezdbus.scanner import BlueZScannerArgs
+    from dbus_fast import InvalidMessageError
     from dbus_fast.service import method
 
     # or_patterns is a workaround for the fact that passive scanning
@@ -69,16 +70,22 @@ if IS_LINUX:
 
     AdvertisementMonitor.DeviceFound = HaAdvertisementMonitor.DeviceFound
     AdvertisementMonitor.DeviceLost = HaAdvertisementMonitor.DeviceLost
+else:
+
+    class InvalidMessageError(Exception):  # type: ignore[no-redef]
+        """Invalid message error."""
+
 
 OriginalBleakScanner = bleak.BleakScanner
 
 _LOGGER = logging.getLogger(__name__)
 
+IN_PROGRESS_ERROR = "org.bluez.Error.InProgress"
 
 # If the adapter is in a stuck state the following errors are raised:
 NEED_RESET_ERRORS = [
     "org.bluez.Error.Failed",
-    "org.bluez.Error.InProgress",
+    IN_PROGRESS_ERROR,
     "org.bluez.Error.NotReady",
     "not found",
 ]
@@ -166,6 +173,14 @@ class HaScanner(BaseHaScanner):
     over ethernet, usb over ethernet, etc.
     """
 
+    __slots__ = (
+        "_background_tasks",
+        "_start_future",
+        "_start_stop_lock",
+        "mac_address",
+        "scanner",
+    )
+
     def __init__(
         self,
         mode: BluetoothScanningMode,
@@ -175,15 +190,13 @@ class HaScanner(BaseHaScanner):
         """Init bluetooth discovery."""
         self.mac_address = address
         source = address if address != DEFAULT_ADDRESS else adapter or SOURCE_LOCAL
-        super().__init__(source, adapter)
+        super().__init__(source, adapter, requested_mode=mode)
         self.connectable = True
-        self.requested_mode = mode
         self._start_stop_lock = asyncio.Lock()
         self.scanning = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.scanner: bleak.BleakScanner | None = None
         self._start_future: asyncio.Future[None] | None = None
-        self.current_mode: BluetoothScanningMode | None = None
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
@@ -226,11 +239,7 @@ class HaScanner(BaseHaScanner):
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""
         base_diag = await super().async_diagnostics()
-        return base_diag | {
-            "adapter": self.adapter,
-            "requested_mode": self.requested_mode,
-            "current_mode": self.current_mode,
-        }
+        return base_diag | {"adapter": self.adapter}
 
     def _async_detection_callback(
         self,
@@ -273,6 +282,7 @@ class HaScanner(BaseHaScanner):
         service_info.connectable = True
         service_info.time = callback_time
         service_info.tx_power = tx_power
+        service_info.raw = None  # not available in bleak.
         self._manager.scanner_adv_received(service_info)
 
     async def async_start(self) -> None:
@@ -320,14 +330,16 @@ class HaScanner(BaseHaScanner):
             )
             self.current_mode = BluetoothScanningMode.PASSIVE
 
+        assert self.current_mode is not None  # noqa: S101
         self.scanner = create_bleak_scanner(
             self._async_detection_callback, self.current_mode, self.adapter
         )
         self._log_start_attempt(attempt)
         self._start_future = self._loop.create_future()
         try:
-            async with asyncio.timeout(START_TIMEOUT), async_interrupt.interrupt(
-                self._start_future, _AbortStartError, None
+            async with (
+                asyncio.timeout(START_TIMEOUT),
+                async_interrupt.interrupt(self._start_future, _AbortStartError, None),
             ):
                 await self.scanner.start()
         except _AbortStartError as ex:
@@ -345,7 +357,7 @@ class HaScanner(BaseHaScanner):
         except asyncio.TimeoutError as ex:
             await self._async_stop_scanner()
             if attempt == 2:
-                await self._async_reset_adapter()
+                await self._async_reset_adapter(False)
             if attempt < START_ATTEMPTS:
                 self._log_start_timeout(attempt)
                 return False
@@ -357,8 +369,11 @@ class HaScanner(BaseHaScanner):
         except BleakError as ex:
             await self._async_stop_scanner()
             error_str = str(ex)
+            if IN_PROGRESS_ERROR in error_str:
+                # If discovery is stuck on, try to force stop it
+                await self._async_force_stop_discovery()
             if attempt == 2 and _error_indicates_reset_needed(error_str):
-                await self._async_reset_adapter()
+                await self._async_reset_adapter(False)
             elif (
                 attempt != START_ATTEMPTS
                 and _error_indicates_wait_for_adapter_to_init(error_str)
@@ -499,10 +514,10 @@ class HaScanner(BaseHaScanner):
                 self.name,
             )
             return
-        _LOGGER.info(
+        _LOGGER.debug(
             "%s: Bluetooth scanner has gone quiet for %ss, restarting",
             self.name,
-            SCANNER_WATCHDOG_TIMEOUT,
+            self.time_since_last_detection(),
         )
         # Immediately mark the scanner as not scanning
         # since the restart task will have to wait for the lock
@@ -512,7 +527,6 @@ class HaScanner(BaseHaScanner):
     async def _async_restart_scanner(self) -> None:
         """Restart the scanner."""
         async with self._start_stop_lock:
-            time_since_last_detection = monotonic_time_coarse() - self._last_detection
             # Stop the scanner but not the watchdog
             # since we want to try again later if it's still quiet
             await self._async_stop_scanner()
@@ -521,9 +535,9 @@ class HaScanner(BaseHaScanner):
             # do the reset.
             if (
                 self._start_time == self._last_detection
-                or time_since_last_detection > SCANNER_WATCHDOG_MULTIPLE
+                or self.time_since_last_detection() > SCANNER_WATCHDOG_MULTIPLE
             ):
-                await self._async_reset_adapter()
+                await self._async_reset_adapter(True)
             try:
                 await self._async_start()
             except ScannerStartError as ex:
@@ -533,13 +547,13 @@ class HaScanner(BaseHaScanner):
                     ex,
                 )
 
-    async def _async_reset_adapter(self) -> None:
+    async def _async_reset_adapter(self, gone_silent: bool) -> None:
         """Reset the adapter."""
         # There is currently nothing the user can do to fix this
         # so we log at debug level. If we later come up with a repair
         # strategy, we will change this to raise a repair issue as well.
         _LOGGER.debug("%s: adapter stopped responding; executing reset", self.name)
-        result = await async_reset_adapter(self.adapter, self.mac_address)
+        result = await async_reset_adapter(self.adapter, self.mac_address, gone_silent)
         _LOGGER.debug("%s: adapter reset result: %s", self.name, result)
 
     async def async_stop(self) -> None:
@@ -566,3 +580,14 @@ class HaScanner(BaseHaScanner):
             # change the bluetooth dongle.
             _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
         self.scanner = None
+
+    async def _async_force_stop_discovery(self) -> None:
+        """Force stop discovery."""
+        _LOGGER.debug("%s: Force stopping bluetooth discovery", self.name)
+        try:
+            async with asyncio.timeout(STOP_TIMEOUT):
+                await stop_discovery(self.adapter)
+        except asyncio.TimeoutError as ex:
+            _LOGGER.error("%s: Timeout force stopping scanner: %s", self.name, ex)
+        except Exception as ex:
+            _LOGGER.error("%s: Failed to force stop scanner: %s", self.name, ex)

@@ -1,4 +1,4 @@
-__version__ = "3.6.0"
+__version__ = "3.49.0"
 
 from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
@@ -18,9 +18,21 @@ from .models import (
     BluetoothServiceInfo,
     BluetoothServiceInfoBleak,
     HaBluetoothConnector,
+    HaBluetoothSlotAllocations,
+    HaScannerDetails,
+    HaScannerRegistration,
+    HaScannerRegistrationEvent,
 )
 from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
 from .scanner_device import BluetoothScannerDevice
+from .storage import (
+    DiscoveredDeviceAdvertisementData,
+    DiscoveredDeviceAdvertisementDataDict,
+    DiscoveryStorageType,
+    discovered_device_advertisement_data_from_dict,
+    discovered_device_advertisement_data_to_dict,
+    expire_stale_scanner_discovered_device_advertisement_data,
+)
 from .wrappers import HaBleakClientWrapper, HaBleakScannerWrapper
 
 __all__ = [
@@ -38,11 +50,21 @@ __all__ = [
     "BluetoothScanningMode",
     "BluetoothServiceInfo",
     "BluetoothServiceInfoBleak",
+    "DiscoveredDeviceAdvertisementData",
+    "DiscoveredDeviceAdvertisementDataDict",
+    "DiscoveryStorageType",
     "HaBleakClientWrapper",
     "HaBleakScannerWrapper",
     "HaBluetoothConnector",
+    "HaBluetoothSlotAllocations",
     "HaScanner",
+    "HaScannerDetails",
+    "HaScannerRegistration",
+    "HaScannerRegistrationEvent",
     "ScannerStartError",
+    "discovered_device_advertisement_data_from_dict",
+    "discovered_device_advertisement_data_to_dict",
+    "expire_stale_scanner_discovered_device_advertisement_data",
     "get_manager",
     "set_manager",
 ]

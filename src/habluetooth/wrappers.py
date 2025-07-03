@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Literal, overload
 
 from bleak import BleakClient, BleakError
 from bleak.backends.client import BaseBleakClient, get_platform_client_backend_type
@@ -20,7 +20,6 @@ from bleak.backends.scanner import (
     BaseBleakScanner,
 )
 from bleak_retry_connector import (
-    NO_RSSI_VALUE,
     ble_device_description,
     clear_cache,
     device_source,
@@ -28,7 +27,6 @@ from bleak_retry_connector import (
 
 from .central_manager import get_manager
 from .const import CALLBACK_TYPE
-from .scanner_device import BluetoothScannerDevice
 
 FILTER_UUIDS: Final = "UUIDs"
 _LOGGER = logging.getLogger(__name__)
@@ -84,10 +82,27 @@ class HaBleakScannerWrapper(BaseBleakScanner):
             device_identifier, True
         ) or manager.async_ble_device_from_address(device_identifier, False)
 
+    @overload
     @classmethod
-    async def discover(cls, timeout: float = 5.0, **kwargs: Any) -> list[BLEDevice]:
+    async def discover(
+        cls, timeout: float = 5.0, *, return_adv: Literal[False] = False, **kwargs: Any
+    ) -> list[BLEDevice]: ...
+
+    @overload
+    @classmethod
+    async def discover(
+        cls, timeout: float = 5.0, *, return_adv: Literal[True], **kwargs: Any
+    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]: ...
+
+    @classmethod
+    async def discover(
+        cls, timeout: float = 5.0, *, return_adv: bool = False, **kwargs: Any
+    ) -> list[BLEDevice] | dict[str, tuple[BLEDevice, AdvertisementData]]:
         """Discover devices."""
-        return list(get_manager().async_discovered_devices(True))
+        infos = get_manager().async_discovered_service_info(True)
+        if return_adv:
+            return {info.address: (info.device, info.advertisement) for info in infos}
+        return [info.device for info in infos]
 
     async def stop(self, *args: Any, **kwargs: Any) -> None:
         """Stop scanning for devices."""
@@ -174,33 +189,6 @@ class HaBleakScannerWrapper(BaseBleakScanner):
                 asyncio.get_running_loop().call_soon_threadsafe(self._detection_cancel)
 
 
-def _rssi_sorter_with_connection_failure_penalty(
-    device: BluetoothScannerDevice,
-    connection_failure_count: dict[BaseHaScanner, int],
-    rssi_diff: int,
-) -> float:
-    """
-    Get a sorted list of scanner, device, advertisement data.
-
-    Adjusting for previous connection failures.
-
-    When a connection fails, we want to try the next best adapter so we
-    apply a penalty to the RSSI value to make it less likely to be chosen
-    for every previous connection failure.
-
-    We use the 51% of the RSSI difference between the first and second
-    best adapter as the penalty. This ensures we will always try the
-    best adapter twice before moving on to the next best adapter since
-    the first failure may be a transient service resolution issue.
-    """
-    base_rssi = device.advertisement.rssi or NO_RSSI_VALUE
-    if connect_failures := connection_failure_count.get(device.scanner):
-        if connect_failures > 1 and not rssi_diff:
-            rssi_diff = 1
-        return base_rssi - (rssi_diff * connect_failures * 0.51)
-    return base_rssi
-
-
 class HaBleakClientWrapper(BleakClient):
     """
     Wrap the BleakClient to ensure it does not shutdown our scanner.
@@ -229,8 +217,8 @@ class HaBleakClientWrapper(BleakClient):
             # its not a subclassed str
             self.__address = str(address_or_ble_device)
         self.__disconnected_callback = disconnected_callback
+        self.__manager = get_manager()
         self.__timeout = timeout
-        self.__connect_failures: dict[BaseHaScanner, int] = {}
         self._backend: BaseBleakClient | None = None
 
     @property
@@ -278,7 +266,7 @@ class HaBleakClientWrapper(BleakClient):
 
     async def connect(self, **kwargs: Any) -> bool:
         """Connect to the specified GATT server."""
-        manager = get_manager()
+        manager = self.__manager
         if manager.shutdown:
             raise BleakError("Bluetooth is already shutdown")
         if debug_logging := _LOGGER.isEnabledFor(logging.DEBUG):
@@ -306,22 +294,25 @@ class HaBleakClientWrapper(BleakClient):
             _LOGGER.debug(
                 "%s: Connecting via %s (last rssi: %s)", description, scanner.name, rssi
             )
-        connected = None
+        connected = False
+        address = device.address
         try:
+            scanner._add_connecting(address)
             connected = await super().connect(**kwargs)
         finally:
+            scanner._finished_connecting(address, connected)
             # If we failed to connect and its a local adapter (no source)
             # we release the connection slot
-            if not connected:
-                self.__connect_failures[scanner] = (
-                    self.__connect_failures.get(scanner, 0) + 1
-                )
-                if not wrapped_backend.source:
-                    manager.async_release_connection_slot(device)
+            if not connected and not wrapped_backend.source:
+                manager.async_release_connection_slot(device)
 
         if debug_logging:
             _LOGGER.debug(
-                "%s: Connected via %s (last rssi: %s)", description, scanner.name, rssi
+                "%s: %s via %s (last rssi: %s)",
+                description,
+                "Connected" if connected else "Failed to connect",
+                scanner.name,
+                rssi,
             )
         return connected
 
@@ -356,34 +347,36 @@ class HaBleakClientWrapper(BleakClient):
         that has a free connection slot.
         """
         address = self.__address
-        devices = manager.async_scanner_devices_by_address(self.__address, True)
         sorted_devices = sorted(
-            devices,
-            key=lambda device: device.advertisement.rssi or NO_RSSI_VALUE,
+            manager.async_scanner_devices_by_address(self.__address, True),
+            key=lambda x: x.advertisement.rssi,
             reverse=True,
         )
-
-        # If we have connection failures we adjust the rssi sorting
-        # to prefer the adapter/scanner with the less failures so
-        # we don't keep trying to connect with an adapter
-        # that is failing
-        if self.__connect_failures and len(sorted_devices) > 1:
-            # We use the rssi diff between to the top two
-            # to adjust the rssi sorter so that each failure
-            # will reduce the rssi sorter by the diff amount
+        if len(sorted_devices) > 1:
             rssi_diff = (
                 sorted_devices[0].advertisement.rssi
                 - sorted_devices[1].advertisement.rssi
             )
-            adjusted_rssi_sorter = partial(
-                _rssi_sorter_with_connection_failure_penalty,
-                connection_failure_count=self.__connect_failures,
-                rssi_diff=rssi_diff,
-            )
             sorted_devices = sorted(
-                devices,
-                key=adjusted_rssi_sorter,
+                sorted_devices,
+                key=lambda device: device.score_connection_path(rssi_diff),
                 reverse=True,
+            )
+
+        if sorted_devices and _LOGGER.isEnabledFor(logging.INFO):
+            _LOGGER.info(
+                "%s - %s: Found %s connection path(s), preferred order: %s",
+                address,
+                sorted_devices[0].ble_device.name,
+                len(sorted_devices),
+                ", ".join(
+                    f"{device.scanner.name} "
+                    f"(RSSI={device.advertisement.rssi}) "
+                    f"(failures={device.scanner._connection_failures(address)}) "
+                    f"(in_progress={device.scanner._connections_in_progress()}) "
+                    f"(score={device.score_connection_path(0)})"
+                    for device in sorted_devices
+                ),
             )
 
         for device in sorted_devices:

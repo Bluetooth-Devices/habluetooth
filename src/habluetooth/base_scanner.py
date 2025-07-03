@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Final, Iterable, final
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from bluetooth_adapters import DiscoveredDeviceAdvertisementData, adapter_human_name
-from bluetooth_data_tools import monotonic_time_coarse
+from bleak_retry_connector import NO_RSSI_VALUE
+from bluetooth_adapters import adapter_human_name
+from bluetooth_data_tools import monotonic_time_coarse, parse_advertisement_data_bytes
 
 from .central_manager import get_manager
 from .const import (
@@ -20,12 +22,20 @@ from .const import (
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
 )
-from .models import BluetoothServiceInfoBleak, HaBluetoothConnector
+from .models import (
+    BluetoothScanningMode,
+    BluetoothServiceInfoBleak,
+    HaBluetoothConnector,
+    HaScannerDetails,
+)
+from .scanner_device import BluetoothScannerDevice
+from .storage import DiscoveredDeviceAdvertisementData
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
 
 
+_bytes = bytes
 _float = float
 _int = int
 _str = str
@@ -36,6 +46,8 @@ class BaseHaScanner:
 
     __slots__ = (
         "_cancel_watchdog",
+        "_connect_failures",
+        "_connect_in_progress",
         "_connecting",
         "_last_detection",
         "_loop",
@@ -44,7 +56,10 @@ class BaseHaScanner:
         "adapter",
         "connectable",
         "connector",
+        "current_mode",
+        "details",
         "name",
+        "requested_mode",
         "scanning",
         "source",
     )
@@ -54,20 +69,107 @@ class BaseHaScanner:
         source: str,
         adapter: str,
         connector: HaBluetoothConnector | None = None,
+        connectable: bool = False,
+        requested_mode: BluetoothScanningMode | None = None,
+        current_mode: BluetoothScanningMode | None = None,
     ) -> None:
         """Initialize the scanner."""
-        self.connectable = False
+        self.connectable = connectable
         self.source = source
         self.connector = connector
         self._connecting = 0
         self.adapter = adapter
         self.name = adapter_human_name(adapter, source) if adapter != source else source
         self.scanning: bool = True
+        self.requested_mode = requested_mode
+        self.current_mode = current_mode
         self._last_detection = 0.0
         self._start_time = 0.0
         self._cancel_watchdog: asyncio.TimerHandle | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._manager = get_manager()
+        self.details = HaScannerDetails(
+            source=self.source,
+            connectable=self.connectable,
+            name=self.name,
+            adapter=self.adapter,
+        )
+        self._connect_failures: dict[str, int] = {}
+        self._connect_in_progress: dict[str, int] = {}
+
+    def _clear_connection_history(self) -> None:
+        """Clear the connection history for a scanner."""
+        self._connect_failures.clear()
+        self._connect_in_progress.clear()
+
+    def _finished_connecting(self, address: str, connected: bool) -> None:
+        """Finished connecting."""
+        self._remove_connecting(address)
+        if connected:
+            self._clear_connect_failure(address)
+        else:
+            self._add_connect_failure(address)
+
+    def _increase_count(self, target: dict[str, int], address: str) -> None:
+        """Increase the reference count."""
+        if address in target:
+            target[address] += 1
+        else:
+            target[address] = 1
+
+    def _add_connect_failure(self, address: str) -> None:
+        """Add a connect failure."""
+        self._increase_count(self._connect_failures, address)
+
+    def _add_connecting(self, address: str) -> None:
+        """Add a connecting."""
+        self._increase_count(self._connect_in_progress, address)
+
+    def _remove_connecting(self, address: str) -> None:
+        """Remove a connecting."""
+        if address not in self._connect_in_progress:
+            _LOGGER.warning(
+                "Removing a non-existing connecting %s %s", self.name, address
+            )
+            return
+        self._connect_in_progress[address] -= 1
+        if not self._connect_in_progress[address]:
+            del self._connect_in_progress[address]
+
+    def _clear_connect_failure(self, address: str) -> None:
+        """Clear a connect failure."""
+        self._connect_failures.pop(address, None)
+
+    def _score_connection_paths(
+        self, rssi_diff: _int, scanner_device: BluetoothScannerDevice
+    ) -> float:
+        """Score the connection paths."""
+        address = scanner_device.ble_device.address
+        score = scanner_device.advertisement.rssi or NO_RSSI_VALUE
+        scanner_connections_in_progress = len(self._connect_in_progress)
+        previous_failures = self._connect_failures.get(address, 0)
+        if scanner_connections_in_progress:
+            # Very large penalty for multiple connections in progress
+            # to avoid overloading the adapter
+            score -= rssi_diff * scanner_connections_in_progress * 1.01
+        if previous_failures:
+            score -= rssi_diff * previous_failures * 0.51
+        return score
+
+    def _connections_in_progress(self) -> int:
+        """Return if the connection is in progress."""
+        in_progress = 0
+        for count in self._connect_in_progress.values():
+            in_progress += count
+        return in_progress
+
+    def _connection_failures(self, address: str) -> int:
+        """Return the number of failures."""
+        return self._connect_failures.get(address, 0)
+
+    def time_since_last_detection(self) -> float:
+        """Return the time since the last detection."""
+        return monotonic_time_coarse() - self._last_detection
 
     def async_setup(self) -> CALLBACK_TYPE:
         """Set up the scanner."""
@@ -104,7 +206,7 @@ class BaseHaScanner:
 
     def _async_watchdog_triggered(self) -> bool:
         """Check if the watchdog has been triggered."""
-        time_since_last_detection = monotonic_time_coarse() - self._last_detection
+        time_since_last_detection = self.time_since_last_detection()
         _LOGGER.debug(
             "%s: Scanner watchdog time_since_last_detection: %s",
             self.name,
@@ -120,13 +222,13 @@ class BaseHaScanner:
         is triggered.
         """
         if self._async_watchdog_triggered():
-            _LOGGER.info(
+            _LOGGER.debug(
                 (
                     "%s: Bluetooth scanner has gone quiet for %ss, check logs on the"
                     " scanner device for more information"
                 ),
                 self.name,
-                SCANNER_WATCHDOG_TIMEOUT,
+                self.time_since_last_detection(),
             )
             self.scanning = False
             return
@@ -174,9 +276,12 @@ class BaseHaScanner:
         device_adv_datas = self.discovered_devices_and_advertisement_data.values()
         return {
             "name": self.name,
+            "connectable": self.connectable,
             "start_time": self._start_time,
             "source": self.source,
             "scanning": self.scanning,
+            "requested_mode": self.requested_mode,
+            "current_mode": self.current_mode,
             "type": self.__class__.__name__,
             "last_detection": self._last_detection,
             "monotonic_time": monotonic_time_coarse(),
@@ -209,10 +314,13 @@ class BaseHaRemoteScanner(BaseHaScanner):
         name: str,
         connector: HaBluetoothConnector | None,
         connectable: bool,
+        requested_mode: BluetoothScanningMode | None = None,
+        current_mode: BluetoothScanningMode | None = None,
     ) -> None:
         """Initialize the scanner."""
-        super().__init__(scanner_id, name, connector)
-        self.connectable = connectable
+        super().__init__(
+            scanner_id, name, connector, connectable, requested_mode, current_mode
+        )
         self._details: dict[str, str | HaBluetoothConnector] = {"source": scanner_id}
         # Scanners only care about connectable devices. The manager
         # will handle taking care of availability for non-connectable devices
@@ -239,6 +347,7 @@ class BaseHaRemoteScanner(BaseHaScanner):
                 self.connectable,
                 discovered_device_timestamps[address],
                 adv.tx_power,
+                history.discovered_device_raw.get(address),
             )
             for address, (
                 device,
@@ -255,29 +364,47 @@ class BaseHaRemoteScanner(BaseHaScanner):
         return DiscoveredDeviceAdvertisementData(
             self.connectable,
             self._expire_seconds,
-            self._discovered_device_advertisement_datas,
-            self._discovered_device_timestamps,
+            self._build_discovered_device_advertisement_datas(),
+            self._build_discovered_device_timestamps(),
+            self._build_discovered_device_raw(),
         )
-
-    @property
-    def _discovered_device_advertisement_datas(
-        self,
-    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
-        """Return a list of discovered devices and advertisement data."""
-        return {
-            address: (
-                service_info.device,
-                service_info.advertisement,
-            )
-            for address, service_info in self._previous_service_info.items()
-        }
 
     @property
     def _discovered_device_timestamps(self) -> dict[str, float]:
         """Return a dict of discovered device timestamps."""
+        warnings.warn(
+            "BaseHaRemoteScanner._discovered_device_timestamps is deprecated "
+            "and will be removed in a future version of habluetooth, use "
+            "BaseHaRemoteScanner.discovered_device_timestamps instead",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return self._build_discovered_device_timestamps()
+
+    @property
+    def discovered_device_timestamps(self) -> dict[str, float]:
+        """Return a dict of discovered device timestamps."""
+        return self._build_discovered_device_timestamps()
+
+    def _build_discovered_device_advertisement_datas(
+        self,
+    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
+        """Return a list of discovered devices and advertisement data."""
         return {
-            address: service_info.time
-            for address, service_info in self._previous_service_info.items()
+            address: (info.device, info._advertisement_internal())
+            for address, info in self._previous_service_info.items()
+        }
+
+    def _build_discovered_device_timestamps(self) -> dict[str, float]:
+        """Return a dict of discovered device timestamps."""
+        return {
+            address: info.time for address, info in self._previous_service_info.items()
+        }
+
+    def _build_discovered_device_raw(self) -> dict[str, bytes | None]:
+        """Return a dict of discovered device raw advertisement data."""
+        return {
+            address: info.raw for address, info in self._previous_service_info.items()
         }
 
     def _cancel_expire_devices(self) -> None:
@@ -318,8 +445,8 @@ class BaseHaRemoteScanner(BaseHaScanner):
         now = monotonic_time_coarse()
         expired = [
             address
-            for address, service_info in self._previous_service_info.items()
-            if now - service_info.time > self._expire_seconds
+            for address, info in self._previous_service_info.items()
+            if now - info.time > self._expire_seconds
         ]
         for address in expired:
             del self._previous_service_info[address]
@@ -327,18 +454,15 @@ class BaseHaRemoteScanner(BaseHaScanner):
     @property
     def discovered_devices(self) -> list[BLEDevice]:
         """Return a list of discovered devices."""
-        service_infos = self._previous_service_info.values()
-        return [
-            device_advertisement_data.device
-            for device_advertisement_data in service_infos
-        ]
+        infos = self._previous_service_info.values()
+        return [device_advertisement_data.device for device_advertisement_data in infos]
 
     @property
     def discovered_devices_and_advertisement_data(
         self,
     ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
         """Return a list of discovered devices and advertisement data."""
-        return self._discovered_device_advertisement_datas
+        return self._build_discovered_device_advertisement_datas()
 
     @property
     def discovered_addresses(self) -> Iterable[str]:
@@ -353,6 +477,28 @@ class BaseHaRemoteScanner(BaseHaScanner):
             return info.device, info.advertisement
         return None
 
+    def _async_on_raw_advertisement(
+        self,
+        address: _str,
+        rssi: _int,
+        raw: _bytes,
+        details: dict[str, Any],
+        advertisement_monotonic_time: _float,
+    ) -> None:
+        parsed = parse_advertisement_data_bytes(raw)
+        self._async_on_advertisement_internal(
+            address,
+            rssi,
+            parsed[0],
+            parsed[1],
+            parsed[2],
+            parsed[3],
+            parsed[4],
+            details,
+            advertisement_monotonic_time,
+            raw,
+        )
+
     def _async_on_advertisement(
         self,
         address: _str,
@@ -365,50 +511,57 @@ class BaseHaRemoteScanner(BaseHaScanner):
         details: dict[Any, Any],
         advertisement_monotonic_time: _float,
     ) -> None:
+        self._async_on_advertisement_internal(
+            address,
+            rssi,
+            local_name,
+            service_uuids,
+            service_data,
+            manufacturer_data,
+            tx_power,
+            details,
+            advertisement_monotonic_time,
+            None,
+        )
+
+    def _async_on_advertisement_internal(
+        self,
+        address: _str,
+        rssi: _int,
+        local_name: _str | None,
+        service_uuids: list[str],
+        service_data: dict[str, bytes],
+        manufacturer_data: dict[int, bytes],
+        tx_power: _int | None,
+        details: dict[Any, Any],
+        advertisement_monotonic_time: _float,
+        raw: _bytes | None,
+    ) -> None:
         """Call the registered callback."""
         self.scanning = not self._connecting
         self._last_detection = advertisement_monotonic_time
-        if (prev_service_info := self._previous_service_info.get(address)) is None:
+        info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
+
+        if (prev_info := self._previous_service_info.get(address)) is None:
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
-            device = BLEDevice(
+            info.device = BLEDevice(
                 address,
                 local_name,
                 {**self._details, **details},
                 rssi,  # deprecated, will be removed in newer bleak
             )
+            info.manufacturer_data = manufacturer_data
+            info.service_data = service_data
+            info.service_uuids = service_uuids
+            info.name = local_name or address
         else:
             # Merge the new data with the old data
             # to function the same as BlueZ which
             # merges the dicts on PropertiesChanged
-            prev_device = prev_service_info.device
-            prev_service_uuids = prev_service_info.service_uuids
-            prev_service_data = prev_service_info.service_data
-            prev_manufacturer_data = prev_service_info.manufacturer_data
-            prev_name = prev_device.name
-            prev_details = prev_device.details
-
-            if prev_name and (not local_name or len(prev_name) > len(local_name)):
-                local_name = prev_name
-
-            has_service_uuids = bool(service_uuids)
-            if has_service_uuids and service_uuids != prev_service_uuids:
-                service_uuids = list({*service_uuids, *prev_service_uuids})
-            elif not has_service_uuids:
-                service_uuids = prev_service_uuids
-
-            has_service_data = bool(service_data)
-            if has_service_data and service_data != prev_service_data:
-                service_data = {**prev_service_data, **service_data}
-            elif not has_service_data:
-                service_data = prev_service_data
-
-            has_manufacturer_data = bool(manufacturer_data)
-            if has_manufacturer_data and manufacturer_data != prev_manufacturer_data:
-                manufacturer_data = {**prev_manufacturer_data, **manufacturer_data}
-            elif not has_manufacturer_data:
-                manufacturer_data = prev_manufacturer_data
+            info.device = prev_info.device
+            prev_name = prev_info.device.name
             #
             # Bleak updates the BLEDevice via create_or_update_device.
             # We need to do the same to ensure integrations that already
@@ -417,35 +570,91 @@ class BaseHaRemoteScanner(BaseHaScanner):
             #
             # https://github.com/hbldh/bleak/blob/222618b7747f0467dbb32bd3679f8cfaa19b1668/bleak/backends/scanner.py#L203
             #
-            device = prev_device
-            device.name = local_name
-            prev_details.update(details)
+            # _rssi is deprecated, will be removed in newer bleak
             # pylint: disable-next=protected-access
-            device._rssi = rssi  # deprecated, will be removed in newer bleak
+            info.device._rssi = rssi
+            if prev_name is not None and (
+                prev_name is local_name
+                or not local_name
+                or len(prev_name) > len(local_name)
+            ):
+                info.name = prev_name
+            else:
+                info.device.name = local_name
+                info.name = local_name if local_name else address
 
-        service_info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
-        service_info.name = local_name or address
-        service_info.address = address
-        service_info.rssi = rssi
-        service_info.manufacturer_data = manufacturer_data
-        service_info.service_data = service_data
-        service_info.service_uuids = service_uuids
-        service_info.source = self.source
-        service_info.device = device
-        service_info._advertisement = None
-        service_info.connectable = self.connectable
-        service_info.time = advertisement_monotonic_time
-        service_info.tx_power = tx_power
-        self._previous_service_info[address] = service_info
-        self._manager.scanner_adv_received(service_info)
+            has_service_uuids = bool(service_uuids)
+            if (
+                has_service_uuids
+                and service_uuids is not prev_info.service_uuids
+                and service_uuids != prev_info.service_uuids
+            ):
+                info.service_uuids = list({*service_uuids, *prev_info.service_uuids})
+            elif not has_service_uuids:
+                info.service_uuids = prev_info.service_uuids
+            else:
+                info.service_uuids = service_uuids
+
+            has_service_data = bool(service_data)
+            if has_service_data and service_data is not prev_info.service_data:
+                for uuid, sub_value in service_data.items():
+                    if (
+                        super_value := prev_info.service_data.get(uuid)
+                    ) is None or super_value != sub_value:
+                        info.service_data = {
+                            **prev_info.service_data,
+                            **service_data,
+                        }
+                        break
+                else:
+                    info.service_data = prev_info.service_data
+            elif not has_service_data:
+                info.service_data = prev_info.service_data
+            else:
+                info.service_data = service_data
+
+            has_manufacturer_data = bool(manufacturer_data)
+            if (
+                has_manufacturer_data
+                and manufacturer_data is not prev_info.manufacturer_data
+            ):
+                for id_, sub_value in manufacturer_data.items():
+                    if (
+                        super_value := prev_info.manufacturer_data.get(id_)
+                    ) is None or super_value != sub_value:
+                        info.manufacturer_data = {
+                            **prev_info.manufacturer_data,
+                            **manufacturer_data,
+                        }
+                        break
+                else:
+                    info.manufacturer_data = prev_info.manufacturer_data
+            elif not has_manufacturer_data:
+                info.manufacturer_data = prev_info.manufacturer_data
+            else:
+                info.manufacturer_data = manufacturer_data
+
+        info.address = address
+        info.rssi = rssi
+        info.source = self.source
+        info._advertisement = None
+        info.connectable = self.connectable
+        info.time = advertisement_monotonic_time
+        info.tx_power = tx_power
+        info.raw = raw
+        self._previous_service_info[address] = info
+        self._manager.scanner_adv_received(info)
 
     async def async_diagnostics(self) -> dict[str, Any]:
         """Return diagnostic information about the scanner."""
         now = monotonic_time_coarse()
-        discovered_device_timestamps = self._discovered_device_timestamps
+        discovered_device_timestamps = self._build_discovered_device_timestamps()
         return await super().async_diagnostics() | {
-            "connectable": self.connectable,
             "discovered_device_timestamps": discovered_device_timestamps,
+            "raw_advertisement_data": {
+                address: info.raw
+                for address, info in self._previous_service_info.items()
+            },
             "time_since_last_device_detection": {
                 address: now - timestamp
                 for address, timestamp in discovered_device_timestamps.items()

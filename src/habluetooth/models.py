@@ -13,7 +13,7 @@ from bleak.backends.scanner import AdvertisementData
 from bleak_retry_connector import NO_RSSI_VALUE
 
 if TYPE_CHECKING:
-    from .manager import BluetoothManager
+    from .base_scanner import BaseHaScanner
 
 _BluetoothServiceInfoSelfT = TypeVar(
     "_BluetoothServiceInfoSelfT", bound="BluetoothServiceInfo"
@@ -23,28 +23,37 @@ _BluetoothServiceInfoBleakSelfT = TypeVar(
     "_BluetoothServiceInfoBleakSelfT", bound="BluetoothServiceInfoBleak"
 )
 SOURCE_LOCAL: Final = "local"
+TUPLE_NEW: Final = tuple.__new__
 
 _float = float  # avoid cython conversion since we always want a pyfloat
 _str = str  # avoid cython conversion since we always want a pystr
 _int = int  # avoid cython conversion since we always want a pyint
 
 
-class CentralBluetoothManager:
-    """Central Bluetooth Manager."""
+@dataclass(slots=True, frozen=True)
+class HaBluetoothSlotAllocations:
+    """Data for how to allocate slots for BLEDevice connections."""
 
-    manager: BluetoothManager | None = None
-
-
-def get_manager() -> BluetoothManager:
-    """Get the BluetoothManager."""
-    if TYPE_CHECKING:
-        assert CentralBluetoothManager.manager is not None
-    return CentralBluetoothManager.manager
+    source: str  # Adapter MAC
+    slots: int  # Number of slots
+    free: int  # Number of free slots
+    allocated: list[str]  # Addresses of connected devices
 
 
-def set_manager(manager: BluetoothManager) -> None:
-    """Set the BluetoothManager."""
-    CentralBluetoothManager.manager = manager
+class HaScannerRegistrationEvent(Enum):
+    """Events for scanner registration."""
+
+    ADDED = "added"
+    REMOVED = "removed"
+    UPDATED = "updated"
+
+
+@dataclass(slots=True, frozen=True)
+class HaScannerRegistration:
+    """Data for a scanner event."""
+
+    event: HaScannerRegistrationEvent
+    scanner: BaseHaScanner
 
 
 @dataclass(slots=True)
@@ -54,6 +63,16 @@ class HaBluetoothConnector:
     client: type[BaseBleakClient]
     source: str
     can_connect: Callable[[], bool]
+
+
+@dataclass(slots=True, frozen=True)
+class HaScannerDetails:
+    """Details for a scanner."""
+
+    source: str
+    connectable: bool
+    name: str
+    adapter: str
 
 
 class BluetoothScanningMode(Enum):
@@ -144,7 +163,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     internal details.
     """
 
-    __slots__ = ("_advertisement", "connectable", "device", "time", "tx_power")
+    __slots__ = ("_advertisement", "connectable", "device", "raw", "time", "tx_power")
 
     def __init__(
         self,
@@ -160,6 +179,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         connectable: bool,
         time: _float,
         tx_power: _int | None,
+        raw: bytes | None = None,
     ) -> None:
         self.name = name
         self.address = address
@@ -173,6 +193,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         self.connectable = connectable
         self.time = time
         self.tx_power = tx_power
+        self.raw = raw
 
     def __repr__(self) -> str:
         """Return the representation of the object."""
@@ -187,14 +208,18 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             f"source={self.source} "
             f"connectable={self.connectable} "
             f"time={self.time} "
-            f"tx_power={self.tx_power}>"
+            f"tx_power={self.tx_power} "
+            f"raw={self.raw!r}>"
         )
 
-    @property
-    def advertisement(self) -> AdvertisementData:
-        """Get the advertisement data."""
+    def _advertisement_internal(self) -> AdvertisementData:
+        """
+        Get the advertisement data.
+
+        Internal method only to be used by this library.
+        """
         if self._advertisement is None:
-            self._advertisement = tuple.__new__(
+            self._advertisement = TUPLE_NEW(
                 AdvertisementData,
                 (
                     None if self.name == "" or self.name == self.address else self.name,
@@ -207,6 +232,11 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
                 ),
             )
         return self._advertisement
+
+    @property
+    def advertisement(self) -> AdvertisementData:
+        """Get the advertisement data."""
+        return self._advertisement_internal()
 
     def as_dict(self) -> dict[str, Any]:
         """
@@ -228,6 +258,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             "connectable": self.connectable,
             "time": self.time,
             "tx_power": self.tx_power,
+            "raw": self.raw,
         }
 
     @classmethod
@@ -279,3 +310,21 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             time,
             advertisement_data.tx_power,
         )
+
+    def _as_connectable(self) -> BluetoothServiceInfoBleak:
+        """Return a connectable version of this object."""
+        new_obj = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
+        new_obj.name = self.name
+        new_obj.address = self.address
+        new_obj.rssi = self.rssi
+        new_obj.manufacturer_data = self.manufacturer_data
+        new_obj.service_data = self.service_data
+        new_obj.service_uuids = self.service_uuids
+        new_obj.source = self.source
+        new_obj.device = self.device
+        new_obj._advertisement = self._advertisement
+        new_obj.connectable = True
+        new_obj.time = self.time
+        new_obj.tx_power = self.tx_power
+        new_obj.raw = self.raw
+        return new_obj

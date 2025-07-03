@@ -5,21 +5,32 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import timedelta
+from unittest.mock import ANY
 
 import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bluetooth_data_tools import monotonic_time_coarse
 
-from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector, get_manager
+from habluetooth import (
+    BaseHaRemoteScanner,
+    BluetoothScanningMode,
+    HaBluetoothConnector,
+    HaScannerDetails,
+    get_manager,
+)
 from habluetooth.const import (
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
 )
+from habluetooth.storage import (
+    DiscoveredDeviceAdvertisementData,
+)
 
 from . import (
+    HCI0_SOURCE_ADDRESS,
     MockBleakClient,
     async_fire_time_changed,
     generate_advertisement_data,
@@ -47,6 +58,22 @@ class FakeScanner(BaseHaRemoteScanner):
             advertisement_data.service_data,
             advertisement_data.manufacturer_data,
             advertisement_data.tx_power,
+            {"scanner_specific_data": "test"},
+            now or monotonic_time_coarse(),
+        )
+
+    def inject_raw_advertisement(
+        self,
+        address: str,
+        rssi: int,
+        adv: bytes,
+        now: float | None = None,
+    ) -> None:
+        """Inject a raw advertisement."""
+        self._async_on_raw_advertisement(
+            address,
+            rssi,
+            adv,
             {"scanner_specific_data": "test"},
             now or monotonic_time_coarse(),
         )
@@ -98,11 +125,31 @@ async def test_remote_scanner(name_2: str | None) -> None:
         manufacturer_data={1: b"\x01", 2: b"\x02"},
         rssi=-100,
     )
-
+    switchbot_device_adv_4 = generate_advertisement_data(
+        local_name="wohandlonger",
+        service_uuids=["00000001-0000-1000-8000-00805f9b34fb"],
+        service_data={"00000001-0000-1000-8000-00805f9b34fb": b"\n\xff"},
+        manufacturer_data={1: b"\x04", 2: b"\x02", 3: b"\x03"},
+        rssi=-100,
+    )
+    switchbot_device_adv_5 = generate_advertisement_data(
+        local_name="wohandlonger",
+        service_uuids=["00000001-0000-1000-8000-00805f9b34fb"],
+        service_data={"00000001-0000-1000-8000-00805f9b34fb": b"\n\xff"},
+        manufacturer_data={1: b"\x04", 2: b"\x01"},
+        rssi=-100,
+    )
     connector = HaBluetoothConnector(
         MockBleakClient, "mock_bleak_client", lambda: False
     )
     scanner = FakeScanner("esp32", "esp32", connector, True)
+    details = scanner.details
+    assert details == HaScannerDetails(
+        source=scanner.source,
+        connectable=scanner.connectable,
+        name=scanner.name,
+        adapter=scanner.adapter,
+    )
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
@@ -141,6 +188,49 @@ async def test_remote_scanner(name_2: str | None) -> None:
     # sure we always keep the longer name
     scanner.inject_advertisement(switchbot_device_2, switchbot_device_adv_2)
     assert discovered_device.name == switchbot_device_3.name
+
+    scanner.inject_advertisement(switchbot_device_2, switchbot_device_adv_4)
+    assert scanner.discovered_devices_and_advertisement_data[
+        switchbot_device_2.address
+    ][1].manufacturer_data == {1: b"\x04", 2: b"\x02", 3: b"\x03"}
+    scanner.inject_advertisement(switchbot_device_2, switchbot_device_adv_5)
+    assert scanner.discovered_devices_and_advertisement_data[
+        switchbot_device_2.address
+    ][1].manufacturer_data == {1: b"\x04", 2: b"\x01", 3: b"\x03"}
+
+    assert (
+        "00090401-0052-036b-3206-ff0a050a021a"
+        not in scanner.discovered_devices_and_advertisement_data[
+            switchbot_device_2.address
+        ][1].service_data
+    )
+
+    scanner.inject_raw_advertisement(
+        switchbot_device_2.address,
+        switchbot_device_2.rssi,
+        b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x04",
+    )
+
+    assert (
+        "00090401-0052-036b-3206-ff0a050a021a"
+        in scanner.discovered_devices_and_advertisement_data[
+            switchbot_device_2.address
+        ][1].service_data
+    )
+
+    assert scanner.serialize_discovered_devices() == DiscoveredDeviceAdvertisementData(
+        connectable=True,
+        expire_seconds=195,
+        discovered_device_advertisement_datas={"44:44:33:11:23:45": ANY},
+        discovered_device_timestamps={"44:44:33:11:23:45": ANY},
+        discovered_device_raw={
+            "44:44:33:11:23:45": b"\x12!\x1a\x02"
+            b"\n\x05\n\xff"
+            b"\x062k\x03"
+            b"R\x00\x01\x04"
+            b"\t\x00\x04"
+        },
+    )
 
     cancel()
     unsetup()
@@ -232,6 +322,14 @@ async def test_remote_scanner_expires_non_connectable() -> None:
     devices = scanner.discovered_devices
     assert len(scanner.discovered_devices) == 1
     assert len(scanner.discovered_devices_and_advertisement_data) == 1
+    assert len(scanner.discovered_device_timestamps) == 1
+    assert len(scanner._discovered_device_timestamps) == 1
+    dev_adv = scanner.get_discovered_device_advertisement_data(switchbot_device.address)
+    assert dev_adv is not None
+    dev, adv = dev_adv
+    assert dev.name == "wohand"
+    assert adv.local_name == "wohand"
+    assert adv.manufacturer_data == switchbot_device_adv.manufacturer_data
     assert devices[0].name == "wohand"
 
     assert (
@@ -256,6 +354,12 @@ async def test_remote_scanner_expires_non_connectable() -> None:
 
     assert len(scanner.discovered_devices) == 0
     assert len(scanner.discovered_devices_and_advertisement_data) == 0
+    assert len(scanner.discovered_device_timestamps) == 0
+    assert len(scanner._discovered_device_timestamps) == 0
+    assert (
+        scanner.get_discovered_device_advertisement_data(switchbot_device.address)
+        is None
+    )
 
     expire_monotonic = (
         start_time_monotonic + FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS + 1
@@ -269,6 +373,12 @@ async def test_remote_scanner_expires_non_connectable() -> None:
 
     assert len(scanner.discovered_devices) == 0
     assert len(scanner.discovered_devices_and_advertisement_data) == 0
+    assert len(scanner.discovered_device_timestamps) == 0
+    assert len(scanner._discovered_device_timestamps) == 0
+    assert (
+        scanner.get_discovered_device_advertisement_data(switchbot_device.address)
+        is None
+    )
 
     cancel()
     unsetup()
@@ -328,7 +438,14 @@ async def test_scanner_stops_responding() -> None:
     connector = HaBluetoothConnector(
         MockBleakClient, "mock_bleak_client", lambda: False
     )
-    scanner = FakeScanner("esp32", "esp32", connector, True)
+    scanner = FakeScanner(
+        "esp32",
+        "esp32",
+        connector,
+        True,
+        current_mode=BluetoothScanningMode.ACTIVE,
+        requested_mode=BluetoothScanningMode.ACTIVE,
+    )
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
@@ -370,6 +487,259 @@ async def test_scanner_stops_responding() -> None:
 
     # As soon as we get a detection, we know the scanner is working again
     assert scanner.scanning is True
+    assert scanner.requested_mode == BluetoothScanningMode.ACTIVE
+    assert scanner.current_mode == BluetoothScanningMode.ACTIVE
 
     cancel()
     unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_merge_manufacturer_data_history_existing() -> None:
+    """Test merging manufacturer data history."""
+    manager = get_manager()
+
+    sensor_push_device = generate_ble_device(
+        "44:44:33:11:23:45",
+        "",
+        {},
+        rssi=-60,
+    )
+    sensor_push_device_adv = generate_advertisement_data(
+        local_name="",
+        rssi=-60,
+        manufacturer_data={
+            64256: b"B\r.\xa9\xb6",
+            31488: b"\x98\xfa\xb6\x91\xb6",
+        },
+        service_uuids=["ef090000-11d6-42ba-93b8-9dd7ec090ab0"],
+        service_data={},
+    )
+
+    sensor_push_adv_2 = generate_advertisement_data(
+        local_name="",
+        service_uuids=["ef090000-11d6-42ba-93b8-9dd7ec090ab0"],
+        service_data={},
+        manufacturer_data={
+            31488: b"\x98\xfa\xb6\x91\xb6",
+        },
+        rssi=-100,
+    )
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = FakeScanner("esp32", "esp32", connector, True)
+    details = scanner.details
+    assert details == HaScannerDetails(
+        source=scanner.source,
+        connectable=scanner.connectable,
+        name=scanner.name,
+        adapter=scanner.adapter,
+    )
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    scanner.inject_advertisement(sensor_push_device, sensor_push_device_adv)
+
+    data = scanner.discovered_devices_and_advertisement_data
+    discovered_device, discovered_adv_data = data[sensor_push_device.address]
+    assert discovered_device.address == sensor_push_device.address
+    assert discovered_device.name == sensor_push_device.name
+    assert (
+        discovered_adv_data.manufacturer_data
+        == sensor_push_device_adv.manufacturer_data
+    )
+    assert discovered_adv_data.service_data == sensor_push_device_adv.service_data
+    assert discovered_adv_data.service_uuids == sensor_push_device_adv.service_uuids
+    scanner.inject_advertisement(sensor_push_device, sensor_push_adv_2)
+
+    data = scanner.discovered_devices_and_advertisement_data
+    discovered_device, discovered_adv_data = data[sensor_push_device.address]
+    assert discovered_device.address == sensor_push_device.address
+    assert discovered_device.name == sensor_push_device.name
+    assert discovered_adv_data.manufacturer_data == {
+        **sensor_push_device_adv.manufacturer_data,
+        **sensor_push_adv_2.manufacturer_data,
+    }
+    assert discovered_adv_data.service_data == {}
+    assert set(discovered_adv_data.service_uuids) == {
+        *sensor_push_device_adv.service_uuids
+    }
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_merge_manufacturer_data_history_new() -> None:
+    """Test merging manufacturer data history."""
+    manager = get_manager()
+
+    sensor_push_device = generate_ble_device(
+        "44:44:33:11:23:45",
+        "",
+        {},
+        rssi=-60,
+    )
+    sensor_push_device_adv = generate_advertisement_data(
+        local_name="",
+        rssi=-60,
+        manufacturer_data={
+            64256: b"B\r.\xa9\xb6",
+            31488: b"\x98\xfa\xb6\x91\xb6",
+        },
+        service_uuids=["ef090000-11d6-42ba-93b8-9dd7ec090ab0"],
+        service_data={},
+    )
+
+    sensor_push_adv_2 = generate_advertisement_data(
+        local_name="",
+        service_uuids=["ef090000-11d6-42ba-93b8-9dd7ec090ab0"],
+        service_data={},
+        manufacturer_data={
+            21248: b"\xb9\xe9\xe1\xb9\xb6",
+        },
+        rssi=-100,
+    )
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = FakeScanner("esp32", "esp32", connector, True)
+    details = scanner.details
+    assert details == HaScannerDetails(
+        source=scanner.source,
+        connectable=scanner.connectable,
+        name=scanner.name,
+        adapter=scanner.adapter,
+    )
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    scanner.inject_advertisement(sensor_push_device, sensor_push_device_adv)
+
+    data = scanner.discovered_devices_and_advertisement_data
+    discovered_device, discovered_adv_data = data[sensor_push_device.address]
+    assert discovered_device.address == sensor_push_device.address
+    assert discovered_device.name == sensor_push_device.name
+    assert (
+        discovered_adv_data.manufacturer_data
+        == sensor_push_device_adv.manufacturer_data
+    )
+    assert discovered_adv_data.service_data == sensor_push_device_adv.service_data
+    assert discovered_adv_data.service_uuids == sensor_push_device_adv.service_uuids
+    scanner.inject_advertisement(sensor_push_device, sensor_push_adv_2)
+
+    data = scanner.discovered_devices_and_advertisement_data
+    discovered_device, discovered_adv_data = data[sensor_push_device.address]
+    assert discovered_device.address == sensor_push_device.address
+    assert discovered_device.name == sensor_push_device.name
+    assert discovered_adv_data.manufacturer_data == {
+        **sensor_push_device_adv.manufacturer_data,
+        **sensor_push_adv_2.manufacturer_data,
+    }
+    assert discovered_adv_data.service_data == {}
+    assert set(discovered_adv_data.service_uuids) == {
+        *sensor_push_device_adv.service_uuids
+    }
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_filter_apple_data() -> None:
+    """Test filtering apple data accepts bytes that start with 01."""
+    manager = get_manager()
+
+    device = generate_ble_device(
+        "44:44:33:11:23:45",
+        "",
+        {},
+        rssi=-60,
+    )
+    device_adv = generate_advertisement_data(
+        local_name="",
+        rssi=-60,
+        manufacturer_data={
+            76: b"\x01\r.\xa9\xb6",
+        },
+        service_uuids=["ef090000-11d6-42ba-93b8-9dd7ec090ab0"],
+        service_data={},
+    )
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = FakeScanner("esp32", "esp32", connector, True)
+    details = scanner.details
+    assert details == HaScannerDetails(
+        source=scanner.source,
+        connectable=scanner.connectable,
+        name=scanner.name,
+        adapter=scanner.adapter,
+    )
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    scanner.inject_advertisement(device, device_adv)
+
+    data = scanner.discovered_devices_and_advertisement_data
+    discovered_device, discovered_adv_data = data[device.address]
+    assert discovered_device.address == device.address
+    assert discovered_device.name == device.name
+    assert discovered_adv_data.manufacturer_data == device_adv.manufacturer_data
+    unsetup()
+    cancel()
+
+
+@pytest.mark.usefixtures("register_hci0_scanner")
+def test_connection_history_count_in_progress() -> None:
+    """Test connection history in process counting."""
+    manager = get_manager()
+    device1_address = "44:44:33:11:23:12"
+    device2_address = "44:44:33:11:23:13"
+    hci0_scanner = manager.async_scanner_by_source(HCI0_SOURCE_ADDRESS)
+    assert hci0_scanner is not None
+    hci0_scanner._add_connecting(device1_address)
+    assert hci0_scanner._connections_in_progress() == 1
+    hci0_scanner._add_connecting(device1_address)
+    hci0_scanner._add_connecting(device2_address)
+    assert hci0_scanner._connections_in_progress() == 3
+    hci0_scanner._finished_connecting(device1_address, True)
+    assert hci0_scanner._connections_in_progress() == 2
+    hci0_scanner._finished_connecting(device1_address, False)
+    assert hci0_scanner._connections_in_progress() == 1
+    hci0_scanner._finished_connecting(device2_address, False)
+    assert hci0_scanner._connections_in_progress() == 0
+
+
+@pytest.mark.usefixtures("register_hci0_scanner")
+def test_connection_history_failure_count(caplog: pytest.LogCaptureFixture) -> None:
+    """Test connection history failure count."""
+    manager = get_manager()
+    device1_address = "44:44:33:11:23:12"
+    device2_address = "44:44:33:11:23:13"
+    hci0_scanner = manager.async_scanner_by_source(HCI0_SOURCE_ADDRESS)
+    assert hci0_scanner is not None
+    hci0_scanner._add_connecting(device1_address)
+    hci0_scanner._finished_connecting(device1_address, False)
+    assert hci0_scanner._connection_failures(device1_address) == 1
+    hci0_scanner._add_connecting(device1_address)
+    hci0_scanner._add_connecting(device2_address)
+    hci0_scanner._finished_connecting(device1_address, False)
+    assert hci0_scanner._connection_failures(device1_address) == 2
+    hci0_scanner._finished_connecting(device2_address, False)
+    assert hci0_scanner._connection_failures(device2_address) == 1
+    hci0_scanner._add_connecting(device1_address)
+    hci0_scanner._finished_connecting(device1_address, True)
+    # On success, we should reset the failure count
+    assert hci0_scanner._connection_failures(device1_address) == 0
+
+    assert "Removing a non-existing connecting" not in caplog.text
+    hci0_scanner._finished_connecting(device1_address, True)
+    assert "Removing a non-existing connecting" in caplog.text

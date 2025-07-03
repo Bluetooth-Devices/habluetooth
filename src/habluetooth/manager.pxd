@@ -5,7 +5,7 @@ from .base_scanner cimport BaseHaScanner
 from .models cimport BluetoothServiceInfoBleak
 
 cdef int NO_RSSI_VALUE
-cdef int RSSI_SWITCH_THRESHOLD
+cdef int ADV_RSSI_SWITCH_THRESHOLD
 cdef double TRACKER_BUFFERING_WOBBLE_SECONDS
 cdef double FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
 cdef object FILTER_UUIDS
@@ -13,6 +13,12 @@ cdef object AdvertisementData
 cdef object BLEDevice
 cdef bint TYPE_CHECKING
 cdef set APPLE_START_BYTES_WANTED
+
+cdef unsigned char APPLE_IBEACON_START_BYTE
+cdef unsigned char APPLE_HOMEKIT_START_BYTE
+cdef unsigned char APPLE_HOMEKIT_NOTIFY_START_BYTE
+cdef unsigned char APPLE_DEVICE_ID_START_BYTE
+cdef unsigned char APPLE_FINDMY_START_BYTE
 
 cdef object APPLE_MFR_ID
 
@@ -27,6 +33,7 @@ cdef class BleakCallback:
 
     cdef public object callback
     cdef public dict filters
+
 
 cdef class BluetoothManager:
 
@@ -50,11 +57,17 @@ cdef class BluetoothManager:
     cdef public object _loop
     cdef public object _adapter_refresh_future
     cdef public object _recovery_lock
+    cdef public set _disappeared_callbacks
+    cdef public dict _allocations_callbacks
+    cdef public object _cancel_allocation_callbacks
+    cdef public dict _adapter_sources
+    cdef public dict _allocations
+    cdef public dict _scanner_registration_callbacks
+    cdef public object _subclass_discover_info
 
-    @cython.locals(stale_seconds=float)
+    @cython.locals(stale_seconds=double)
     cdef bint _prefer_previous_adv_from_different_source(
         self,
-        object address,
         BluetoothServiceInfoBleak old,
         BluetoothServiceInfoBleak new
     )
@@ -66,7 +79,7 @@ cdef class BluetoothManager:
         connectable=bint,
         scanner=BaseHaScanner,
         connectable_scanner=BaseHaScanner,
-        apple_data=bytes,
+        apple_cstr="const unsigned char *",
         bleak_callback=BleakCallback
     )
     cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)

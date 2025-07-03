@@ -10,8 +10,6 @@ import pytest
 from bleak import BleakError
 from bleak.backends.scanner import AdvertisementDataCallback
 from bleak_retry_connector import BleakSlotManager
-from bluetooth_adapters import BluetoothAdapters
-from dbus_fast import InvalidMessageError
 
 from habluetooth import (
     SCANNER_WATCHDOG_INTERVAL,
@@ -23,6 +21,7 @@ from habluetooth import (
     scanner,
     set_manager,
 )
+from habluetooth.scanner import InvalidMessageError
 
 from . import (
     async_fire_time_changed,
@@ -31,6 +30,7 @@ from . import (
     patch_bluetooth_time,
     utcnow,
 )
+from .conftest import FakeBluetoothAdapters
 
 IS_WINDOWS = 'os.name == "nt"'
 IS_POSIX = 'os.name == "posix"'
@@ -51,7 +51,7 @@ NEED_RESET_ERRORS = [
 @pytest.fixture(autouse=True, scope="module")
 def manager():
     """Return the BluetoothManager instance."""
-    adapters = BluetoothAdapters()
+    adapters = FakeBluetoothAdapters()
     slot_manager = BleakSlotManager()
     manager = BluetoothManager(adapters, slot_manager)
     set_manager(manager)
@@ -451,6 +451,12 @@ async def test_adapter_recovery() -> None:
             await asyncio.sleep(0)
 
         assert len(mock_recover_adapter.mock_calls) == 1
+        assert mock_recover_adapter.call_args_list[0][0] == (
+            0,
+            "AA:BB:CC:DD:EE:FF",
+            True,
+        )
+
         assert called_start == 2
         await scanner.async_stop()
 
@@ -837,6 +843,7 @@ async def test_adapter_init_fails_fallback_to_passive(
         )
         assert await scanner.async_diagnostics() == {
             "adapter": "hci0",
+            "connectable": True,
             "current_mode": BluetoothScanningMode.PASSIVE,
             "discovered_devices_and_advertisement_data": [],
             "last_detection": ANY,
@@ -851,6 +858,7 @@ async def test_adapter_init_fails_fallback_to_passive(
         await scanner.async_stop()
         assert await scanner.async_diagnostics() == {
             "adapter": "hci0",
+            "connectable": True,
             "current_mode": BluetoothScanningMode.PASSIVE,
             "discovered_devices_and_advertisement_data": [],
             "last_detection": ANY,

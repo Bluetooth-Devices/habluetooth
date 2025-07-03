@@ -1,3 +1,4 @@
+import cython
 
 cdef object BLEDevice
 cdef object AdvertisementData
@@ -7,7 +8,9 @@ cdef object _int
 cdef object _str
 cdef object _BluetoothServiceInfoBleakSelfT
 cdef object _BluetoothServiceInfoSelfT
+cdef object NO_RSSI_VALUE
 
+cdef object TUPLE_NEW
 
 cdef class BluetoothServiceInfo:
     """Prepared info from bluetooth entries."""
@@ -29,3 +32,9 @@ cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     cdef public bint connectable
     cdef public double time
     cdef public object tx_power
+    cdef public bytes raw
+
+    @cython.locals(new_obj=BluetoothServiceInfoBleak)
+    cpdef BluetoothServiceInfoBleak _as_connectable(self)
+
+    cdef object _advertisement_internal(self)

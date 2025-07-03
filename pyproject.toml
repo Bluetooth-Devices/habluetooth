@@ -1,18 +1,29 @@
-[tool.poetry]
+[build-system]
+requires = ['setuptools>=77.0', 'Cython>=3,<3.1', "poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
 name = "habluetooth"
-version = "3.6.0"
+version = "3.49.0"
+license = "Apache-2.0"
 description = "High availability Bluetooth"
-authors = ["J. Nick Koston <bluetooth@koston.org>"]
+authors = [{ name = "J. Nick Koston", email = "bluetooth@koston.org" }]
 readme = "README.md"
-repository = "https://github.com/bluetooth-devices/habluetooth"
-documentation = "https://habluetooth.readthedocs.io"
+requires-python = ">=3.11"
+
+[project.urls]
+"Repository" = "https://github.com/bluetooth-devices/habluetooth"
+"Documentation" = "https://habluetooth.readthedocs.io"
+"Bug Tracker" = "https://github.com/bluetooth-devices/habluetooth/issues"
+"Changelog" = "https://github.com/bluetooth-devices/habluetooth/blob/main/CHANGELOG.md"
+
+[tool.poetry]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Topic :: Software Development :: Libraries",
-    "License :: OSI Approved :: Apache Software License",
 ]
 packages = [
     { include = "habluetooth", from = "src" },
@@ -22,24 +33,23 @@ packages = [
 generate-setup-file = true
 script = "build_ext.py"
 
-[tool.poetry.urls]
-"Bug Tracker" = "https://github.com/bluetooth-devices/habluetooth/issues"
-"Changelog" = "https://github.com/bluetooth-devices/habluetooth/blob/main/CHANGELOG.md"
-
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
 bleak = ">=0.21.1"
-bleak-retry-connector = ">=3.3.0"
-bluetooth-data-tools = ">=1.16.0"
+bleak-retry-connector = ">=3.9.0"
+bluetooth-data-tools = ">=1.28.0"
 bluetooth-adapters = ">=0.16.1"
-bluetooth-auto-recovery = ">=1.2.3"
+bluetooth-auto-recovery = ">=1.5.1"
 async-interrupt = ">=1.1.1"
+dbus-fast = { version = ">=2.30.2", markers = "platform_system == 'Linux'" }
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7.0"
-pytest-cov = "^3.0"
-pytest-asyncio = "^0.23.6"
-pytest-codspeed = "^2.2.1"
+pytest = ">=7,<9"
+pytest-cov = ">=3,<7"
+pytest-asyncio = ">=0.23.6,<1.1.0"
+pytest-codspeed = ">=2.2.1,<4.0.0"
+freezegun = "^1.5.2"
+dbus-fast = ">=2.30.2"
 
 [tool.poetry.group.docs]
 optional = true
@@ -51,7 +61,7 @@ furo = ">=2023.5.20"
 sphinx-autobuild = ">=2021.3.14"
 
 [tool.semantic_release]
-version_toml = ["pyproject.toml:tool.poetry.version"]
+version_toml = ["pyproject.toml:project.version"]
 version_variables = [
     "src/habluetooth/__init__.py:__version__",
     "docs/conf.py:release",
@@ -155,7 +165,3 @@ allow_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "docs.*"
 ignore_errors = true
-
-[build-system]
-requires = ['setuptools>=65.4.1', 'Cython>=3', "poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
