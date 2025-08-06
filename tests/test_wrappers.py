@@ -1103,3 +1103,88 @@ async def test_client_with_none_services(
 
     cancel_hci0()
     cancel_hci1()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_passive_only_scanner_error_message() -> None:
+    """Test error message when all scanners are passive-only (like Shelly)."""
+    manager = _get_manager()
+    # Register a passive-only scanner (connectable=False)
+    scanner = FakeScanner(
+        "passive_scanner_1", "shelly_plus1pm_e86bea01020c", None, False
+    )
+    cancel = manager.async_register_scanner(scanner)
+
+    # Inject an advertisement from this passive scanner
+    device = generate_ble_device(
+        "00:00:00:00:00:01", "Test Device", {"source": "passive_scanner_1"}
+    )
+    adv_data = generate_advertisement_data(
+        local_name="Test Device",
+        service_uuids=[],
+        rssi=-50,
+    )
+    scanner.inject_advertisement(device, adv_data)
+    await asyncio.sleep(0)  # Let the advertisement be processed
+
+    # Try to connect - should fail with our custom error message
+    client = bleak.BleakClient("00:00:00:00:00:01")
+    with pytest.raises(
+        BleakError,
+        match=(
+            "00:00:00:00:00:01: No connectable Bluetooth adapters. "
+            "Shelly devices are passive-only and cannot connect. "
+            "Need local Bluetooth adapter or ESPHome proxy. "
+            "Available: shelly_plus1pm_e86bea01020c \\(passive_scanner_1\\)"
+        ),
+    ):
+        await client.connect()
+
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_passive_scanner_with_active_scanner() -> None:
+    """Test normal error when there's a mix of passive and active scanners."""
+    manager = _get_manager()
+    # Register a passive-only scanner
+    passive_scanner = FakeScanner("passive_scanner", "shelly_device", None, False)
+    cancel_passive = manager.async_register_scanner(passive_scanner)
+
+    # Register an active scanner with no available slots
+    active_scanner = FakeScanner("active_scanner", "esphome_device", None, True)
+    cancel_active = manager.async_register_scanner(active_scanner)
+
+    # Inject advertisements from both scanners
+    device1 = generate_ble_device(
+        "00:00:00:00:00:02", "Test Device", {"source": "passive_scanner"}
+    )
+    device2 = generate_ble_device(
+        "00:00:00:00:00:02", "Test Device", {"source": "active_scanner"}
+    )
+    adv_data = generate_advertisement_data(
+        local_name="Test Device",
+        service_uuids=[],
+        rssi=-50,
+    )
+    passive_scanner.inject_advertisement(device1, adv_data)
+    active_scanner.inject_advertisement(device2, adv_data)
+    await asyncio.sleep(0)  # Let the advertisements be processed
+
+    # Mock the slot allocation to fail (simulating no available slots)
+    with patch.object(manager.slot_manager, "allocate_slot", return_value=False):
+        # Should get the normal "no available slot" error, not the passive-only error
+        client = bleak.BleakClient("00:00:00:00:00:02")
+        with pytest.raises(
+            BleakError,
+            match=(
+                "No backend with an available connection slot that can reach "
+                "address 00:00:00:00:00:02 was found"
+            ),
+        ):
+            await client.connect()
+
+    cancel_passive()
+    cancel_active()
