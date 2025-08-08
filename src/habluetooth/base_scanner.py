@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import warnings
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Final, Iterable, final
+from typing import TYPE_CHECKING, Any, Final, final
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
@@ -461,7 +461,6 @@ class BaseHaScanner:
                 address,
                 local_name,
                 {**self._details, **details},
-                rssi,  # deprecated, will be removed in newer bleak
             )
             info.manufacturer_data = manufacturer_data
             info.service_data = service_data
@@ -480,10 +479,6 @@ class BaseHaScanner:
             # change.
             #
             # https://github.com/hbldh/bleak/blob/222618b7747f0467dbb32bd3679f8cfaa19b1668/bleak/backends/scanner.py#L203
-            #
-            # _rssi is deprecated, will be removed in newer bleak
-            # pylint: disable-next=protected-access
-            info.device._rssi = rssi
             if prev_name is not None and (
                 prev_name is local_name
                 or not local_name
@@ -635,6 +630,10 @@ class BaseHaRemoteScanner(BaseHaScanner):
         discovered_device_timestamps = self._build_discovered_device_timestamps()
         return await super().async_diagnostics() | {
             "discovered_device_timestamps": discovered_device_timestamps,
+            "raw_advertisement_data": {
+                address: info.raw
+                for address, info in self._previous_service_info.items()
+            },
             "time_since_last_device_detection": {
                 address: now - timestamp
                 for address, timestamp in discovered_device_timestamps.items()

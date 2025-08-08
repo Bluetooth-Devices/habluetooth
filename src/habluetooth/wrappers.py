@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final, Literal, overload
 
-from bleak import BleakClient, BleakError
+from bleak import BleakClient, BleakError, normalize_uuid_str
 from bleak.backends.client import BaseBleakClient, get_platform_client_backend_type
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import (
@@ -205,8 +205,10 @@ class HaBleakClientWrapper(BleakClient):
         self,
         address_or_ble_device: str | BLEDevice,
         disconnected_callback: Callable[[BleakClient], None] | None = None,
-        *args: Any,
+        services: list[str] | None = None,
+        *,
         timeout: float = 10.0,
+        pair: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the BleakClient."""
@@ -219,7 +221,9 @@ class HaBleakClientWrapper(BleakClient):
         self.__disconnected_callback = disconnected_callback
         self.__manager = get_manager()
         self.__timeout = timeout
+        self.__services = services
         self._backend: BaseBleakClient | None = None
+        self._pair_before_connect = pair
 
     @property
     def is_connected(self) -> bool:
@@ -264,8 +268,10 @@ class HaBleakClientWrapper(BleakClient):
         """
         return None if callback is None else partial(callback, self)
 
-    async def connect(self, **kwargs: Any) -> bool:
+    async def connect(self, **kwargs: Any) -> None:
         """Connect to the specified GATT server."""
+        if self.is_connected:
+            return
         manager = self.__manager
         if manager.shutdown:
             raise BleakError("Bluetooth is already shutdown")
@@ -278,6 +284,11 @@ class HaBleakClientWrapper(BleakClient):
             device,
             disconnected_callback=self._make_disconnected_callback(
                 self.__disconnected_callback
+            ),
+            services=(
+                None
+                if self.__services is None
+                else set(map(normalize_uuid_str, self.__services))
             ),
             timeout=self.__timeout,
         )
@@ -298,7 +309,12 @@ class HaBleakClientWrapper(BleakClient):
         address = device.address
         try:
             scanner._add_connecting(address)
-            connected = await super().connect(**kwargs)
+            await super().connect(**kwargs)
+            connected = True
+        except Exception:
+            # Connection failed, ensure we clean up
+            self._backend = None
+            raise
         finally:
             scanner._finished_connecting(address, connected)
             # If we failed to connect and its a local adapter (no source)
@@ -314,7 +330,7 @@ class HaBleakClientWrapper(BleakClient):
                 scanner.name,
                 rssi,
             )
-        return connected
+        return
 
     def _async_get_backend_for_ble_device(
         self, manager: BluetoothManager, scanner: BaseHaScanner, ble_device: BLEDevice
@@ -385,13 +401,28 @@ class HaBleakClientWrapper(BleakClient):
             ):
                 return backend
 
+        # Check if all registered scanners are passive-only
+        if scanners := manager.async_current_scanners():
+            has_active_capable_scanner = any(
+                scanner.connectable for scanner in scanners
+            )
+
+            if not has_active_capable_scanner:
+                scanner_names = [scanner.name for scanner in scanners]
+                raise BleakError(
+                    f"{address}: No connectable Bluetooth adapters. "
+                    f"Shelly devices are passive-only and cannot connect. "
+                    f"Need local Bluetooth adapter or ESPHome proxy. "
+                    f"Available: {', '.join(scanner_names)}"
+                )
+
         raise BleakError(
             "No backend with an available connection slot that can reach address"
             f" {address} was found"
         )
 
-    async def disconnect(self) -> bool:
+    async def disconnect(self) -> None:
         """Disconnect from the device."""
         if self._backend is None:
-            return True
-        return await self._backend.disconnect()
+            return
+        await self._backend.disconnect()

@@ -1,9 +1,10 @@
 import asyncio
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import partial
-from typing import Any, Generator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from bleak.backends.scanner import AdvertisementData, BLEDevice
@@ -11,7 +12,7 @@ from bleak.backends.scanner import AdvertisementData, BLEDevice
 from habluetooth import get_manager
 from habluetooth.models import BluetoothServiceInfoBleak
 
-utcnow = partial(datetime.now, timezone.utc)
+utcnow = partial(datetime.now, UTC)
 
 HCI0_SOURCE_ADDRESS = "AA:BB:CC:DD:EE:00"
 HCI1_SOURCE_ADDRESS = "AA:BB:CC:DD:EE:11"
@@ -32,7 +33,6 @@ ADVERTISEMENT_DATA_DEFAULTS = {
 
 BLE_DEVICE_DEFAULTS = {
     "name": None,
-    "rssi": -127,
     "details": None,
 }
 
@@ -49,7 +49,6 @@ def generate_ble_device(
     address: str | None = None,
     name: str | None = None,
     details: Any | None = None,
-    rssi: int | None = None,
     **kwargs: Any,
 ) -> BLEDevice:
     """Generate a BLEDevice with defaults."""
@@ -60,8 +59,6 @@ def generate_ble_device(
         new["name"] = name
     if details is not None:
         new["details"] = details
-    if rssi is not None:
-        new["rssi"] = rssi
     for key, value in BLE_DEVICE_DEFAULTS.items():
         new.setdefault(key, value)
     return BLEDevice(**new)

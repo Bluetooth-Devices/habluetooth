@@ -207,7 +207,7 @@ async def test_remote_scanner(name_2: str | None) -> None:
 
     scanner.inject_raw_advertisement(
         switchbot_device_2.address,
-        switchbot_device_2.rssi,
+        0,
         b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x04",
     )
 

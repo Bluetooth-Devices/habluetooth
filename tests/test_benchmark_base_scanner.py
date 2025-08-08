@@ -44,7 +44,6 @@ async def test_inject_100_simple_advertisements(benchmark: BenchmarkFixture) -> 
     cancel = manager.async_register_scanner(scanner)
 
     _address = switchbot_device.address
-    _rssi = switchbot_device_adv.rssi
     _name = switchbot_device.name
     _service_uuids = switchbot_device_adv.service_uuids
     _service_data = switchbot_device_adv.service_data
@@ -58,7 +57,7 @@ async def test_inject_100_simple_advertisements(benchmark: BenchmarkFixture) -> 
         for _ in range(100):
             scanner._async_on_advertisement(
                 _address,
-                _rssi,
+                -100,  # rssi
                 _name,
                 _service_uuids,
                 _service_data,
@@ -100,7 +99,6 @@ async def test_inject_100_complex_advertisements(benchmark: BenchmarkFixture) ->
     cancel = manager.async_register_scanner(scanner)
 
     _address = switchbot_device.address
-    _rssi = switchbot_device_adv.rssi
     _name = switchbot_device.name
     _service_uuids = switchbot_device_adv.service_uuids
     _service_data = switchbot_device_adv.service_data
@@ -114,7 +112,7 @@ async def test_inject_100_complex_advertisements(benchmark: BenchmarkFixture) ->
         for _ in range(100):
             scanner._async_on_advertisement(
                 _address,
-                _rssi,
+                -100,  # rssi
                 _name,
                 _service_uuids,
                 _service_data,
@@ -160,7 +158,6 @@ async def test_inject_100_different_advertisements(benchmark: BenchmarkFixture) 
     cancel = manager.async_register_scanner(scanner)
 
     _address = switchbot_device.address
-    _rssi = switchbot_device_adv.rssi
     _name = switchbot_device.name
     _service_uuids = switchbot_device_adv.service_uuids
     _service_data = switchbot_device_adv.service_data
@@ -173,7 +170,7 @@ async def test_inject_100_different_advertisements(benchmark: BenchmarkFixture) 
         for adv in advs:
             scanner._async_on_advertisement(
                 _address,
-                _rssi,
+                -100,  # rssi
                 _name,
                 _service_uuids,
                 _service_data,
@@ -221,7 +218,6 @@ async def test_inject_100_different_manufacturer_data(
     cancel = manager.async_register_scanner(scanner)
 
     _address = switchbot_device.address
-    _rssi = switchbot_device_adv.rssi
     _name = switchbot_device.name
     _service_uuids = switchbot_device_adv.service_uuids
     _service_data = switchbot_device_adv.service_data
@@ -234,7 +230,7 @@ async def test_inject_100_different_manufacturer_data(
         for adv in advs:
             scanner._async_on_advertisement(
                 _address,
-                _rssi,
+                -100,  # rssi
                 _name,
                 _service_uuids,
                 _service_data,
@@ -282,7 +278,6 @@ async def test_inject_100_different_service_data(
     cancel = manager.async_register_scanner(scanner)
 
     _address = switchbot_device.address
-    _rssi = switchbot_device_adv.rssi
     _name = switchbot_device.name
     _service_uuids = switchbot_device_adv.service_uuids
     _service_data = switchbot_device_adv.service_data
@@ -295,7 +290,7 @@ async def test_inject_100_different_service_data(
         for adv in advs:
             scanner._async_on_advertisement(
                 _address,
-                _rssi,
+                -100,  # rssi
                 _name,
                 _service_uuids,
                 _service_data,
@@ -597,7 +592,7 @@ async def test_inject_100_rotating_manufacturer_data(
 
     scanner._async_on_advertisement(
         sensor_push_device.address,
-        sensor_push_device.rssi,
+        -100,  # rssi
         sensor_push_device.name,
         sensor_push_device_adv.service_uuids,
         sensor_push_device_adv.service_data,
@@ -620,7 +615,6 @@ async def test_inject_100_rotating_manufacturer_data(
         advs.append(sensorpush_device_adv)
 
     _address = sensor_push_device.address
-    _rssi = sensorpush_device_adv.rssi
     _name = sensor_push_device.name
     _service_uuids = sensorpush_device_adv.service_uuids
     _service_data = sensorpush_device_adv.service_data
@@ -633,7 +627,7 @@ async def test_inject_100_rotating_manufacturer_data(
         for adv in advs:
             scanner._async_on_advertisement(
                 _address,
-                _rssi,
+                -100,  # rssi
                 _name,
                 _service_uuids,
                 _service_data,
@@ -674,7 +668,6 @@ async def test_filter_unwanted_apple_advs(benchmark: BenchmarkFixture) -> None:
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
     _address = device.address
-    _rssi = device.rssi
     _name = device.name
     _service_uuids = device_adv.service_uuids
     _service_data = device_adv.service_data
@@ -688,7 +681,7 @@ async def test_filter_unwanted_apple_advs(benchmark: BenchmarkFixture) -> None:
         for _ in range(100):
             scanner._async_on_advertisement(
                 _address,
-                _rssi,
+                -100,  # rssi
                 _name,
                 _service_uuids,
                 _service_data,
@@ -730,7 +723,6 @@ async def test_filter_wanted_apple_advs(benchmark: BenchmarkFixture) -> None:
     cancel = manager.async_register_scanner(scanner)
 
     _address = device.address
-    _rssi = device.rssi
     _name = device.name
     _service_uuids = device_adv.service_uuids
     _service_data = device_adv.service_data
@@ -744,7 +736,7 @@ async def test_filter_wanted_apple_advs(benchmark: BenchmarkFixture) -> None:
         for _ in range(100):
             scanner._async_on_advertisement(
                 _address,
-                _rssi,
+                -100,  # rssi
                 _name,
                 _service_uuids,
                 _service_data,

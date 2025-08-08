@@ -84,13 +84,11 @@ def test__async_on_advertisement():
         "AA:BB:CC:DD:EE:FF",
         "name",
         details,
-        -21,
     )
     first_device = scanner.discovered_devices[0]
     assert first_device.address == ble_device.address
     assert first_device.details == ble_device.details
     assert first_device.name == ble_device.name
-    assert first_device.rssi == ble_device.rssi
     assert "AA:BB:CC:DD:EE:FF" in scanner.discovered_devices_and_advertisement_data
     adv = scanner.discovered_devices_and_advertisement_data["AA:BB:CC:DD:EE:FF"][1]
     assert set(adv.service_data) == {"service_uuid", "service_uuid2"}
@@ -112,10 +110,8 @@ def test__async_on_advertisement():
     assert len(scanner.discovered_devices) == 1
     assert scanner.discovered_devices[0].address == "AA:BB:CC:DD:EE:FF"
     assert len(scanner.discovered_devices_and_advertisement_data) == 1
-    assert (
-        scanner.discovered_devices_and_advertisement_data["AA:BB:CC:DD:EE:FF"][0].rssi
-        == -21
-    )
+    # BLEDevice no longer has rssi attribute in bleak 1.0+
+    # rssi is only available in AdvertisementData
     assert (
         scanner.discovered_devices_and_advertisement_data["AA:BB:CC:DD:EE:FF"][1].rssi
         == -21

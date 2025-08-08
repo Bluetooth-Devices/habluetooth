@@ -54,7 +54,7 @@ class BLEDeviceDict(TypedDict):
 
     address: str
     name: str | None
-    rssi: int | None
+    rssi: int | None  # Kept for backward compatibility
     details: dict[str, Any]
 
 
@@ -195,7 +195,7 @@ def _deserialize_discovered_device_advertisement_datas(
     """Deserialize discovered_device_advertisement_datas."""
     return {
         address: (
-            BLEDevice(**device_advertisement_data["device"]),
+            _ble_device_from_dict(device_advertisement_data["device"]),
             _advertisement_data_from_dict(
                 device_advertisement_data["advertisement_data"]
             ),
@@ -207,6 +207,14 @@ def _deserialize_discovered_device_advertisement_datas(
     }
 
 
+def _ble_device_from_dict(device_dict: BLEDeviceDict) -> BLEDevice:
+    """Deserialize BLEDevice from dict, handling backward compatibility."""
+    # Remove rssi from dict as BLEDevice no longer accepts it in bleak 1.x
+    device_data = device_dict.copy()
+    device_data.pop("rssi", None)  # type: ignore[misc]  # Remove rssi if present (backward compatibility)
+    return BLEDevice(**device_data)
+
+
 def _ble_device_to_dict(
     ble_device: BLEDevice, advertisement_data: AdvertisementData
 ) -> BLEDeviceDict:
@@ -214,7 +222,7 @@ def _ble_device_to_dict(
     return BLEDeviceDict(
         address=ble_device.address,
         name=ble_device.name,
-        rssi=advertisement_data.rssi,  # For backwards compatibility
+        rssi=advertisement_data.rssi,  # For backward compatibility
         details=ble_device.details,
     )
 
