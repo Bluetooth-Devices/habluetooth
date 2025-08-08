@@ -47,6 +47,7 @@ if platform.system() == "Linux":
     # On Linux, use the real BlueZScannerArgs to avoid mocking issues
     from bleak.args.bluez import BlueZScannerArgs, OrPattern
     from bleak.assigned_numbers import AdvertisementDataType
+
     scanner.PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
         or_patterns=[
             OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
