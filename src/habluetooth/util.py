@@ -38,5 +38,5 @@ def create_eager_task(
         coro,
         loop=loop or asyncio.get_running_loop(),
         name=name,
-        eager_start=True,  # type: ignore[call-arg]
+        eager_start=True,
     )
