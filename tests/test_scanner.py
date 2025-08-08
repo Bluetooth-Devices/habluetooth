@@ -47,6 +47,7 @@ if platform.system() == "Linux":
     # On Linux, use the real BlueZScannerArgs to avoid mocking issues
     from bleak.args.bluez import BlueZScannerArgs, OrPattern
     from bleak.assigned_numbers import AdvertisementDataType
+
     scanner.PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
         or_patterns=[
             OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
@@ -190,6 +191,7 @@ async def test_handle_stop_while_starting(caplog: pytest.LogCaptureFixture) -> N
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         task = asyncio.create_task(scanner.async_start())
+        await asyncio.sleep(0)
         await asyncio.sleep(0)
         await scanner.async_stop()
         with pytest.raises(
