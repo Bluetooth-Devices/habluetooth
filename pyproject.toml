@@ -9,7 +9,7 @@ license = "Apache-2.0"
 description = "High availability Bluetooth"
 authors = [{ name = "J. Nick Koston", email = "bluetooth@koston.org" }]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 [project.urls]
 "Repository" = "https://github.com/bluetooth-devices/habluetooth"
@@ -34,13 +34,12 @@ generate-setup-file = true
 script = "build_ext.py"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.14"
+python = ">=3.12,<3.14"
 bleak = ">=1.0.1"
 bleak-retry-connector = ">=4"
 bluetooth-data-tools = ">=1.28.0"
 bluetooth-adapters = ">=2"
 bluetooth-auto-recovery = ">=1.5.1"
-async-interrupt = ">=1.1.1"
 dbus-fast = { version = ">=2.30.2", markers = "platform_system == 'Linux'" }
 btsocket = ">=0.3.0"
 
