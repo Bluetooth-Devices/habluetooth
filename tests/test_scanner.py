@@ -42,7 +42,7 @@ NOT_POSIX = 'os.name != "posix"'
 # or_patterns is a workaround for the fact that passive scanning
 # needs at least one matcher to be set. The below matcher
 # will match all devices.
-scanner.PASSIVE_SCANNER_ARGS = Mock()
+scanner.PASSIVE_SCANNER_ARGS = Mock(filters={})
 # If the adapter is in a stuck state the following errors are raised:
 NEED_RESET_ERRORS = [
     "org.bluez.Error.Failed",
