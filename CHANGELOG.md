@@ -1,5 +1,13 @@
 # Changelog
 
+## v4.0.2 (2025-08-06)
+
+### Bug fixes
+
+
+- Add clear error when only passive bluetooth adapters are available ([`bbb494c`](https://github.com/Bluetooth-Devices/habluetooth/commit/bbb494c99bd87e8e090a922a28cf7e083b191bc4))
+
+
 ## v4.0.1 (2025-07-03)
 
 ### Bug fixes

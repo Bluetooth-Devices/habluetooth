@@ -401,6 +401,21 @@ class HaBleakClientWrapper(BleakClient):
             ):
                 return backend
 
+        # Check if all registered scanners are passive-only
+        if scanners := manager.async_current_scanners():
+            has_active_capable_scanner = any(
+                scanner.connectable for scanner in scanners
+            )
+
+            if not has_active_capable_scanner:
+                scanner_names = [scanner.name for scanner in scanners]
+                raise BleakError(
+                    f"{address}: No connectable Bluetooth adapters. "
+                    f"Shelly devices are passive-only and cannot connect. "
+                    f"Need local Bluetooth adapter or ESPHome proxy. "
+                    f"Available: {', '.join(scanner_names)}"
+                )
+
         raise BleakError(
             "No backend with an available connection slot that can reach address"
             f" {address} was found"
