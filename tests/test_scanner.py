@@ -193,6 +193,7 @@ async def test_handle_stop_while_starting(caplog: pytest.LogCaptureFixture) -> N
         task = asyncio.create_task(scanner.async_start())
         await asyncio.sleep(0)
         await asyncio.sleep(0)
+        await asyncio.sleep(0)
         await scanner.async_stop()
         with pytest.raises(
             ScannerStartError, match="Starting bluetooth scanner aborted"
