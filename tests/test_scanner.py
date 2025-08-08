@@ -1,6 +1,7 @@
 """Tests for the Bluetooth integration scanners."""
 
 import asyncio
+import platform
 import time
 from datetime import timedelta
 from typing import Any
@@ -42,7 +43,20 @@ NOT_POSIX = 'os.name != "posix"'
 # or_patterns is a workaround for the fact that passive scanning
 # needs at least one matcher to be set. The below matcher
 # will match all devices.
-scanner.PASSIVE_SCANNER_ARGS = Mock(filters={})
+if platform.system() == "Linux":
+    # On Linux, use the real BlueZScannerArgs to avoid mocking issues
+    from bleak.args.bluez import BlueZScannerArgs, OrPattern
+    from bleak.assigned_numbers import AdvertisementDataType
+    scanner.PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
+        or_patterns=[
+            OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
+            OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
+            OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
+        ]
+    )
+else:
+    # On other platforms, we can use a simple mock
+    scanner.PASSIVE_SCANNER_ARGS = Mock()
 # If the adapter is in a stuck state the following errors are raised:
 NEED_RESET_ERRORS = [
     "org.bluez.Error.Failed",
