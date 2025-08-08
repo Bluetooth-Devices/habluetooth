@@ -4,7 +4,8 @@ import asyncio
 import logging
 import socket
 from asyncio import timeout as asyncio_timeout
-from typing import TYPE_CHECKING, Callable, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, cast
 
 from btsocket import btmgmt_protocol, btmgmt_socket
 from btsocket.btmgmt_socket import BluetoothSocketError
@@ -161,7 +162,7 @@ class BluetoothMGMTProtocol:
 
     def _timeout_future(self, future: asyncio.Future[btmgmt_protocol.Response]) -> None:
         if future and not future.done():
-            future.set_exception(asyncio.TimeoutError("Timeout waiting for response"))
+            future.set_exception(TimeoutError("Timeout waiting for response"))
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Handle connection lost."""
@@ -239,7 +240,7 @@ class MGMTBluetoothCtl:
                     None,
                 )
                 await connection_made_future
-        except asyncio.TimeoutError:
+        except TimeoutError:
             btmgmt_socket.close(self.sock)
             raise
         _LOGGER.debug("Bluetooth management socket connection established")
