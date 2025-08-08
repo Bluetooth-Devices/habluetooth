@@ -40,9 +40,10 @@ def _get_device_address_type(device: BLEDevice) -> int:
         BDADDR_LE_RANDOM if the device has a random address, BDADDR_LE_PUBLIC otherwise
 
     """
+    details: dict[str, dict[str, Any]] = device.details
     return (
         BDADDR_LE_RANDOM
-        if device.details.get("props", {}).get("AddressType") == "random"
+        if details.get("props", {}).get("AddressType") == "random"
         else BDADDR_LE_PUBLIC
     )
 
@@ -322,15 +323,15 @@ class HaBleakClientWrapper(BleakClient):
             )
 
         # Load fast connection parameters before connecting if mgmt API is available
-        if (adapter_idx := scanner.adapter_idx) is not None and (
-            mgmt_ctl := manager.get_bluez_mgmt_ctl()
+        if (
+            (adapter_idx := scanner.adapter_idx) is not None
+            and (mgmt_ctl := manager.get_bluez_mgmt_ctl())
+            and mgmt_ctl.load_fast_conn_params(
+                adapter_idx, device.address, _get_device_address_type(device)
+            )
+            and debug_logging
         ):
-            address_type = _get_device_address_type(device)
-            if mgmt_ctl.load_fast_conn_params(
-                adapter_idx, device.address, address_type
-            ):
-                if debug_logging:
-                    _LOGGER.debug("%s: Loaded fast connection parameters", description)
+            _LOGGER.debug("%s: Loaded fast connection parameters", description)
         connected = False
         address = device.address
         try:
@@ -353,15 +354,12 @@ class HaBleakClientWrapper(BleakClient):
             connected
             and (adapter_idx := scanner.adapter_idx) is not None
             and (mgmt_ctl := manager.get_bluez_mgmt_ctl())
+            and mgmt_ctl.load_medium_conn_params(
+                adapter_idx, device.address, _get_device_address_type(device)
+            )
+            and debug_logging
         ):
-            address_type = _get_device_address_type(device)
-            if mgmt_ctl.load_medium_conn_params(
-                adapter_idx, device.address, address_type
-            ):
-                if debug_logging:
-                    _LOGGER.debug(
-                        "%s: Loaded medium connection parameters", description
-                    )
+            _LOGGER.debug("%s: Loaded medium connection parameters", description)
 
         if debug_logging:
             _LOGGER.debug(
