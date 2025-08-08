@@ -37,6 +37,10 @@ ADV_MONITOR_DEVICE_FOUND = 0x002F
 # Management commands
 MGMT_OP_LOAD_CONN_PARAM = 0x0035
 
+# Management events
+MGMT_EV_CMD_COMPLETE = 0x0001
+MGMT_EV_CMD_STATUS = 0x0002
+
 # Pre-compiled struct formats for performance
 COMMAND_HEADER = Struct("<HHH")
 COMMAND_HEADER_PACK = COMMAND_HEADER.pack
@@ -150,6 +154,25 @@ class BluetoothMGMTProtocol:
                 parse_offset = 6
             elif event_code == ADV_MONITOR_DEVICE_FOUND:
                 parse_offset = 8
+            elif event_code == MGMT_EV_CMD_COMPLETE or event_code == MGMT_EV_CMD_STATUS:
+                # Handle management command responses
+                if param_len >= 3:
+                    opcode = header[6] | (header[7] << 8)
+                    status = header[8]
+                    if opcode == MGMT_OP_LOAD_CONN_PARAM:
+                        if status == 0:
+                            _LOGGER.debug(
+                                "hci%u: Connection parameters loaded successfully",
+                                controller_idx,
+                            )
+                        else:
+                            _LOGGER.warning(
+                                "hci%u: Failed to load conn params: status=%d",
+                                controller_idx,
+                                status,
+                            )
+                self._remove_from_buffer()
+                continue
             else:
                 self._remove_from_buffer()
                 continue

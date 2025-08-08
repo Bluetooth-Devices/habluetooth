@@ -6,6 +6,9 @@ cdef bint TYPE_CHECKING
 
 cdef unsigned short DEVICE_FOUND
 cdef unsigned short ADV_MONITOR_DEVICE_FOUND
+cdef unsigned short MGMT_OP_LOAD_CONN_PARAM
+cdef unsigned short MGMT_EV_CMD_COMPLETE
+cdef unsigned short MGMT_EV_CMD_STATUS
 
 cdef class BluetoothMGMTProtocol:
 
@@ -38,6 +41,8 @@ cdef class BluetoothMGMTProtocol:
         flags="unsigned int",
         data="bytes",
         parse_offset="unsigned short",
-        scanner=HaScanner
+        scanner=HaScanner,
+        opcode="unsigned short",
+        status="unsigned char"
     )
     cpdef void data_received(self, object data) except *
