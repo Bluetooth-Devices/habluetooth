@@ -516,6 +516,16 @@ class BluetoothManager:
             return False
         return True
 
+    def get_bluez_mgmt_ctl(self) -> MGMTBluetoothCtl | None:
+        """
+        Get the BlueZ management controller if available.
+
+        Returns:
+            The MGMTBluetoothCtl instance or None if not available
+
+        """
+        return self._mgmt_ctl
+
     def scanner_adv_received(self, service_info: BluetoothServiceInfoBleak) -> None:
         """
         Handle a new advertisement from any scanner.
@@ -779,8 +789,7 @@ class BluetoothManager:
         self._allocations.pop(scanner.source, None)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
-        if scanner.adapter.startswith("hci"):
-            idx = int(scanner.adapter.removeprefix("hci"))
+        if (idx := scanner.adapter_idx) is not None:
             self._side_channel_scanners.pop(idx, None)
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.REMOVED)
 
@@ -802,8 +811,7 @@ class BluetoothManager:
         scanner._clear_connection_history()
         self._sources[scanner.source] = scanner
         self._adapter_sources[scanner.adapter] = scanner.source
-        if scanner.adapter.startswith("hci"):
-            idx = int(scanner.adapter.removeprefix("hci"))
+        if (idx := scanner.adapter_idx) is not None:
             self._side_channel_scanners[idx] = scanner  # type: ignore[assignment]
         if connection_slots:
             self.slot_manager.register_adapter(scanner.adapter, connection_slots)

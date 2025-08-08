@@ -26,10 +26,25 @@ from bleak_retry_connector import (
 )
 
 from .central_manager import get_manager
-from .const import CALLBACK_TYPE
+from .const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM, CALLBACK_TYPE
 
 FILTER_UUIDS: Final = "UUIDs"
 _LOGGER = logging.getLogger(__name__)
+
+
+def _get_device_address_type(device: BLEDevice) -> int:
+    """
+    Get the address type for a BLE device.
+
+    Returns:
+        BDADDR_LE_RANDOM if the device has a random address, BDADDR_LE_PUBLIC otherwise
+
+    """
+    return (
+        BDADDR_LE_RANDOM
+        if device.details.get("props", {}).get("AddressType") == "random"
+        else BDADDR_LE_PUBLIC
+    )
 
 
 if TYPE_CHECKING:
@@ -305,6 +320,17 @@ class HaBleakClientWrapper(BleakClient):
             _LOGGER.debug(
                 "%s: Connecting via %s (last rssi: %s)", description, scanner.name, rssi
             )
+
+        # Load fast connection parameters before connecting if mgmt API is available
+        if (adapter_idx := scanner.adapter_idx) is not None and (
+            mgmt_ctl := manager.get_bluez_mgmt_ctl()
+        ):
+            address_type = _get_device_address_type(device)
+            if mgmt_ctl.load_fast_conn_params(
+                adapter_idx, device.address, address_type
+            ):
+                if debug_logging:
+                    _LOGGER.debug("%s: Loaded fast connection parameters", description)
         connected = False
         address = device.address
         try:
@@ -321,6 +347,21 @@ class HaBleakClientWrapper(BleakClient):
             # we release the connection slot
             if not connected and not wrapped_backend.source:
                 manager.async_release_connection_slot(device)
+
+        # Load medium connection parameters after successful connection
+        if (
+            connected
+            and (adapter_idx := scanner.adapter_idx) is not None
+            and (mgmt_ctl := manager.get_bluez_mgmt_ctl())
+        ):
+            address_type = _get_device_address_type(device)
+            if mgmt_ctl.load_medium_conn_params(
+                adapter_idx, device.address, address_type
+            ):
+                if debug_logging:
+                    _LOGGER.debug(
+                        "%s: Loaded medium connection parameters", description
+                    )
 
         if debug_logging:
             _LOGGER.debug(

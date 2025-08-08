@@ -62,3 +62,23 @@ ADV_RSSI_SWITCH_THRESHOLD: Final = 16
 # Note that this does not affect the connection
 # selection that uses RSSI_SWITCH_THRESHOLD from
 # bleak_retry_connector
+
+
+# Connection parameter constants (units of 1.25ms for intervals)
+# Fast connection parameters for initial connection and service discovery
+FAST_MIN_CONN_INTERVAL: Final = 0x06  # 6 * 1.25ms = 7.5ms (BLE minimum)
+FAST_MAX_CONN_INTERVAL: Final = 0x06  # 6 * 1.25ms = 7.5ms
+FAST_CONN_LATENCY: Final = 0  # No latency for fast response
+FAST_CONN_TIMEOUT: Final = 1000  # 1000 * 10ms = 10s
+
+# Medium connection parameters for standard operation
+# Balanced for stability with WiFi-based BLE proxies
+MEDIUM_MIN_CONN_INTERVAL: Final = 0x07  # 7 * 1.25ms = 8.75ms
+MEDIUM_MAX_CONN_INTERVAL: Final = 0x09  # 9 * 1.25ms = 11.25ms
+MEDIUM_CONN_LATENCY: Final = 0  # No latency
+MEDIUM_CONN_TIMEOUT: Final = 800  # 800 * 10ms = 8s
+
+# Bluetooth address types
+BDADDR_BREDR: Final = 0x00
+BDADDR_LE_PUBLIC: Final = 0x01
+BDADDR_LE_RANDOM: Final = 0x02

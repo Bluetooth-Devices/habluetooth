@@ -5,11 +5,23 @@ import logging
 import socket
 from asyncio import timeout as asyncio_timeout
 from collections.abc import Callable
+from struct import Struct
 from typing import TYPE_CHECKING, cast
 
 from btsocket import btmgmt_protocol, btmgmt_socket
 from btsocket.btmgmt_socket import BluetoothSocketError
 
+from ..const import (
+    BDADDR_LE_PUBLIC,
+    FAST_CONN_LATENCY,
+    FAST_CONN_TIMEOUT,
+    FAST_MAX_CONN_INTERVAL,
+    FAST_MIN_CONN_INTERVAL,
+    MEDIUM_CONN_LATENCY,
+    MEDIUM_CONN_TIMEOUT,
+    MEDIUM_MAX_CONN_INTERVAL,
+    MEDIUM_MIN_CONN_INTERVAL,
+)
 from ..scanner import HaScanner
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,6 +33,15 @@ HEADER_SIZE = 6
 # Header is event_code (2 bytes), controller_idx (2 bytes), param_len (2 bytes)
 DEVICE_FOUND = 0x0012
 ADV_MONITOR_DEVICE_FOUND = 0x002F
+
+# Management commands
+MGMT_OP_LOAD_CONN_PARAM = 0x0035
+
+# Pre-compiled struct formats for performance
+COMMAND_HEADER = Struct("<HHH")
+COMMAND_HEADER_PACK = COMMAND_HEADER.pack
+CONN_PARAM_STRUCT = Struct("<H6sBHHHH")
+CONN_PARAM_PACK = CONN_PARAM_STRUCT.pack
 
 CONNECTION_ERRORS = (
     BluetoothSocketError,
@@ -251,3 +272,116 @@ class MGMTBluetoothCtl:
         """Set up management interface."""
         await self._establish_connection()
         self._reconnect_task = asyncio.create_task(self.reconnect_task())
+
+    def load_conn_params(
+        self,
+        adapter_idx: int,
+        address: str,
+        address_type: int,
+        min_interval: int,
+        max_interval: int,
+        latency: int,
+        timeout: int,
+    ) -> bool:
+        """
+        Load connection parameters for a specific device.
+
+        Args:
+            adapter_idx: Adapter index (e.g., 0 for hci0)
+            address: Device MAC address (e.g., "AA:BB:CC:DD:EE:FF")
+            address_type: BDADDR_LE_PUBLIC (1) or BDADDR_LE_RANDOM (2)
+            min_interval: Min connection interval (units of 1.25ms)
+            max_interval: Max connection interval (units of 1.25ms)
+            latency: Slave latency (number of events)
+            timeout: Supervision timeout (units of 10ms)
+
+        Returns:
+            True if command was sent successfully
+
+        """
+        if not self.protocol or not self.protocol.transport:
+            _LOGGER.error("Cannot load conn params: no connection")
+            return False
+
+        # Parse MAC address
+        addr_bytes = bytes.fromhex(address.replace(":", ""))
+        if len(addr_bytes) != 6:
+            _LOGGER.error("Invalid MAC address: %s", address)
+            return False
+
+        # Build command structure
+        # struct mgmt_cp_load_conn_param {
+        #     uint16_t param_count;
+        #     struct mgmt_conn_param params[0];
+        # }
+        # struct mgmt_conn_param {
+        #     struct mgmt_addr_info addr;
+        #     uint16_t min_interval;
+        #     uint16_t max_interval;
+        #     uint16_t latency;
+        #     uint16_t timeout;
+        # }
+        # struct mgmt_addr_info {
+        #     bdaddr_t bdaddr;
+        #     uint8_t type;
+        # }
+
+        # Pack the command
+        cmd_data = CONN_PARAM_PACK(
+            1,  # param_count = 1
+            addr_bytes[::-1],  # bdaddr (reversed for little endian)
+            address_type,  # address type
+            min_interval,  # min_interval
+            max_interval,  # max_interval
+            latency,  # latency
+            timeout,  # timeout
+        )
+
+        # Send the command
+        try:
+            header = COMMAND_HEADER_PACK(
+                MGMT_OP_LOAD_CONN_PARAM,  # opcode
+                adapter_idx,  # controller index
+                len(cmd_data),  # parameter length
+            )
+            self.protocol.transport.write(header + cmd_data)
+            _LOGGER.debug(
+                "Loaded conn params for %s: interval=%d-%d, latency=%d, timeout=%d",
+                address,
+                min_interval,
+                max_interval,
+                latency,
+                timeout,
+            )
+            return True
+        except Exception as e:
+            _LOGGER.error("Failed to load conn params: %s", e)
+            return False
+
+    def load_fast_conn_params(
+        self, adapter_idx: int, address: str, address_type: int = BDADDR_LE_PUBLIC
+    ) -> bool:
+        """Load fast connection parameters for initial connection/service discovery."""
+        return self.load_conn_params(
+            adapter_idx,
+            address,
+            address_type,
+            FAST_MIN_CONN_INTERVAL,
+            FAST_MAX_CONN_INTERVAL,
+            FAST_CONN_LATENCY,
+            FAST_CONN_TIMEOUT,
+        )
+
+    def load_medium_conn_params(
+        self, adapter_idx: int, address: str, address_type: int = BDADDR_LE_PUBLIC
+    ) -> bool:
+        """Load medium connection parameters for standard operation."""
+        return self.load_conn_params(
+            adapter_idx,
+            address,
+            address_type,
+            MEDIUM_MIN_CONN_INTERVAL,
+            MEDIUM_MAX_CONN_INTERVAL,
+            MEDIUM_CONN_LATENCY,
+            MEDIUM_CONN_TIMEOUT,
+        )

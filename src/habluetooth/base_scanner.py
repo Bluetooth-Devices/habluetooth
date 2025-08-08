@@ -181,6 +181,13 @@ class BaseHaScanner:
         """Return the time since the last detection."""
         return monotonic_time_coarse() - self._last_detection
 
+    @property
+    def adapter_idx(self) -> int | None:
+        """Return the adapter index if this is an hci adapter, None otherwise."""
+        if self.adapter and self.adapter.startswith("hci"):
+            return int(self.adapter.removeprefix("hci"))
+        return None
+
     def async_setup(self) -> CALLBACK_TYPE:
         """Set up the scanner."""
         self._loop = asyncio.get_running_loop()
