@@ -22,7 +22,7 @@ from ..const import (
     MEDIUM_MIN_CONN_INTERVAL,
     ConnectParams,
 )
-from ..scanner import HaScanner, bytes_mac_to_str
+from ..scanner import HaScanner
 
 _LOGGER = logging.getLogger(__name__)
 _int = int
@@ -152,7 +152,7 @@ class BluetoothMGMTProtocol:
                     status = header[8]
                     if opcode == MGMT_OP_LOAD_CONN_PARAM:
                         self._handle_load_conn_param_response(
-                            event_code, status, controller_idx, header, param_len
+                            event_code, status, controller_idx
                         )
                 self._remove_from_buffer()
                 continue
@@ -192,8 +192,6 @@ class BluetoothMGMTProtocol:
         event_code: _int,
         status: _int,
         controller_idx: _int,
-        header: _bytes,
-        param_len: _int,
     ) -> None:
         """Handle MGMT_OP_LOAD_CONN_PARAM response."""
         if status != 0:
@@ -212,46 +210,9 @@ class BluetoothMGMTProtocol:
             )
             return
 
-        if param_len < 25:
-            _LOGGER.debug(
-                "hci%u: Connection parameters loaded successfully "
-                "(short response: %d bytes)",
-                controller_idx,
-                param_len,
-            )
-            return
-
-        # Response format: opcode(2) + status(1) + param_count(2) + params...
-        param_count = header[9] | (header[10] << 8)
-        if param_count == 0 or param_len < 11 + (param_count * 20):
-            _LOGGER.debug(
-                "hci%u: Connection parameters loaded successfully",
-                controller_idx,
-            )
-            return
-
-        # Parse first parameter (we only send one)
-        param_offset = 11
-        addr_bytes = header[param_offset : param_offset + 6]
-        addr_type = header[param_offset + 6]
-        min_interval = header[param_offset + 7] | (header[param_offset + 8] << 8)
-        max_interval = header[param_offset + 9] | (header[param_offset + 10] << 8)
-        latency = header[param_offset + 11] | (header[param_offset + 12] << 8)
-        timeout = header[param_offset + 13] | (header[param_offset + 14] << 8)
-
-        # Convert address bytes to string (reversed for display)
-        addr_str = bytes_mac_to_str(addr_bytes)
-
         _LOGGER.debug(
-            "hci%u: Connection parameters loaded for %s (type=%d): "
-            "interval=%d-%d, latency=%d, timeout=%d",
+            "hci%u: Connection parameters loaded successfully",
             controller_idx,
-            addr_str,
-            addr_type,
-            min_interval,
-            max_interval,
-            latency,
-            timeout,
         )
 
     def connection_lost(self, exc: Exception | None) -> None:
@@ -276,9 +237,11 @@ class MGMTBluetoothCtl:
         self.scanners = scanners
         self._reconnect_task: asyncio.Task[None] | None = None
         self._on_connection_lost_future: asyncio.Future[None] | None = None
+        self._shutting_down = False
 
     def close(self) -> None:
         """Close the management interface."""
+        self._shutting_down = True
         if self._reconnect_task:
             self._reconnect_task.cancel()
         if self.protocol and self.protocol.transport:
@@ -288,15 +251,20 @@ class MGMTBluetoothCtl:
 
     def _on_connection_lost(self) -> None:
         """Handle connection lost."""
-        _LOGGER.debug("Bluetooth management socket connection lost, reconnecting")
+        if self._shutting_down:
+            _LOGGER.debug("Bluetooth management socket connection lost during shutdown")
+        else:
+            _LOGGER.debug("Bluetooth management socket connection lost, reconnecting")
         _set_future_if_not_done(self._on_connection_lost_future)
         self._on_connection_lost_future = None
 
     async def reconnect_task(self) -> None:
         """Monitor the connection and reconnect if needed."""
-        while True:
+        while not self._shutting_down:
             if self._on_connection_lost_future:
                 await self._on_connection_lost_future
+            if self._shutting_down:
+                break  # type: ignore[unreachable]
             _LOGGER.debug("Reconnecting to Bluetooth management socket")
             try:
                 await self._establish_connection()
