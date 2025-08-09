@@ -68,6 +68,13 @@ NEED_RESET_ERRORS = [
 
 
 @pytest.fixture(autouse=True, scope="module")
+def disable_stop_discovery():
+    """Disable stop discovery."""
+    with patch("habluetooth.scanner.stop_discovery"):
+        yield
+
+
+@pytest.fixture(autouse=True, scope="module")
 def manager():
     """Return the BluetoothManager instance."""
     adapters = FakeBluetoothAdapters()
