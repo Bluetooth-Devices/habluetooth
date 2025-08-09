@@ -830,6 +830,7 @@ async def test_on_connection_lost() -> None:
     assert ctl._on_connection_lost_future is None
 
 
+@pytest.mark.asyncio
 async def test_on_connection_lost_during_shutdown(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -919,6 +920,7 @@ async def test_reconnect_task_timeout() -> None:
             await task
 
 
+@pytest.mark.asyncio
 async def test_reconnect_task_shutdown() -> None:
     """Test reconnect_task exits when shutting down."""
     ctl = MGMTBluetoothCtl(5.0, {})
