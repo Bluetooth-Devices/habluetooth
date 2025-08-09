@@ -7,10 +7,10 @@ import asyncio
 import logging
 import platform
 from collections.abc import Coroutine, Iterable
-from contextlib import suppress
 from functools import lru_cache
 from typing import Any, no_type_check
 
+import async_interrupt
 import bleak
 from bleak import BleakError
 from bleak.assigned_numbers import AdvertisementDataType
@@ -31,7 +31,7 @@ from .const import (
     STOP_TIMEOUT,
 )
 from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
-from .util import async_reset_adapter, create_eager_task, is_docker_env
+from .util import async_reset_adapter, is_docker_env
 
 int_ = int
 
@@ -199,7 +199,6 @@ class HaScanner(BaseHaScanner):
         "_background_tasks",
         "_start_future",
         "_start_stop_lock",
-        "_start_task",
         "mac_address",
         "scanner",
     )
@@ -220,11 +219,10 @@ class HaScanner(BaseHaScanner):
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.scanner: bleak.BleakScanner | None = None
         self._start_future: asyncio.Future[None] | None = None
-        self._start_task: asyncio.Task[None] | None = None
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
-        task = create_eager_task(coro)
+        task = asyncio.create_task(coro)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
@@ -392,13 +390,12 @@ class HaScanner(BaseHaScanner):
         await self._async_force_stop_discovery()
         self._log_start_attempt(attempt)
         self._start_future = self._loop.create_future()
-        self._start_task = create_eager_task(self.scanner.start())
-        start_timeout_handle = self._loop.call_later(
-            START_TIMEOUT, self._on_start_timeout
-        )
-        self._start_task.add_done_callback(self._on_start_task_done)
         try:
-            await self._start_future
+            async with (
+                asyncio.timeout(START_TIMEOUT),
+                async_interrupt.interrupt(self._start_future, _AbortStartError, None),
+            ):
+                await self.scanner.start()
         except _AbortStartError as ex:
             await self._async_stop_scanner()
             self._raise_for_abort_start(ex)
@@ -450,31 +447,10 @@ class HaScanner(BaseHaScanner):
             await self._async_stop_scanner()
             raise
         finally:
-            start_timeout_handle.cancel()
-            if self._start_task is not None and not self._start_task.done():
-                self._start_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await self._start_task
             self._start_future = None
-            self._start_task = None
 
         self._log_start_success(attempt)
         return True
-
-    def _on_start_timeout(self) -> None:
-        if self._start_future is None or self._start_future.done():
-            return
-        self._start_future.set_exception(TimeoutError())
-
-    def _on_start_task_done(self, task: asyncio.Task[None]) -> None:
-        if self._start_future is None or self._start_future.done():
-            return
-        if task.cancelled():
-            self._start_future.cancel()
-        elif exc := task.exception():
-            self._start_future.set_exception(exc)
-        else:
-            self._start_future.set_result(task.result())
 
     def _log_adapter_init_wait(self, attempt: int) -> None:
         _LOGGER.debug(

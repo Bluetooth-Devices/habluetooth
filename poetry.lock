@@ -67,6 +67,18 @@ test = ["anyio[trio]", "blockbuster (>=1.5.23)", "coverage[toml] (>=7)", "except
 trio = ["trio (>=0.26.1)"]
 
 [[package]]
+name = "async-interrupt"
+version = "1.2.2"
+description = "Context manager to raise an exception when a future is done"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "async_interrupt-1.2.2-py3-none-any.whl", hash = "sha256:0a8deb884acfb5fe55188a693ae8a4381bbbd2cb6e670dac83869489513eec2c"},
+    {file = "async_interrupt-1.2.2.tar.gz", hash = "sha256:be4331a029b8625777905376a6dc1370984c8c810f30b79703f3ee039d262bf7"},
+]
+
+[[package]]
 name = "babel"
 version = "2.17.0"
 description = "Internationalization utilities"
@@ -121,6 +133,7 @@ dbus-fast = {version = ">=1.83.0", markers = "platform_system == \"Linux\""}
 pyobjc-core = {version = ">=10.3", markers = "platform_system == \"Darwin\""}
 pyobjc-framework-CoreBluetooth = {version = ">=10.3", markers = "platform_system == \"Darwin\""}
 pyobjc-framework-libdispatch = {version = ">=10.3", markers = "platform_system == \"Darwin\""}
+typing-extensions = {version = ">=4.7.0", markers = "python_version < \"3.12\""}
 winrt-runtime = {version = ">=3.1", markers = "platform_system == \"Windows\""}
 "winrt-Windows.Devices.Bluetooth" = {version = ">=3.1", markers = "platform_system == \"Windows\""}
 "winrt-Windows.Devices.Bluetooth.Advertisement" = {version = ">=3.1", markers = "platform_system == \"Windows\""}
@@ -1603,7 +1616,7 @@ files = [
     {file = "typing_extensions-4.14.0-py3-none-any.whl", hash = "sha256:a1514509136dd0b477638fc68d6a91497af5076466ad0fa6c338e44e359944af"},
     {file = "typing_extensions-4.14.0.tar.gz", hash = "sha256:8676b788e32f02ab42d9e7c61324048ae4c6d844a399eebace3d4979d75ceef4"},
 ]
-markers = {main = "platform_system == \"Windows\""}
+markers = {main = "python_version < \"3.12\" or platform_system == \"Windows\""}
 
 [[package]]
 name = "uart-devices"
@@ -2127,5 +2140,5 @@ all = ["winrt-Windows.Foundation.Collections[all] (>=3.2.1.0,<3.3.0.0)", "winrt-
 
 [metadata]
 lock-version = "2.1"
-python-versions = ">=3.12,<3.14"
-content-hash = "231e9ab02e322774964263a42841f5fc1364272f6a6c52e64e46c3efc48c568d"
+python-versions = ">=3.11,<3.14"
+content-hash = "06fdf21eb096a476e5a4a1631bdf0b11a320a2ac89d071f3df4b7dabebcdadaf"
