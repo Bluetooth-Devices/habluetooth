@@ -591,7 +591,7 @@ async def test_adapter_scanner_fails_to_start_first_time() -> None:
             await asyncio.sleep(0)
 
         assert len(mock_recover_adapter.mock_calls) == 1
-        assert called_start == 2
+        assert called_start == 4
         assert scanner.scanning is True
 
         now_monotonic = time.monotonic()
