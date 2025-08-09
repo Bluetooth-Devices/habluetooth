@@ -49,7 +49,7 @@ class FakeScanner(BaseHaRemoteScanner):
         self,
         scanner_id: str,
         name: str,
-        connector: None,
+        connector: Any,
         connectable: bool,
     ) -> None:
         """Initialize the scanner."""
@@ -1412,22 +1412,6 @@ async def test_connection_params_no_adapter_idx(
     """Test that connection params are not loaded if scanner has no adapter_idx."""
     manager = _get_manager()
 
-    # Create a scanner without adapter_idx (e.g., remote scanner)
-    remote_scanner = FakeScanner("remote_scanner", "ESPHome Device", None, True)
-    cancel_remote = manager.async_register_scanner(remote_scanner)
-
-    # Inject advertisement
-    device = generate_ble_device(
-        "00:00:00:00:00:03", "Test Device", {"source": "remote_scanner"}
-    )
-    adv_data = generate_advertisement_data(
-        local_name="Test Device",
-        service_uuids=[],
-        rssi=-50,
-    )
-    remote_scanner.inject_advertisement(device, adv_data)
-    await asyncio.sleep(0)
-
     # Mock the bluez mgmt controller
     mock_mgmt_ctl = Mock()
     mock_mgmt_ctl.load_conn_params.return_value = True
@@ -1446,14 +1430,33 @@ async def test_connection_params_no_adapter_idx(
         def is_connected(self) -> bool:
             return self.connected
 
+    # Create a fake connector for the remote scanner
+    fake_connector = HaBluetoothConnector(
+        client=FakeBleakClientTracksConnect, source="any", can_connect=lambda: True
+    )
+
+    # Create a scanner without adapter_idx (e.g., remote scanner)
+    remote_scanner = FakeScanner(
+        "remote_scanner", "ESPHome Device", fake_connector, True
+    )
+    cancel_remote = manager.async_register_scanner(remote_scanner)
+
+    # Inject advertisement
+    device = generate_ble_device(
+        "00:00:00:00:00:03", "Test Device", {"source": "remote_scanner"}
+    )
+    adv_data = generate_advertisement_data(
+        local_name="Test Device",
+        service_uuids=[],
+        rssi=-50,
+    )
+    remote_scanner.inject_advertisement(device, adv_data)
+    await asyncio.sleep(0)
+
     # Remote scanner should already have adapter_idx returning None
     with (
         caplog.at_level(logging.DEBUG),
         patch.object(manager, "get_bluez_mgmt_ctl", return_value=mock_mgmt_ctl),
-        patch(
-            "habluetooth.wrappers.get_platform_client_backend_type",
-            return_value=FakeBleakClientTracksConnect,
-        ),
     ):
         client = bleak.BleakClient("00:00:00:00:00:03")
         await client.connect()
