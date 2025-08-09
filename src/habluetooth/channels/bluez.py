@@ -205,10 +205,18 @@ class BluetoothMGMTProtocol:
             return
 
         # For MGMT_EV_CMD_COMPLETE, the response includes the loaded parameters
-        if event_code != MGMT_EV_CMD_COMPLETE or param_len < 25:
+        if event_code != MGMT_EV_CMD_COMPLETE:
             _LOGGER.debug(
-                "hci%u: Connection parameters loaded successfully",
+                "hci%u: Connection parameters loaded successfully (status event)",
                 controller_idx,
+            )
+            return
+
+        if param_len < 25:
+            _LOGGER.debug(
+                "hci%u: Connection parameters loaded successfully (short response: %d bytes)",
+                controller_idx,
+                param_len,
             )
             return
 
