@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import Mock, patch
 
 import pytest
@@ -829,6 +830,26 @@ async def test_on_connection_lost() -> None:
     assert ctl._on_connection_lost_future is None
 
 
+async def test_on_connection_lost_during_shutdown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test _on_connection_lost callback during shutdown."""
+    ctl = MGMTBluetoothCtl(5.0, {})
+    loop = asyncio.get_running_loop()
+    ctl._on_connection_lost_future = loop.create_future()
+    ctl._shutting_down = True
+
+    with caplog.at_level(logging.DEBUG):
+        ctl._on_connection_lost()
+
+    # Should log shutdown message
+    assert "Bluetooth management socket connection lost during shutdown" in caplog.text
+    # Should not log reconnecting message
+    assert "reconnecting" not in caplog.text
+    # _on_connection_lost sets the future to None after setting result
+    assert ctl._on_connection_lost_future is None
+
+
 @pytest.mark.asyncio
 async def test_reconnect_task() -> None:
     """Test reconnect_task behavior."""
@@ -896,3 +917,41 @@ async def test_reconnect_task_timeout() -> None:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+async def test_reconnect_task_shutdown() -> None:
+    """Test reconnect_task exits when shutting down."""
+    ctl = MGMTBluetoothCtl(5.0, {})
+    loop = asyncio.get_running_loop()
+
+    establish_called = False
+
+    async def mock_establish_connection() -> None:
+        nonlocal establish_called
+        establish_called = True
+        # Should not be called since we're shutting down
+        raise Exception("Should not be called")
+
+    with patch.object(
+        ctl, "_establish_connection", side_effect=mock_establish_connection
+    ):
+        # Set up connection lost future
+        ctl._on_connection_lost_future = loop.create_future()
+
+        # Start the reconnect task
+        task = asyncio.create_task(ctl.reconnect_task())
+
+        # Give it a moment to start
+        await asyncio.sleep(0)
+
+        # Simulate shutdown
+        ctl._shutting_down = True
+
+        # Trigger the future to wake up the task
+        ctl._on_connection_lost_future.set_result(None)
+
+        # Task should exit cleanly
+        await task
+
+        # _establish_connection should not have been called
+        assert not establish_called
