@@ -336,31 +336,33 @@ async def test_setup_success() -> None:
         mock_future.set_result(None)
         return mock_transport, mock_protocol
 
-    with patch("habluetooth.channels.bluez.btmgmt_socket.open", return_value=mock_sock):
-        with patch.object(
+    with (
+        patch("habluetooth.channels.bluez.btmgmt_socket.open", return_value=mock_sock),
+        patch.object(
             asyncio.get_running_loop(),
             "_create_connection_transport",
             side_effect=mock_create_connection,
-        ):
-            with patch.object(
-                asyncio.get_running_loop(),
-                "create_future",
-                side_effect=[
-                    mock_future,
-                    loop.create_future(),
-                ],  # First for connection, second for on_connection_lost
-            ):
-                ctl = MGMTBluetoothCtl(5.0, {})
-                await ctl.setup()
+        ),
+        patch.object(
+            asyncio.get_running_loop(),
+            "create_future",
+            side_effect=[
+                mock_future,
+                loop.create_future(),
+            ],  # First for connection, second for on_connection_lost
+        ),
+    ):
+        ctl = MGMTBluetoothCtl(5.0, {})
+        await ctl.setup()
 
-                assert ctl.sock is mock_sock
-                assert ctl.protocol is mock_protocol
-                assert ctl._reconnect_task is not None
+        assert ctl.sock is mock_sock
+        assert ctl.protocol is mock_protocol
+        assert ctl._reconnect_task is not None
 
-                # Clean up
-                ctl._reconnect_task.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await ctl._reconnect_task
+        # Clean up
+        ctl._reconnect_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await ctl._reconnect_task
 
 
 @pytest.mark.asyncio
@@ -371,18 +373,20 @@ async def test_setup_timeout() -> None:
     async def slow_connect(*args, **kwargs):
         await asyncio.sleep(10)
 
-    with patch("habluetooth.channels.bluez.btmgmt_socket.open", return_value=mock_sock):
-        with patch.object(
+    with (
+        patch("habluetooth.channels.bluez.btmgmt_socket.open", return_value=mock_sock),
+        patch.object(
             asyncio.get_running_loop(),
             "_create_connection_transport",
             side_effect=slow_connect,
-        ):
-            with patch("habluetooth.channels.bluez.btmgmt_socket.close") as mock_close:
-                ctl = MGMTBluetoothCtl(0.1, {})
-                with pytest.raises(TimeoutError):
-                    await ctl.setup()
+        ),
+        patch("habluetooth.channels.bluez.btmgmt_socket.close") as mock_close,
+    ):
+        ctl = MGMTBluetoothCtl(0.1, {})
+        with pytest.raises(TimeoutError):
+            await ctl.setup()
 
-                mock_close.assert_called_once_with(mock_sock)
+        mock_close.assert_called_once_with(mock_sock)
 
 
 @pytest.mark.asyncio
