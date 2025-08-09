@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.0.0 (2025-08-09)
+
+### Features
+
+
+- Add bt management side channel ([`e345308`](https://github.com/Bluetooth-Devices/habluetooth/commit/e3453089f510548ec7605fe83aa2078028ef2468))
+
+
 ## v4.0.2 (2025-08-06)
 
 ### Bug fixes
