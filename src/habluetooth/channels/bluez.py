@@ -214,7 +214,8 @@ class BluetoothMGMTProtocol:
 
         if param_len < 25:
             _LOGGER.debug(
-                "hci%u: Connection parameters loaded successfully (short response: %d bytes)",
+                "hci%u: Connection parameters loaded successfully "
+                "(short response: %d bytes)",
                 controller_idx,
                 param_len,
             )
