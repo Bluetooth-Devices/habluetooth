@@ -661,6 +661,8 @@ class HaScanner(BaseHaScanner):
 
     async def _async_force_stop_discovery(self) -> None:
         """Force stop discovery."""
+        if not IS_LINUX:
+            return
         _LOGGER.debug("%s: Force stopping bluetooth discovery", self.name)
         try:
             async with asyncio.timeout(STOP_TIMEOUT):
