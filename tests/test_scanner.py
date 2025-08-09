@@ -96,6 +96,8 @@ def mock_btmgmt_socket():
     """Mock the btmgmt_socket module."""
     with patch("habluetooth.channels.bluez.btmgmt_socket") as mock_btmgmt:
         mock_socket = Mock()
+        # Make the socket look like a real socket with a file descriptor
+        mock_socket.fileno.return_value = 99
         mock_btmgmt.open.return_value = mock_socket
         yield mock_btmgmt
 
