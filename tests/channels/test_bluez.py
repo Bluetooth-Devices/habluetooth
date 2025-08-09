@@ -783,7 +783,7 @@ def test_load_conn_params_transport_error(caplog: pytest.LogCaptureFixture) -> N
     )
 
     assert result is False
-    assert "Failed to load conn params: Transport error" in caplog.text
+    assert "Failed to load conn params" in caplog.text
 
 
 def test_close() -> None:

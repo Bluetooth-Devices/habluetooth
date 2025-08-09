@@ -366,6 +366,6 @@ class MGMTBluetoothCtl:
                 timeout,
             )
             return True
-        except Exception as e:
-            _LOGGER.error("Failed to load conn params: %s", e)
+        except Exception:
+            _LOGGER.exception("Failed to load conn params")
             return False
