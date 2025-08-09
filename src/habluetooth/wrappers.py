@@ -308,6 +308,8 @@ class HaBleakClientWrapper(BleakClient):
             ),
             timeout=self.__timeout,
         )
+        description = ""
+        rssi = None
         if debug_logging:
             # Only lookup the description if we are going to log it
             description = ble_device_description(device)
