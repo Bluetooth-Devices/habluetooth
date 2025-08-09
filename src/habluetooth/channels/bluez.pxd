@@ -36,6 +36,28 @@ cdef class BluetoothMGMTProtocol:
         parse_offset="unsigned short",
         scanner=HaScanner,
         opcode="unsigned short",
-        status="unsigned char"
+        status="unsigned char",
+        param_offset="unsigned short",
+        param_count="unsigned short"
     )
     cpdef void data_received(self, object data) except *
+
+    @cython.locals(
+        param_count="unsigned short",
+        param_offset="unsigned short",
+        addr_bytes="bytes",
+        addr_type="unsigned char",
+        min_interval="unsigned short",
+        max_interval="unsigned short",
+        latency="unsigned short",
+        timeout="unsigned short",
+        addr_str="str"
+    )
+    cdef void _handle_load_conn_param_response(
+        self,
+        unsigned short event_code,
+        unsigned char status,
+        unsigned short controller_idx,
+        const unsigned char * header,
+        unsigned short param_len
+    ) except *

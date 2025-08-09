@@ -22,7 +22,7 @@ from ..const import (
     MEDIUM_MIN_CONN_INTERVAL,
     ConnectParams,
 )
-from ..scanner import HaScanner
+from ..scanner import HaScanner, bytes_mac_to_str
 
 _LOGGER = logging.getLogger(__name__)
 _int = int
@@ -151,17 +151,9 @@ class BluetoothMGMTProtocol:
                     opcode = header[6] | (header[7] << 8)
                     status = header[8]
                     if opcode == MGMT_OP_LOAD_CONN_PARAM:
-                        if status == 0:
-                            _LOGGER.debug(
-                                "hci%u: Connection parameters loaded successfully",
-                                controller_idx,
-                            )
-                        else:
-                            _LOGGER.warning(
-                                "hci%u: Failed to load conn params: status=%d",
-                                controller_idx,
-                                status,
-                            )
+                        self._handle_load_conn_param_response(
+                            event_code, status, controller_idx, header, param_len
+                        )
                 self._remove_from_buffer()
                 continue
             else:
@@ -194,6 +186,64 @@ class BluetoothMGMTProtocol:
                     flags,
                     data,
                 )
+
+    def _handle_load_conn_param_response(
+        self,
+        event_code: _int,
+        status: _int,
+        controller_idx: _int,
+        header: _bytes,
+        param_len: _int,
+    ) -> None:
+        """Handle MGMT_OP_LOAD_CONN_PARAM response."""
+        if status != 0:
+            _LOGGER.warning(
+                "hci%u: Failed to load conn params: status=%d",
+                controller_idx,
+                status,
+            )
+            return
+
+        # For MGMT_EV_CMD_COMPLETE, the response includes the loaded parameters
+        if event_code != MGMT_EV_CMD_COMPLETE or param_len < 25:
+            _LOGGER.debug(
+                "hci%u: Connection parameters loaded successfully",
+                controller_idx,
+            )
+            return
+
+        # Response format: opcode(2) + status(1) + param_count(2) + params...
+        param_count = header[9] | (header[10] << 8)
+        if param_count == 0 or param_len < 11 + (param_count * 20):
+            _LOGGER.debug(
+                "hci%u: Connection parameters loaded successfully",
+                controller_idx,
+            )
+            return
+
+        # Parse first parameter (we only send one)
+        param_offset = 11
+        addr_bytes = header[param_offset : param_offset + 6]
+        addr_type = header[param_offset + 6]
+        min_interval = header[param_offset + 7] | (header[param_offset + 8] << 8)
+        max_interval = header[param_offset + 9] | (header[param_offset + 10] << 8)
+        latency = header[param_offset + 11] | (header[param_offset + 12] << 8)
+        timeout = header[param_offset + 13] | (header[param_offset + 14] << 8)
+
+        # Convert address bytes to string (reversed for display)
+        addr_str = bytes_mac_to_str(addr_bytes)
+
+        _LOGGER.debug(
+            "hci%u: Connection parameters loaded for %s (type=%d): "
+            "interval=%d-%d, latency=%d, timeout=%d",
+            controller_idx,
+            addr_str,
+            addr_type,
+            min_interval,
+            max_interval,
+            latency,
+            timeout,
+        )
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Handle connection lost."""
