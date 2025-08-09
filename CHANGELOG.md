@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.0.1 (2025-08-09)
+
+### Bug fixes
+
+
+- Ensure connect works without debug logging ([`4da091d`](https://github.com/Bluetooth-Devices/habluetooth/commit/4da091dc3ee512d499c82d179420f7fbc0539457))
+
+
 ## v5.0.0 (2025-08-09)
 
 ### Features
