@@ -43,8 +43,5 @@ cdef class BluetoothMGMTProtocol:
     cpdef void data_received(self, object data) except *
 
     cdef void _handle_load_conn_param_response(
-        self,
-        unsigned short event_code,
-        unsigned char status,
-        unsigned short controller_idx
+        self, unsigned char status, unsigned short controller_idx
     ) except *

@@ -151,9 +151,7 @@ class BluetoothMGMTProtocol:
                     opcode = header[6] | (header[7] << 8)
                     status = header[8]
                     if opcode == MGMT_OP_LOAD_CONN_PARAM:
-                        self._handle_load_conn_param_response(
-                            event_code, status, controller_idx
-                        )
+                        self._handle_load_conn_param_response(status, controller_idx)
                 self._remove_from_buffer()
                 continue
             else:
@@ -188,10 +186,7 @@ class BluetoothMGMTProtocol:
                 )
 
     def _handle_load_conn_param_response(
-        self,
-        event_code: _int,
-        status: _int,
-        controller_idx: _int,
+        self, status: _int, controller_idx: _int
     ) -> None:
         """Handle MGMT_OP_LOAD_CONN_PARAM response."""
         if status != 0:
@@ -200,20 +195,11 @@ class BluetoothMGMTProtocol:
                 controller_idx,
                 status,
             )
-            return
-
-        # For MGMT_EV_CMD_COMPLETE, the response includes the loaded parameters
-        if event_code != MGMT_EV_CMD_COMPLETE:
+        else:
             _LOGGER.debug(
-                "hci%u: Connection parameters loaded successfully (status event)",
+                "hci%u: Connection parameters loaded successfully",
                 controller_idx,
             )
-            return
-
-        _LOGGER.debug(
-            "hci%u: Connection parameters loaded successfully",
-            controller_idx,
-        )
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Handle connection lost."""
