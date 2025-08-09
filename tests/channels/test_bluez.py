@@ -278,6 +278,153 @@ def test_data_received_partial_data(
     mock_scanner._async_on_raw_bluez_advertisement.assert_called_once()
 
 
+def test_data_received_partial_data_split_in_params(
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+) -> None:
+    """Test data_received handles data split in the middle of params."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    on_connection_lost = Mock()
+
+    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+
+    # Create a DEVICE_FOUND event
+    ad_data = b"\x02\x01\x06\x03\xff\x00\x01"  # Longer ad data
+    param_len = 6 + 1 + 1 + 4 + 2 + len(ad_data)
+
+    full_data = b"\x12\x00\x00\x00" + param_len.to_bytes(2, "little")
+    full_data += b"\xaa\xbb\xcc\xdd\xee\xff\x01\xc8\x00\x00\x00\x00"
+    full_data += len(ad_data).to_bytes(2, "little") + ad_data
+
+    # Split in the middle of the address
+    protocol.data_received(full_data[:10])  # Header + part of address
+    mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
+
+    # Send rest of data
+    protocol.data_received(full_data[10:])
+    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once_with(
+        b"\xaa\xbb\xcc\xdd\xee\xff",
+        1,
+        -56,
+        0,
+        ad_data,
+    )
+
+
+def test_data_received_multiple_small_chunks(
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+) -> None:
+    """Test data_received handles data sent in many small chunks."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    on_connection_lost = Mock()
+
+    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+
+    # Create a DEVICE_FOUND event
+    ad_data = b"\x02\x01\x06"
+    param_len = 6 + 1 + 1 + 4 + 2 + len(ad_data)
+
+    full_data = b"\x12\x00\x00\x00" + param_len.to_bytes(2, "little")
+    full_data += b"\xaa\xbb\xcc\xdd\xee\xff\x01\xc8\x00\x00\x00\x00"
+    full_data += len(ad_data).to_bytes(2, "little") + ad_data
+
+    # Send data byte by byte
+    for i in range(len(full_data)):
+        protocol.data_received(full_data[i : i + 1])
+        if i < len(full_data) - 1:
+            mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
+
+    # After all bytes are sent, callback should be called once
+    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once()
+
+
+def test_data_received_multiple_events_in_one_chunk(
+    event_loop: asyncio.AbstractEventLoop,
+    mock_scanner: Mock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test data_received handles multiple events in one data chunk."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    on_connection_lost = Mock()
+
+    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+
+    # Create two events: a DEVICE_FOUND and a CMD_COMPLETE
+    ad_data = b"\x02\x01\x06"
+    param_len1 = 6 + 1 + 1 + 4 + 2 + len(ad_data)
+
+    event1 = b"\x12\x00\x00\x00" + param_len1.to_bytes(2, "little")
+    event1 += b"\xaa\xbb\xcc\xdd\xee\xff\x01\xc8\x00\x00\x00\x00"
+    event1 += len(ad_data).to_bytes(2, "little") + ad_data
+
+    event2 = b"\x01\x00\x00\x00\x03\x00"  # CMD_COMPLETE header
+    event2 += b"\x35\x00\x00"  # LOAD_CONN_PARAM success
+
+    # Send both events in one chunk
+    protocol.data_received(event1 + event2)
+
+    # Both events should be processed
+    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once()
+    assert "Connection parameters loaded successfully" in caplog.text
+
+
+def test_data_received_partial_then_multiple_events(
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+) -> None:
+    """Test partial data followed by multiple complete events."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    on_connection_lost = Mock()
+
+    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+
+    # First event (DEVICE_FOUND)
+    ad_data1 = b"\x02\x01\x06"
+    param_len1 = 6 + 1 + 1 + 4 + 2 + len(ad_data1)
+    event1 = b"\x12\x00\x00\x00" + param_len1.to_bytes(2, "little")
+    event1 += b"\x11\x22\x33\x44\x55\x66\x01\xc8\x00\x00\x00\x00"
+    event1 += len(ad_data1).to_bytes(2, "little") + ad_data1
+
+    # Second event (ADV_MONITOR_DEVICE_FOUND)
+    ad_data2 = b"\x03\xff\x00\x01"
+    param_len2 = 2 + 6 + 1 + 1 + 4 + 2 + len(ad_data2)
+    event2 = b"\x2f\x00\x00\x00" + param_len2.to_bytes(2, "little")
+    event2 += b"\x00\x00"  # Extra 2 bytes
+    event2 += b"\x77\x88\x99\xaa\xbb\xcc\x02\x64\x00\x00\x00\x00"
+    event2 += len(ad_data2).to_bytes(2, "little") + ad_data2
+
+    # Send partial first event
+    protocol.data_received(event1[:15])
+    mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
+
+    # Send rest of first event + second event
+    protocol.data_received(event1[15:] + event2)
+
+    # Both callbacks should be called
+    assert mock_scanner._async_on_raw_bluez_advertisement.call_count == 2
+    calls = mock_scanner._async_on_raw_bluez_advertisement.call_args_list
+
+    # First call
+    assert calls[0][0] == (
+        b"\x11\x22\x33\x44\x55\x66",
+        1,
+        -56,
+        0,
+        ad_data1,
+    )
+
+    # Second call
+    assert calls[1][0] == (
+        b"\x77\x88\x99\xaa\xbb\xcc",
+        2,
+        100,
+        0,
+        ad_data2,
+    )
+
+
 def test_data_received_unknown_event(event_loop: asyncio.AbstractEventLoop) -> None:
     """Test data_received ignores unknown events."""
     future = event_loop.create_future()
