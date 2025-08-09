@@ -1446,11 +1446,10 @@ async def test_connection_params_no_adapter_idx(
         def is_connected(self) -> bool:
             return self.connected
 
-    # Patch the scanner to have no adapter_idx
+    # Remote scanner should already have adapter_idx returning None
     with (
         caplog.at_level(logging.DEBUG),
         patch.object(manager, "get_bluez_mgmt_ctl", return_value=mock_mgmt_ctl),
-        patch.object(remote_scanner, "adapter_idx", None),
         patch(
             "habluetooth.wrappers.get_platform_client_backend_type",
             return_value=FakeBleakClientTracksConnect,
