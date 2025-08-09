@@ -154,7 +154,7 @@ class BluetoothMGMTProtocol:
                 parse_offset = 6
             elif event_code == ADV_MONITOR_DEVICE_FOUND:
                 parse_offset = 8
-            elif event_code == MGMT_EV_CMD_COMPLETE or event_code == MGMT_EV_CMD_STATUS:
+            elif event_code in {MGMT_EV_CMD_COMPLETE, MGMT_EV_CMD_STATUS}:
                 # Handle management command responses
                 if param_len >= 3:
                     opcode = header[6] | (header[7] << 8)
