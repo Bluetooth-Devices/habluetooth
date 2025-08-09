@@ -26,7 +26,7 @@ from bleak_retry_connector import (
 )
 
 from .central_manager import get_manager
-from .const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM, CALLBACK_TYPE
+from .const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM, CALLBACK_TYPE, ConnectParams
 
 FILTER_UUIDS: Final = "UUIDs"
 _LOGGER = logging.getLogger(__name__)
@@ -326,8 +326,11 @@ class HaBleakClientWrapper(BleakClient):
         if (
             (adapter_idx := scanner.adapter_idx) is not None
             and (mgmt_ctl := manager.get_bluez_mgmt_ctl())
-            and mgmt_ctl.load_fast_conn_params(
-                adapter_idx, device.address, _get_device_address_type(device)
+            and mgmt_ctl.load_conn_params(
+                adapter_idx,
+                device.address,
+                _get_device_address_type(device),
+                ConnectParams.FAST,
             )
             and debug_logging
         ):
@@ -354,8 +357,11 @@ class HaBleakClientWrapper(BleakClient):
             connected
             and (adapter_idx := scanner.adapter_idx) is not None
             and (mgmt_ctl := manager.get_bluez_mgmt_ctl())
-            and mgmt_ctl.load_medium_conn_params(
-                adapter_idx, device.address, _get_device_address_type(device)
+            and mgmt_ctl.load_conn_params(
+                adapter_idx,
+                device.address,
+                _get_device_address_type(device),
+                ConnectParams.MEDIUM,
             )
             and debug_logging
         ):

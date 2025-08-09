@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import timedelta
+from enum import Enum
 from typing import Final
 
 CALLBACK_TYPE = Callable[[], None]
@@ -82,3 +83,10 @@ MEDIUM_CONN_TIMEOUT: Final = 800  # 800 * 10ms = 8s
 BDADDR_BREDR: Final = 0x00
 BDADDR_LE_PUBLIC: Final = 0x01
 BDADDR_LE_RANDOM: Final = 0x02
+
+
+class ConnectParams(Enum):
+    """Connection parameter presets."""
+
+    FAST = "fast"
+    MEDIUM = "medium"

@@ -12,7 +12,6 @@ from btsocket import btmgmt_protocol, btmgmt_socket
 from btsocket.btmgmt_socket import BluetoothSocketError
 
 from ..const import (
-    BDADDR_LE_PUBLIC,
     FAST_CONN_LATENCY,
     FAST_CONN_TIMEOUT,
     FAST_MAX_CONN_INTERVAL,
@@ -21,6 +20,7 @@ from ..const import (
     MEDIUM_CONN_TIMEOUT,
     MEDIUM_MAX_CONN_INTERVAL,
     MEDIUM_MIN_CONN_INTERVAL,
+    ConnectParams,
 )
 from ..scanner import HaScanner
 
@@ -301,10 +301,7 @@ class MGMTBluetoothCtl:
         adapter_idx: int,
         address: str,
         address_type: int,
-        min_interval: int,
-        max_interval: int,
-        latency: int,
-        timeout: int,
+        params: ConnectParams,
     ) -> bool:
         """
         Load connection parameters for a specific device.
@@ -313,10 +310,8 @@ class MGMTBluetoothCtl:
             adapter_idx: Adapter index (e.g., 0 for hci0)
             address: Device MAC address (e.g., "AA:BB:CC:DD:EE:FF")
             address_type: BDADDR_LE_PUBLIC (1) or BDADDR_LE_RANDOM (2)
-            min_interval: Min connection interval (units of 1.25ms)
-            max_interval: Max connection interval (units of 1.25ms)
-            latency: Slave latency (number of events)
-            timeout: Supervision timeout (units of 10ms)
+            params: Connection parameters to load (ConnectParams.FAST or
+              ConnectParams.MEDIUM)
 
         Returns:
             True if command was sent successfully
@@ -349,6 +344,18 @@ class MGMTBluetoothCtl:
         #     uint8_t type;
         # }
 
+        # Get the appropriate connection parameters based on the enum
+        if params is ConnectParams.FAST:
+            min_interval = FAST_MIN_CONN_INTERVAL
+            max_interval = FAST_MAX_CONN_INTERVAL
+            latency = FAST_CONN_LATENCY
+            timeout = FAST_CONN_TIMEOUT
+        else:  # params is ConnectParams.MEDIUM:
+            min_interval = MEDIUM_MIN_CONN_INTERVAL
+            max_interval = MEDIUM_MAX_CONN_INTERVAL
+            latency = MEDIUM_CONN_LATENCY
+            timeout = MEDIUM_CONN_TIMEOUT
+
         # Pack the command
         cmd_data = CONN_PARAM_PACK(
             1,  # param_count = 1
@@ -380,31 +387,3 @@ class MGMTBluetoothCtl:
         except Exception as e:
             _LOGGER.error("Failed to load conn params: %s", e)
             return False
-
-    def load_fast_conn_params(
-        self, adapter_idx: int, address: str, address_type: int = BDADDR_LE_PUBLIC
-    ) -> bool:
-        """Load fast connection parameters for initial connection/service discovery."""
-        return self.load_conn_params(
-            adapter_idx,
-            address,
-            address_type,
-            FAST_MIN_CONN_INTERVAL,
-            FAST_MAX_CONN_INTERVAL,
-            FAST_CONN_LATENCY,
-            FAST_CONN_TIMEOUT,
-        )
-
-    def load_medium_conn_params(
-        self, adapter_idx: int, address: str, address_type: int = BDADDR_LE_PUBLIC
-    ) -> bool:
-        """Load medium connection parameters for standard operation."""
-        return self.load_conn_params(
-            adapter_idx,
-            address,
-            address_type,
-            MEDIUM_MIN_CONN_INTERVAL,
-            MEDIUM_MAX_CONN_INTERVAL,
-            MEDIUM_CONN_LATENCY,
-            MEDIUM_CONN_TIMEOUT,
-        )
