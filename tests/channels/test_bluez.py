@@ -425,6 +425,77 @@ def test_data_received_partial_then_multiple_events(
     )
 
 
+def test_data_received_cmd_complete_different_opcode(
+    event_loop: asyncio.AbstractEventLoop, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test data_received handles CMD_COMPLETE for different opcodes."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {}
+    on_connection_lost = Mock()
+
+    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+
+    # Create a CMD_COMPLETE event for a different opcode (e.g., 0x0004 - Add UUID)
+    header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
+    header += b"\x00\x00"  # controller_idx = 0
+    header += b"\x03\x00"  # param_len = 3
+
+    params = b"\x04\x00"  # opcode = 0x0004 (not MGMT_OP_LOAD_CONN_PARAM)
+    params += b"\x00"  # status = 0 (success)
+
+    protocol.data_received(header + params)
+
+    # Should not log anything about connection parameters
+    assert "Connection parameters" not in caplog.text
+
+
+def test_data_received_cmd_status_different_opcode(
+    event_loop: asyncio.AbstractEventLoop, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test data_received handles CMD_STATUS for different opcodes."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {}
+    on_connection_lost = Mock()
+
+    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+
+    # Create a CMD_STATUS event for a different opcode
+    header = b"\x02\x00"  # MGMT_EV_CMD_STATUS
+    header += b"\x00\x00"  # controller_idx = 0
+    header += b"\x03\x00"  # param_len = 3
+
+    params = b"\x05\x00"  # opcode = 0x0005 (not MGMT_OP_LOAD_CONN_PARAM)
+    params += b"\x01"  # status = 1 (failure)
+
+    protocol.data_received(header + params)
+
+    # Should not log anything about connection parameters
+    assert "conn params" not in caplog.text
+
+
+def test_data_received_cmd_complete_short_params(
+    event_loop: asyncio.AbstractEventLoop, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test data_received handles CMD_COMPLETE with param_len < 3."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {}
+    on_connection_lost = Mock()
+
+    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+
+    # Create a CMD_COMPLETE event with param_len < 3
+    header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
+    header += b"\x00\x00"  # controller_idx = 0
+    header += b"\x02\x00"  # param_len = 2 (too short to contain opcode + status)
+
+    params = b"\x00\x00"  # Just 2 bytes
+
+    protocol.data_received(header + params)
+
+    # Should not log anything (no opcode to check)
+    assert "conn params" not in caplog.text
+
+
 def test_data_received_unknown_event(event_loop: asyncio.AbstractEventLoop) -> None:
     """Test data_received ignores unknown events."""
     future = event_loop.create_future()

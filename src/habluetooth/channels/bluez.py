@@ -8,7 +8,7 @@ from collections.abc import Callable
 from struct import Struct
 from typing import TYPE_CHECKING, cast
 
-from btsocket import btmgmt_protocol, btmgmt_socket
+from btsocket import btmgmt_socket
 from btsocket.btmgmt_socket import BluetoothSocketError
 
 from ..const import (
@@ -120,20 +120,6 @@ class BluetoothMGMTProtocol:
         # since Cython will stop at any '\0' character if we don't
         self._buffer = cstr[end_of_frame_pos : self._buffer_len + end_of_frame_pos]
 
-    def _read(self, length: _int) -> bytes | None:
-        """Read exactly length bytes from the buffer or None if all the bytes are not yet available."""  # noqa: E501
-        new_pos = self._pos + length
-        if self._buffer_len < new_pos:
-            return None
-        original_pos = self._pos
-        self._pos = new_pos
-        if TYPE_CHECKING:
-            assert self._buffer is not None, "Buffer should be set"
-        cstr = self._buffer
-        # Important: we must keep the bounds check (self._buffer_len < new_pos)
-        # above to verify we never try to read past the end of the buffer
-        return cstr[original_pos:new_pos]
-
     def data_received(self, data: _bytes) -> None:
         """Handle data received."""
         self._add_to_buffer(data)
@@ -203,10 +189,6 @@ class BluetoothMGMTProtocol:
                     flags,
                     data,
                 )
-
-    def _timeout_future(self, future: asyncio.Future[btmgmt_protocol.Response]) -> None:
-        if future and not future.done():
-            future.set_exception(TimeoutError("Timeout waiting for response"))
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Handle connection lost."""

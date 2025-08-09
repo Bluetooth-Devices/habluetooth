@@ -19,13 +19,6 @@ cdef class BluetoothMGMTProtocol:
     cdef unsigned int _pos
     cdef dict _scanners
 
-    @cython.locals(
-        original_pos="unsigned int",
-        new_pos="unsigned int",
-        cstr="const unsigned char *"
-    )
-    cdef bytes _read(self, int length)
-
     @cython.locals(bytes_data=bytes)
     cdef void _add_to_buffer(self, object data) except *
 
