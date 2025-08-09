@@ -26,10 +26,26 @@ from bleak_retry_connector import (
 )
 
 from .central_manager import get_manager
-from .const import CALLBACK_TYPE
+from .const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM, CALLBACK_TYPE, ConnectParams
 
 FILTER_UUIDS: Final = "UUIDs"
 _LOGGER = logging.getLogger(__name__)
+
+
+def _get_device_address_type(device: BLEDevice) -> int:
+    """
+    Get the address type for a BLE device.
+
+    Returns:
+        BDADDR_LE_RANDOM if the device has a random address, BDADDR_LE_PUBLIC otherwise
+
+    """
+    details: dict[str, dict[str, Any]] = device.details
+    return (
+        BDADDR_LE_RANDOM
+        if details.get("props", {}).get("AddressType") == "random"
+        else BDADDR_LE_PUBLIC
+    )
 
 
 if TYPE_CHECKING:
@@ -305,6 +321,16 @@ class HaBleakClientWrapper(BleakClient):
             _LOGGER.debug(
                 "%s: Connecting via %s (last rssi: %s)", description, scanner.name, rssi
             )
+
+        # Load fast connection parameters before connecting if mgmt API is available
+        self._load_conn_params(
+            scanner,
+            device,
+            ConnectParams.FAST,
+            debug_logging,
+            description,
+        )
+
         connected = False
         address = device.address
         try:
@@ -322,6 +348,16 @@ class HaBleakClientWrapper(BleakClient):
             if not connected and not wrapped_backend.source:
                 manager.async_release_connection_slot(device)
 
+        # Load medium connection parameters after successful connection
+        if connected:
+            self._load_conn_params(
+                scanner,
+                device,
+                ConnectParams.MEDIUM,
+                debug_logging,
+                description,
+            )
+
         if debug_logging:
             _LOGGER.debug(
                 "%s: %s via %s (last rssi: %s)",
@@ -331,6 +367,28 @@ class HaBleakClientWrapper(BleakClient):
                 rssi,
             )
         return
+
+    def _load_conn_params(
+        self,
+        scanner: BaseHaScanner,
+        device: BLEDevice,
+        params: ConnectParams,
+        debug_logging: bool,
+        description: str,
+    ) -> None:
+        """Load connection parameters for a device."""
+        if (
+            (adapter_idx := scanner.adapter_idx) is not None
+            and (mgmt_ctl := self.__manager.get_bluez_mgmt_ctl())
+            and mgmt_ctl.load_conn_params(
+                adapter_idx,
+                device.address,
+                _get_device_address_type(device),
+                params,
+            )
+            and debug_logging
+        ):
+            _LOGGER.debug("%s: Loaded %s connection parameters", description, params)
 
     def _async_get_backend_for_ble_device(
         self, manager: BluetoothManager, scanner: BaseHaScanner, ble_device: BLEDevice

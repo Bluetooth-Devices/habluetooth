@@ -1,0 +1,51 @@
+import asyncio
+import logging
+
+from habluetooth import BluetoothManager, BluetoothScanningMode
+from habluetooth.scanner import HaScanner
+
+int_ = int
+
+
+class LoggingHaScanner(HaScanner):
+    """Logging ha scanner."""
+
+    def _async_on_raw_bluez_advertisement(
+        self,
+        address: bytes,
+        address_type: int_,
+        rssi: int_,
+        flags: int_,
+        data: bytes,
+    ) -> None:
+        """Handle raw advertisement data."""
+        print(
+            f"address={address!r}, address_type={address_type}, "
+            f"rssi={rssi}, flags={flags}, data={data!r}"
+        )
+
+
+async def main() -> None:
+    """Main function to test the Bluetooth management API."""
+    # Set up logging
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger("habluetooth")
+    logger.setLevel(logging.DEBUG)
+    manager = BluetoothManager()
+    await manager.async_setup()
+    # Create an instance of MGMTBluetoothCtl
+    scanner = LoggingHaScanner(
+        BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF"
+    )
+    manager.async_register_scanner(scanner)
+
+    try:
+        await asyncio.Event().wait()
+    finally:
+        # Close the management interface when done
+        manager.async_stop()
+
+
+if __name__ == "__main__":
+    # Run the main function
+    asyncio.run(main())

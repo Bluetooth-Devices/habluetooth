@@ -7,6 +7,7 @@ import asyncio
 import logging
 import platform
 from collections.abc import Coroutine, Iterable
+from functools import lru_cache
 from typing import Any, no_type_check
 
 import async_interrupt
@@ -31,6 +32,8 @@ from .const import (
 )
 from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
+
+int_ = int
 
 SYSTEM = platform.system()
 IS_LINUX = SYSTEM == "Linux"
@@ -121,15 +124,16 @@ class ScannerStartError(Exception):
 
 
 def create_bleak_scanner(
-    detection_callback: AdvertisementDataCallback,
+    detection_callback: AdvertisementDataCallback | None,
     scanning_mode: BluetoothScanningMode,
     adapter: str | None,
 ) -> bleak.BleakScanner:
     """Create a Bleak scanner."""
     scanner_kwargs: dict[str, Any] = {
-        "detection_callback": detection_callback,
         "scanning_mode": SCANNING_MODE_TO_BLEAK[scanning_mode],
     }
+    if detection_callback:
+        scanner_kwargs["detection_callback"] = detection_callback
     if IS_LINUX:
         # Only Linux supports multiple adapters
         if adapter:
@@ -159,6 +163,24 @@ def _error_indicates_wait_for_adapter_to_init(error_str: str) -> bool:
     return any(
         wait_error in error_str for wait_error in WAIT_FOR_ADAPTER_TO_INIT_ERRORS
     )
+
+
+@lru_cache(maxsize=512)
+def bytes_mac_to_str(mac: bytes) -> str:
+    """Convert a MAC address in bytes to a string in big-endian (MSB-first) order."""
+    return ":".join(f"{b:02X}" for b in reversed(mac))
+
+
+@lru_cache(maxsize=512)
+def make_bluez_details(address: str, adapter: str) -> dict[str, Any]:
+    """Make the details for a bluez advertisement."""
+    base_path = f"/org/bluez/{adapter}"
+    return {
+        "path": f"{base_path}/dev_{address.replace(':', '_')}",
+        "props": {
+            "Adapter": base_path,
+        },
+    }
 
 
 class HaScanner(BaseHaScanner):
@@ -240,6 +262,24 @@ class HaScanner(BaseHaScanner):
         """Return diagnostic information about the scanner."""
         base_diag = await super().async_diagnostics()
         return base_diag | {"adapter": self.adapter}
+
+    def _async_on_raw_bluez_advertisement(
+        self,
+        address: bytes,
+        address_type: int_,
+        rssi: int_,
+        flags: int_,
+        data: bytes,
+    ) -> None:
+        """Handle raw advertisement data."""
+        address_str = bytes_mac_to_str(address)
+        self._async_on_raw_advertisement(
+            address_str,
+            rssi,
+            data,
+            make_bluez_details(address_str, self.adapter),
+            monotonic_time_coarse(),
+        )
 
     def _async_detection_callback(
         self,
@@ -332,8 +372,22 @@ class HaScanner(BaseHaScanner):
 
         assert self.current_mode is not None  # noqa: S101
         self.scanner = create_bleak_scanner(
-            self._async_detection_callback, self.current_mode, self.adapter
+            (
+                None
+                if self._manager.has_advertising_side_channel
+                else self._async_detection_callback
+            ),
+            self.current_mode,
+            self.adapter,
         )
+        # If the scanner is already running, trying to start it again
+        # can result in a deadlock. So we need to stop it first.
+        # hci0: Opcode 0x200b failed: -110
+        # hci0: start background scanning failed: -110
+        # hci0: Controller not accepting commands anymore: ncmd = 0
+        # hci0: Injecting HCI hardware error event
+        # hci0: hardware error 0x00
+        await self._async_force_stop_discovery()
         self._log_start_attempt(attempt)
         self._start_future = self._loop.create_future()
         try:
