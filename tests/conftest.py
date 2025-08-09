@@ -53,11 +53,15 @@ class FakeScanner(FakeScannerMixin, BaseHaScanner):
         return {}
 
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
+class PatchableBluetoothManager(BluetoothManager):
+    """Patchable Bluetooth Manager for testing."""
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def manager() -> AsyncGenerator[None, None]:
     slot_manager = BleakSlotManager()
     bluetooth_adapters = FakeBluetoothAdapters()
-    manager = BluetoothManager(bluetooth_adapters, slot_manager)
+    manager = PatchableBluetoothManager(bluetooth_adapters, slot_manager)
     set_manager(manager)
     await manager.async_setup()
     yield

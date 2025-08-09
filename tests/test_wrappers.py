@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import bleak
 import pytest
@@ -1186,3 +1187,279 @@ async def test_passive_scanner_with_active_scanner() -> None:
 
     cancel_passive()
     cancel_active()
+
+
+@pytest.mark.asyncio
+async def test_connection_params_loading_with_bluez_mgmt(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that connection parameters are loaded when mgmt API is available."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    # Mock the bluez mgmt controller
+    mock_mgmt_ctl = Mock()
+    mock_mgmt_ctl.load_conn_params.return_value = True
+
+    class FakeBleakClientTracksConnect(BaseFakeBleakClient):
+        """Fake bleak client that tracks connect."""
+
+        connected = False
+
+        async def connect(self, *args, **kwargs):
+            """Connect."""
+            self.connected = True
+            # Simulate service discovery
+            await asyncio.sleep(0)
+
+        @property
+        def is_connected(self) -> bool:
+            return self.connected
+
+    # Test with debug logging enabled
+    with (
+        caplog.at_level(logging.DEBUG),
+        patch.object(manager, "get_bluez_mgmt_ctl", return_value=mock_mgmt_ctl),
+        patch(
+            "habluetooth.wrappers.get_platform_client_backend_type",
+            return_value=FakeBleakClientTracksConnect,
+        ),
+    ):
+        ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+
+        # Verify load_conn_params was called twice (fast before connect, medium after)
+        assert mock_mgmt_ctl.load_conn_params.call_count == 2
+
+        # First call should be for FAST params
+        first_call = mock_mgmt_ctl.load_conn_params.call_args_list[0]
+        assert first_call[0][0] == 0  # adapter_idx
+        assert first_call[0][1] == "00:00:00:00:00:01"  # address
+        assert first_call[0][2] == 1  # BDADDR_LE_PUBLIC (default)
+        assert first_call[0][3].value == "fast"  # ConnectParams.FAST
+
+        # Second call should be for MEDIUM params
+        second_call = mock_mgmt_ctl.load_conn_params.call_args_list[1]
+        assert second_call[0][0] == 0  # adapter_idx
+        assert second_call[0][1] == "00:00:00:00:00:01"  # address
+        assert second_call[0][2] == 1  # BDADDR_LE_PUBLIC
+        assert second_call[0][3].value == "medium"  # ConnectParams.MEDIUM
+
+        # Verify debug logging
+        assert "Loaded ConnectParams.FAST connection parameters" in caplog.text
+        assert "Loaded ConnectParams.MEDIUM connection parameters" in caplog.text
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_connection_params_not_loaded_without_mgmt(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that connection parameters are not loaded when mgmt API is unavailable."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    class FakeBleakClientTracksConnect(BaseFakeBleakClient):
+        """Fake bleak client that tracks connect."""
+
+        connected = False
+
+        async def connect(self, *args, **kwargs):
+            """Connect."""
+            self.connected = True
+            await asyncio.sleep(0)
+
+        @property
+        def is_connected(self) -> bool:
+            return self.connected
+
+    with (
+        caplog.at_level(logging.DEBUG),
+        patch.object(manager, "get_bluez_mgmt_ctl", return_value=None),
+        patch(
+            "habluetooth.wrappers.get_platform_client_backend_type",
+            return_value=FakeBleakClientTracksConnect,
+        ),
+    ):
+        ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+
+        # Verify no connection parameters were loaded
+        assert "connection parameters" not in caplog.text
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_get_device_address_type_random(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Test _get_device_address_type returns BDADDR_LE_RANDOM for random address."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    # Create a device with random address type
+    device = generate_ble_device(
+        "00:00:00:00:00:02",
+        "Test Device",
+        {
+            "path": "/org/bluez/hci0/dev_00_00_00_00_00_02",
+            "props": {"AddressType": "random"},
+        },
+    )
+
+    from habluetooth.const import BDADDR_LE_RANDOM
+    from habluetooth.wrappers import _get_device_address_type
+
+    assert _get_device_address_type(device) == BDADDR_LE_RANDOM
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_get_device_address_type_public(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Test _get_device_address_type returns BDADDR_LE_PUBLIC for public address."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    # Create a device with public address type (default)
+    device = hci0_device_advs["00:00:00:00:00:01"][0]
+
+    from habluetooth.const import BDADDR_LE_PUBLIC
+    from habluetooth.wrappers import _get_device_address_type
+
+    assert _get_device_address_type(device) == BDADDR_LE_PUBLIC
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_connection_params_loading_fails_silently(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that connection still succeeds even if loading params fails."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    # Mock the bluez mgmt controller to fail loading params
+    mock_mgmt_ctl = Mock()
+    mock_mgmt_ctl.load_conn_params.return_value = False
+
+    class FakeBleakClientTracksConnect(BaseFakeBleakClient):
+        """Fake bleak client that tracks connect."""
+
+        connected = False
+
+        async def connect(self, *args, **kwargs):
+            """Connect."""
+            self.connected = True
+            await asyncio.sleep(0)
+
+        @property
+        def is_connected(self) -> bool:
+            return self.connected
+
+    with (
+        caplog.at_level(logging.DEBUG),
+        patch.object(manager, "get_bluez_mgmt_ctl", return_value=mock_mgmt_ctl),
+        patch(
+            "habluetooth.wrappers.get_platform_client_backend_type",
+            return_value=FakeBleakClientTracksConnect,
+        ),
+    ):
+        ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+        client = bleak.BleakClient(ble_device)
+        # Connection should succeed even though param loading failed
+        await client.connect()
+
+        # Verify load_conn_params was called
+        assert mock_mgmt_ctl.load_conn_params.call_count == 2
+
+        # But no success message should be logged
+        assert "Loaded" not in caplog.text
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_connection_params_no_adapter_idx(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that connection params are not loaded if scanner has no adapter_idx."""
+    manager = _get_manager()
+
+    # Create a scanner without adapter_idx (e.g., remote scanner)
+    remote_scanner = FakeScanner("remote_scanner", "ESPHome Device", None, True)
+    cancel_remote = manager.async_register_scanner(remote_scanner)
+
+    # Inject advertisement
+    device = generate_ble_device(
+        "00:00:00:00:00:03", "Test Device", {"source": "remote_scanner"}
+    )
+    adv_data = generate_advertisement_data(
+        local_name="Test Device",
+        service_uuids=[],
+        rssi=-50,
+    )
+    remote_scanner.inject_advertisement(device, adv_data)
+    await asyncio.sleep(0)
+
+    # Mock the bluez mgmt controller
+    mock_mgmt_ctl = Mock()
+    mock_mgmt_ctl.load_conn_params.return_value = True
+
+    class FakeBleakClientTracksConnect(BaseFakeBleakClient):
+        """Fake bleak client that tracks connect."""
+
+        connected = False
+
+        async def connect(self, *args, **kwargs):
+            """Connect."""
+            self.connected = True
+            await asyncio.sleep(0)
+
+        @property
+        def is_connected(self) -> bool:
+            return self.connected
+
+    # Patch the scanner to have no adapter_idx
+    with (
+        caplog.at_level(logging.DEBUG),
+        patch.object(manager, "get_bluez_mgmt_ctl", return_value=mock_mgmt_ctl),
+        patch.object(remote_scanner, "adapter_idx", None),
+        patch(
+            "habluetooth.wrappers.get_platform_client_backend_type",
+            return_value=FakeBleakClientTracksConnect,
+        ),
+    ):
+        client = bleak.BleakClient("00:00:00:00:00:03")
+        await client.connect()
+
+        # Verify load_conn_params was NOT called since adapter_idx is None
+        assert mock_mgmt_ctl.load_conn_params.call_count == 0
+
+    cancel_remote()

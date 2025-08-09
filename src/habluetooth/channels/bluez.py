@@ -55,18 +55,24 @@ CONNECTION_ERRORS = (
 )
 
 
+def _set_future_if_not_done(future: asyncio.Future[None] | None) -> None:
+    """Set the future result if not done."""
+    if future is not None and not future.done():
+        future.set_result(None)
+
+
 class BluetoothMGMTProtocol:
     """Bluetooth MGMT protocol."""
 
     def __init__(
         self,
-        connection_mode_future: asyncio.Future[None],
+        connection_made_future: asyncio.Future[None],
         scanners: dict[int, HaScanner],
         on_connection_lost: Callable[[], None],
     ) -> None:
         """Initialize the protocol."""
         self.transport: asyncio.Transport | None = None
-        self.connection_mode_future = connection_mode_future
+        self.connection_made_future = connection_made_future
         self._buffer: bytes | None = None
         self._buffer_len = 0
         self._pos = 0
@@ -75,8 +81,7 @@ class BluetoothMGMTProtocol:
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         """Handle connection made."""
-        if not self.connection_mode_future.done():
-            self.connection_mode_future.set_result(None)
+        _set_future_if_not_done(self.connection_made_future)
         self.transport = cast(asyncio.Transport, transport)
 
     def _add_to_buffer(self, data: bytes | bytearray | memoryview) -> None:
@@ -225,12 +230,8 @@ class MGMTBluetoothCtl:
     def _on_connection_lost(self) -> None:
         """Handle connection lost."""
         _LOGGER.debug("Bluetooth management socket connection lost, reconnecting")
-        if (
-            self._on_connection_lost_future
-            and not self._on_connection_lost_future.done()
-        ):
-            self._on_connection_lost_future.set_result(None)
-            self._on_connection_lost_future = None
+        _set_future_if_not_done(self._on_connection_lost_future)
+        self._on_connection_lost_future = None
 
     async def reconnect_task(self) -> None:
         """Monitor the connection and reconnect if needed."""
