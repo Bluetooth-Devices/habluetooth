@@ -127,6 +127,8 @@ select = [
     "UP",  # pyupgrade
     "I",   # isort
     "RUF", # ruff specific
+    "RET", # return
+    "SIM", # simplify
 ]
 
 [tool.ruff.lint.per-file-ignores]

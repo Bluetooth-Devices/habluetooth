@@ -111,7 +111,7 @@ class FakeBleakClientFailsToConnect(BaseFakeBleakClient):
 
     async def connect(self, *args, **kwargs):
         """Connect."""
-        return None
+        return
 
     @property
     def is_connected(self):
@@ -251,9 +251,7 @@ async def test_test_switch_adapters_when_out_of_slots(
 
     # When hci0 runs out of slots, we should try hci1
     def _allocate_slot_mock(ble_device: BLEDevice) -> bool:
-        if "hci1" in ble_device.details["path"]:
-            return True
-        return False
+        return "hci1" in ble_device.details["path"]
 
     with (
         patch.object(manager.slot_manager, "release_slot") as release_slot_mock,
@@ -530,7 +528,7 @@ async def test_passing_subclassed_str_as_address(
 
         async def connect(self, *args, **kwargs):
             """Connect."""
-            return None
+            return
 
         @property
         def is_connected(self) -> bool:
