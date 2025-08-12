@@ -24,6 +24,8 @@ from habluetooth import (
     set_manager,
 )
 from habluetooth.channels.bluez import (
+    ADV_MONITOR_DEVICE_FOUND,
+    DEVICE_FOUND,
     BluetoothMGMTProtocol,
     MGMTBluetoothCtl,
 )
@@ -42,8 +44,6 @@ from . import (
 )
 from .conftest import FakeBluetoothAdapters
 
-ADV_MONITOR_DEVICE_FOUND = 0x002F
-DEVICE_FOUND = 0x0012
 IS_WINDOWS = 'os.name == "nt"'
 IS_POSIX = 'os.name == "posix"'
 NOT_POSIX = 'os.name != "posix"'
@@ -831,9 +831,6 @@ async def test_adapter_init_fails_fallback_to_passive(
     mock_discovered: list[Any] = []
 
     class MockBleakScanner:
-        _backend: "MockBleakScanner"
-        seen_devices = {}  # type: ignore[var-annotated] # noqa: RUF012
-
         async def start(self, *args, **kwargs):
             """Mock Start."""
             nonlocal called_start
@@ -869,7 +866,6 @@ async def test_adapter_init_fails_fallback_to_passive(
             return {}
 
     mock_scanner = MockBleakScanner()
-    mock_scanner._backend = mock_scanner
     start_time_monotonic = time.monotonic()
 
     with (
