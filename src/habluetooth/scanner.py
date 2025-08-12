@@ -240,6 +240,9 @@ class HaScanner(BaseHaScanner):
         """Return a list of discovered devices and advertisement data."""
         if not self.scanner:
             return {}
+        # Note that _backend is accessed directly to avoid
+        # creating a new dictcomp ever time.
+        _LOGGER.warning("seen devices: %s", self.scanner._backend.seen_devices)
         return self.scanner.discovered_devices_and_advertisement_data
 
     @property
