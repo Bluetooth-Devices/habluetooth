@@ -240,6 +240,13 @@ class HaScanner(BaseHaScanner):
         """Return a list of discovered devices and advertisement data."""
         if not self.scanner:
             return {}
+        _LOGGER.warning(
+            "Discovered devices and adv data: %s",
+            self.scanner.discovered_devices_and_advertisement_data,
+        )
+        _LOGGER.warning(
+            "Underlying seen_devices: %s", self.scanner._backend.seen_devices
+        )
         return self.scanner.discovered_devices_and_advertisement_data
 
     @property
