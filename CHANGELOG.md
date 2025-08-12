@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.0.2 (2025-08-12)
+
+### Bug fixes
+
+
+- Solve performance regression while connecting in linux ([`47b5b7e`](https://github.com/Bluetooth-Devices/habluetooth/commit/47b5b7e4e00b2be7922a2101a690e37de0970e5e))
+
+
 ## v5.0.1 (2025-08-09)
 
 ### Bug fixes
