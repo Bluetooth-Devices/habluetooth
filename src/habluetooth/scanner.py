@@ -240,6 +240,12 @@ class HaScanner(BaseHaScanner):
         """Return a list of discovered devices and advertisement data."""
         if not self.scanner:
             return {}
+        if IS_LINUX:
+            # Only Linux, seen_devices is already a dict
+            # of address -> (device, advertisement_data)
+            # so we can avoid the dict comp on every scanner
+            # when connecting.
+            return self.scanner._backend.seen_devices
         return self.scanner.discovered_devices_and_advertisement_data
 
     @property
