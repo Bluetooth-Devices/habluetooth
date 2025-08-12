@@ -240,6 +240,11 @@ class HaScanner(BaseHaScanner):
         """Return a list of discovered devices and advertisement data."""
         if not self.scanner:
             return {}
+        _LOGGER.warning(
+            "Discovered devices: %s",
+            self.scanner.discovered_devices_and_advertisement_data,
+        )
+        _LOGGER.warning("Seen devices: %s", self.scanner._backend.seen_devices)
         if IS_LINUX:
             # Only Linux, seen_devices is already a dict
             # of address -> (device, advertisement_data)
