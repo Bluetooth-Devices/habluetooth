@@ -240,6 +240,9 @@ class HaBleakClientWrapper(BleakClient):
         self.__services = services
         self._backend: BaseBleakClient | None = None
         self._pair_before_connect = pair
+        # Check if this client is being created through establish_connection
+        # by checking for the '_is_retry_client' marker in kwargs
+        self._is_retry_client = kwargs.pop("_is_retry_client", False)
 
     @property
     def is_connected(self) -> bool:
@@ -288,6 +291,17 @@ class HaBleakClientWrapper(BleakClient):
         """Connect to the specified GATT server."""
         if self.is_connected:
             return
+
+        # Warn if not using bleak-retry-connector's establish_connection
+        if not self._is_retry_client:
+            _LOGGER.warning(
+                "%s: BleakClient.connect() called without bleak-retry-connector. "
+                "For reliable connection establishment, use "
+                "bleak_retry_connector.establish_connection(). "
+                "See https://github.com/Bluetooth-Devices/bleak-retry-connector",
+                self.__address,
+            )
+
         manager = self.__manager
         if manager.shutdown:
             raise BleakError("Bluetooth is already shutdown")
