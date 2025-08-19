@@ -1,5 +1,17 @@
 # Changelog
 
+## v5.1.0 (2025-08-19)
+
+### Features
+
+
+- Warn when connections are established without bleak-retry-connector ([`ba23681`](https://github.com/Bluetooth-Devices/habluetooth/commit/ba23681de0a4056da130ce7d2e8d7c25dbb18ad0))
+
+
+### Unknown
+
+
+
 ## v5.0.2 (2025-08-12)
 
 ### Bug fixes
