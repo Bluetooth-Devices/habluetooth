@@ -16,8 +16,10 @@ from habluetooth import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
     BluetoothManager,
+    BluetoothScanningMode,
     BluetoothServiceInfoBleak,
     HaBluetoothSlotAllocations,
+    HaScannerModeChange,
     HaScannerRegistration,
     HaScannerRegistrationEvent,
     get_manager,
@@ -412,6 +414,82 @@ async def test_async_register_scanner_registration_callback(
     )
     cancel1()
     cancel2()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_async_register_scanner_mode_change_callback(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Test bluetooth async_register_scanner_mode_change_callback handles failures."""
+    manager = get_manager()
+    assert manager._loop is not None
+
+    scanners = manager.async_current_scanners()
+    assert len(scanners) == 2
+    scanner = scanners[0]
+
+    failed_mode_callbacks: list[HaScannerModeChange] = []
+
+    def _failing_callback(mode_change: HaScannerModeChange) -> None:
+        """Failing callback."""
+        failed_mode_callbacks.append(mode_change)
+        raise ValueError("This is a test")
+
+    ok_mode_callbacks: list[HaScannerModeChange] = []
+
+    def _ok_callback(mode_change: HaScannerModeChange) -> None:
+        """Ok callback."""
+        ok_mode_callbacks.append(mode_change)
+
+    cancel1 = manager.async_register_scanner_mode_change_callback(
+        _failing_callback, None
+    )
+    # Make sure the second callback still works if the first one fails and
+    # raises an exception
+    cancel2 = manager.async_register_scanner_mode_change_callback(_ok_callback, None)
+
+    # Test specific source callback
+    source_specific_callbacks: list[HaScannerModeChange] = []
+
+    def _source_specific_callback(mode_change: HaScannerModeChange) -> None:
+        """Source specific callback."""
+        source_specific_callbacks.append(mode_change)
+
+    cancel3 = manager.async_register_scanner_mode_change_callback(
+        _source_specific_callback, scanner.source
+    )
+
+    # Change requested mode
+
+    scanner.set_requested_mode(BluetoothScanningMode.ACTIVE)
+
+    assert len(ok_mode_callbacks) == 1
+    assert ok_mode_callbacks[0].scanner == scanner
+    assert ok_mode_callbacks[0].requested_mode == BluetoothScanningMode.ACTIVE
+    assert ok_mode_callbacks[0].current_mode == scanner.current_mode
+
+    assert len(failed_mode_callbacks) == 1
+    assert len(source_specific_callbacks) == 1
+
+    # Change current mode
+    scanner.set_current_mode(BluetoothScanningMode.ACTIVE)
+
+    assert len(ok_mode_callbacks) == 2
+    assert ok_mode_callbacks[1].scanner == scanner
+    assert ok_mode_callbacks[1].current_mode == BluetoothScanningMode.ACTIVE
+
+    assert len(failed_mode_callbacks) == 2
+    assert len(source_specific_callbacks) == 2
+
+    # No change when setting the same mode
+    scanner.set_current_mode(BluetoothScanningMode.ACTIVE)
+    assert len(ok_mode_callbacks) == 2
+
+    cancel1()
+    cancel2()
+    cancel3()
 
 
 @pytest.mark.asyncio

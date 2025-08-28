@@ -17,6 +17,7 @@ from habluetooth import (
     BluetoothScanningMode,
     HaBluetoothConnector,
     HaScannerDetails,
+    HaScannerModeChange,
     get_manager,
 )
 from habluetooth.const import (
@@ -743,3 +744,66 @@ def test_connection_history_failure_count(caplog: pytest.LogCaptureFixture) -> N
     assert "Removing a non-existing connecting" not in caplog.text
     hci0_scanner._finished_connecting(device1_address, True)
     assert "Removing a non-existing connecting" in caplog.text
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_scanner_mode_changes() -> None:
+    """Test scanner mode change methods notify the manager."""
+    manager = get_manager()
+
+    # Track mode changes
+    mode_changes: list[HaScannerModeChange] = []
+
+    def mode_callback(change: HaScannerModeChange) -> None:
+        """Track mode changes."""
+        mode_changes.append(change)
+
+    cancel = manager.async_register_scanner_mode_change_callback(mode_callback, None)
+
+    # Create a scanner with initial modes
+    scanner = FakeScanner(
+        HCI0_SOURCE_ADDRESS,
+        "hci0",
+        connectable=True,
+        requested_mode=BluetoothScanningMode.PASSIVE,
+        current_mode=BluetoothScanningMode.PASSIVE,
+    )
+
+    # Set up the scanner
+    unsetup = scanner.async_setup()
+
+    # Test changing requested mode
+    scanner.set_requested_mode(BluetoothScanningMode.ACTIVE)
+    assert len(mode_changes) == 1
+    assert mode_changes[0].scanner == scanner
+    assert mode_changes[0].requested_mode == BluetoothScanningMode.ACTIVE
+    assert mode_changes[0].current_mode == BluetoothScanningMode.PASSIVE
+    assert scanner.requested_mode == BluetoothScanningMode.ACTIVE
+
+    # Test changing current mode
+    scanner.set_current_mode(BluetoothScanningMode.ACTIVE)
+    assert len(mode_changes) == 2
+    assert mode_changes[1].scanner == scanner
+    assert mode_changes[1].requested_mode == BluetoothScanningMode.ACTIVE
+    assert mode_changes[1].current_mode == BluetoothScanningMode.ACTIVE
+    assert scanner.current_mode == BluetoothScanningMode.ACTIVE
+
+    # Test no notification when mode doesn't change
+    scanner.set_current_mode(BluetoothScanningMode.ACTIVE)
+    assert len(mode_changes) == 2  # No new notification
+
+    # Test setting to None
+    scanner.set_requested_mode(None)
+    assert len(mode_changes) == 3
+    assert mode_changes[2].requested_mode is None
+    assert scanner.requested_mode is None
+
+    scanner.set_current_mode(None)  # type: ignore[unreachable]
+    assert len(mode_changes) == 4
+    assert mode_changes[3].current_mode is None
+    assert scanner.current_mode is None
+
+    # Clean up
+    unsetup()
+    cancel()

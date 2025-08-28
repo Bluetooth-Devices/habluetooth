@@ -20,6 +20,7 @@ from .models import (
     HaBluetoothConnector,
     HaBluetoothSlotAllocations,
     HaScannerDetails,
+    HaScannerModeChange,
     HaScannerRegistration,
     HaScannerRegistrationEvent,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "HaBluetoothSlotAllocations",
     "HaScanner",
     "HaScannerDetails",
+    "HaScannerModeChange",
     "HaScannerRegistration",
     "HaScannerRegistrationEvent",
     "ScannerStartError",
