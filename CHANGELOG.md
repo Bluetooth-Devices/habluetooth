@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.2.0 (2025-08-28)
+
+### Features
+
+
+- Add methods to set current and requested mode to scanner ([`3cf872c`](https://github.com/Bluetooth-Devices/habluetooth/commit/3cf872c899beadd9594a5749a5ce433d943852f4))
+
+
 ## v5.1.0 (2025-08-19)
 
 ### Features
