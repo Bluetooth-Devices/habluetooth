@@ -350,7 +350,7 @@ class HaScanner(BaseHaScanner):
             self._loop is not None
         ), "Loop is not set, call async_setup first"
 
-        self.current_mode = self.requested_mode
+        self.set_current_mode(self.requested_mode)
         # 1st attempt - no auto reset
         # 2nd attempt - try to reset the adapter and wait a bit
         # 3th attempt - no auto reset
@@ -368,7 +368,7 @@ class HaScanner(BaseHaScanner):
                 attempt,
                 START_ATTEMPTS,
             )
-            self.current_mode = BluetoothScanningMode.PASSIVE
+            self.set_current_mode(BluetoothScanningMode.PASSIVE)
 
         assert self.current_mode is not None  # noqa: S101
         self.scanner = create_bleak_scanner(
