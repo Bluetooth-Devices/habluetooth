@@ -590,6 +590,18 @@ class BaseHaScanner:
         self._async_expire_devices()
         self._schedule_expire_devices()
 
+    def set_requested_mode(self, mode: BluetoothScanningMode | None) -> None:
+        """Set the requested scanning mode and notify the manager."""
+        if self.requested_mode != mode:
+            self.requested_mode = mode
+            self._manager.scanner_mode_changed(self)
+
+    def set_current_mode(self, mode: BluetoothScanningMode | None) -> None:
+        """Set the current scanning mode and notify the manager."""
+        if self.current_mode != mode:
+            self.current_mode = mode
+            self._manager.scanner_mode_changed(self)
+
 
 class BaseHaRemoteScanner(BaseHaScanner):
     """Base class for a high availability remote BLE scanner."""

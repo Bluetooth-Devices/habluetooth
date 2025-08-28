@@ -42,6 +42,7 @@ from .const import (
 from .models import (
     BluetoothServiceInfoBleak,
     HaBluetoothSlotAllocations,
+    HaScannerModeChange,
     HaScannerRegistration,
     HaScannerRegistrationEvent,
 )
@@ -133,6 +134,7 @@ class BluetoothManager:
         "_mgmt_ctl",
         "_non_connectable_scanners",
         "_recovery_lock",
+        "_scanner_mode_change_callbacks",
         "_scanner_registration_callbacks",
         "_side_channel_scanners",
         "_sources",
@@ -191,6 +193,9 @@ class BluetoothManager:
         ] = {}
         self._scanner_registration_callbacks: dict[
             str | None, set[Callable[[HaScannerRegistration], None]]
+        ] = {}
+        self._scanner_mode_change_callbacks: dict[
+            str | None, set[Callable[[HaScannerModeChange], None]]
         ] = {}
         self._subclass_discover_info = self._discover_service_info
         self._mgmt_ctl: MGMTBluetoothCtl | None = None
@@ -952,3 +957,39 @@ class BluetoothManager:
     def async_current_scanners(self) -> list[BaseHaScanner]:
         """Return the current scanners."""
         return list(self._sources.values())
+
+    def async_register_scanner_mode_change_callback(
+        self, callback: Callable[[HaScannerModeChange], None], source: str | None
+    ) -> CALLBACK_TYPE:
+        """Register a callback to be called when a scanner mode changes."""
+        self._scanner_mode_change_callbacks.setdefault(source, set()).add(callback)
+        return partial(
+            self._async_unregister_scanner_mode_change_callback, callback, source
+        )
+
+    def _async_unregister_scanner_mode_change_callback(
+        self, callback: Callable[[HaScannerModeChange], None], source: str | None
+    ) -> None:
+        """Unregister a scanner mode change callback."""
+        if (callbacks := self._scanner_mode_change_callbacks.get(source)) is not None:
+            callbacks.discard(callback)
+            if not callbacks:
+                del self._scanner_mode_change_callbacks[source]
+
+    def scanner_mode_changed(self, scanner: BaseHaScanner) -> None:
+        """Notify callbacks that a scanner's mode has changed."""
+        mode_change = HaScannerModeChange(
+            scanner=scanner,
+            requested_mode=scanner.requested_mode,
+            current_mode=scanner.current_mode,
+        )
+        for source_key in (scanner.source, None):
+            if not (
+                mode_callbacks := self._scanner_mode_change_callbacks.get(source_key)
+            ):
+                continue
+            for callback_ in mode_callbacks:
+                try:
+                    callback_(mode_change)
+                except Exception:  # pylint: disable=broad-except
+                    _LOGGER.exception("Error in scanner mode change callback")

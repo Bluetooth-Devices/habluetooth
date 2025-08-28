@@ -63,6 +63,7 @@ cdef class BluetoothManager:
     cdef public dict _adapter_sources
     cdef public dict _allocations
     cdef public dict _scanner_registration_callbacks
+    cdef public dict _scanner_mode_change_callbacks
     cdef public object _subclass_discover_info
     cdef public bint has_advertising_side_channel
     cdef public dict _side_channel_scanners

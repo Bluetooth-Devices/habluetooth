@@ -56,6 +56,15 @@ class HaScannerRegistration:
     scanner: BaseHaScanner
 
 
+@dataclass(slots=True, frozen=True)
+class HaScannerModeChange:
+    """Data for a scanner mode change event."""
+
+    scanner: BaseHaScanner
+    requested_mode: BluetoothScanningMode | None
+    current_mode: BluetoothScanningMode | None
+
+
 @dataclass(slots=True)
 class HaBluetoothConnector:
     """Data for how to connect a BLEDevice from a given scanner."""
