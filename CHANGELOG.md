@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.2.1 (2025-08-29)
+
+### Bug fixes
+
+
+- Incorrect advertising interval calculation when scanner pauses for connections ([`1c8db59`](https://github.com/Bluetooth-Devices/habluetooth/commit/1c8db59b8da69439d253bc356fe7be5321c7fb23))
+
+
 ## v5.2.0 (2025-08-28)
 
 ### Features

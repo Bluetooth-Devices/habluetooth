@@ -1,4 +1,4 @@
-__version__ = "5.2.0"
+__version__ = "5.2.1"
 
 from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
