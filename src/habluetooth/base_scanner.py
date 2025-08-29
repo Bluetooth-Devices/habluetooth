@@ -134,6 +134,9 @@ class BaseHaScanner:
     def _add_connecting(self, address: str) -> None:
         """Add a connecting."""
         self._increase_count(self._connect_in_progress, address)
+        # Clear timing collection data when scanner pauses for connection
+        # to prevent collecting invalid advertising interval data
+        self._manager._advertisement_tracker.async_scanner_paused(self.source)
 
     def _remove_connecting(self, address: str) -> None:
         """Remove a connecting."""

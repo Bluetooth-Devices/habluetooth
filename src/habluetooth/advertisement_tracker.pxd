@@ -15,3 +15,5 @@ cdef class AdvertisementTracker:
     cpdef void async_collect(self, BluetoothServiceInfoBleak service_info)
 
     cpdef void async_remove_address(self, object address)
+
+    cpdef void async_scanner_paused(self, str source)

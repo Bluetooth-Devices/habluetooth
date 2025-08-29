@@ -80,3 +80,18 @@ class AdvertisementTracker:
         for address, tracked_source in list(self.sources.items()):
             if tracked_source == source:
                 self.async_remove_address(address)
+
+    def async_scanner_paused(self, source: str) -> None:
+        """
+        Clear timing collection data when scanner is paused.
+
+        When a scanner pauses to establish a connection, it stops listening
+        for advertisements. If we don't clear the timing data, the next
+        advertisement after the connection attempt will create an incorrectly
+        large interval measurement (time_after_connection - time_before_connection)
+        which doesn't represent the actual advertising interval of the device.
+        """
+        # Only iterate through timing data (typically much smaller than sources)
+        for address in list(self._timings):
+            if self.sources.get(address) == source:
+                del self._timings[address]
