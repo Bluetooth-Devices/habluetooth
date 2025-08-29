@@ -24,8 +24,6 @@ from habluetooth import (
     set_manager,
 )
 from habluetooth.channels.bluez import (
-    ADV_MONITOR_DEVICE_FOUND,
-    DEVICE_FOUND,
     BluetoothMGMTProtocol,
     MGMTBluetoothCtl,
 )
@@ -44,6 +42,8 @@ from . import (
 )
 from .conftest import FakeBluetoothAdapters
 
+DEVICE_FOUND = 0x0012
+ADV_MONITOR_DEVICE_FOUND = 0x002F
 IS_WINDOWS = 'os.name == "nt"'
 IS_POSIX = 'os.name == "posix"'
 NOT_POSIX = 'os.name != "posix"'
