@@ -91,7 +91,7 @@ class AdvertisementTracker:
         large interval measurement (time_after_connection - time_before_connection)
         which doesn't represent the actual advertising interval of the device.
         """
-        for address, tracked_source in list(self.sources.items()):
-            if tracked_source == source:
-                # Clear only the timing collection data, preserve learned intervals
-                self._timings.pop(address, None)
+        # Only iterate through timing data (typically much smaller than sources)
+        for address in list(self._timings):
+            if self.sources.get(address) == source:
+                del self._timings[address]
