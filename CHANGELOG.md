@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.3.0 (2025-08-31)
+
+### Features
+
+
+- Include scanner type in details ([`0b558f1`](https://github.com/Bluetooth-Devices/habluetooth/commit/0b558f155e650b26a1b8c996d7292f62906cc3b4))
+
+
 ## v5.2.1 (2025-08-29)
 
 ### Bug fixes
