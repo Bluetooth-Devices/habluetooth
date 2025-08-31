@@ -19,7 +19,9 @@ from habluetooth import (
     BluetoothScanningMode,
     BluetoothServiceInfoBleak,
     HaScanner,
+    HaScannerType,
     ScannerStartError,
+    get_manager,
     scanner,
     set_manager,
 )
@@ -1241,3 +1243,237 @@ async def test_bluez_mgmt_protocol_data_flow(mock_btmgmt_socket: Mock) -> None:
     await scanner0.async_stop()
     await scanner1.async_stop()
     manager.async_stop()
+
+
+def test_usb_scanner_type() -> None:
+    """Test that USB adapters get USB scanner type."""
+    manager = get_manager()
+
+    # Mock cached adapters with USB adapter
+    mock_adapters: dict[str, dict[str, Any]] = {
+        "hci0": {
+            "address": "00:1A:7D:DA:71:04",
+            "adapter_type": "usb",
+            "manufacturer": "TestManufacturer",
+            "product": "USB Bluetooth Adapter",
+        }
+    }
+
+    with patch.object(manager, "_adapters", mock_adapters):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
+        assert scanner.details.scanner_type is HaScannerType.USB
+
+
+def test_uart_scanner_type() -> None:
+    """Test that UART adapters get UART scanner type."""
+    manager = get_manager()
+
+    # Mock cached adapters with UART adapter
+    mock_adapters: dict[str, dict[str, Any]] = {
+        "hci0": {
+            "address": "00:1A:7D:DA:71:04",
+            "adapter_type": "uart",
+            "manufacturer": "TestManufacturer",
+            "product": "UART Bluetooth Module",
+        }
+    }
+
+    with patch.object(manager, "_adapters", mock_adapters):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
+        assert scanner.details.scanner_type is HaScannerType.UART
+
+
+def test_unknown_scanner_type_no_cached_adapters() -> None:
+    """Test that scanners get UNKNOWN type when no adapter info is cached."""
+    manager = get_manager()
+
+    # No cached adapters
+    with patch.object(manager, "_adapters", None):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
+        assert scanner.details.scanner_type is HaScannerType.UNKNOWN
+
+
+def test_unknown_scanner_type_adapter_not_found() -> None:
+    """Test that scanners get UNKNOWN type when adapter is not in cache."""
+    manager = get_manager()
+
+    # Cached adapters but not the one we're looking for
+    mock_adapters: dict[str, dict[str, Any]] = {
+        "hci1": {
+            "address": "11:22:33:44:55:66",
+            "adapter_type": "usb",
+        }
+    }
+
+    with patch.object(manager, "_adapters", mock_adapters):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
+        assert scanner.details.scanner_type is HaScannerType.UNKNOWN
+
+
+def test_unknown_scanner_type_no_adapter_type() -> None:
+    """Test that scanners get UNKNOWN type when adapter_type is None."""
+    manager = get_manager()
+
+    # Cached adapter without adapter_type field
+    mock_adapters: dict[str, dict[str, Any]] = {
+        "hci0": {
+            "address": "00:1A:7D:DA:71:04",
+            "adapter_type": None,
+            "manufacturer": "TestManufacturer",
+        }
+    }
+
+    with patch.object(manager, "_adapters", mock_adapters):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
+        assert scanner.details.scanner_type is HaScannerType.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_scanner_type_with_real_adapter_data() -> None:
+    """Test scanner type detection with realistic adapter data."""
+    # Create a custom manager for this test
+    manager = BluetoothManager(bluetooth_adapters=MagicMock())
+    set_manager(manager)
+
+    # Simulate real USB adapter data from Linux
+    usb_adapter_data: dict[str, dict[str, Any]] = {
+        "hci0": {
+            "address": "00:1A:7D:DA:71:04",
+            "sw_version": "homeassistant",
+            "hw_version": "usb:v1D6Bp0246d053F",
+            "passive_scan": False,
+            "manufacturer": "XTech",
+            "product": "Bluetooth 4.0 USB Adapter",
+            "vendor_id": "0a12",
+            "product_id": "0001",
+            "adapter_type": "usb",
+        }
+    }
+
+    manager._adapters = usb_adapter_data
+
+    # Create USB scanner
+    usb_scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
+    assert usb_scanner.details.scanner_type is HaScannerType.USB
+    assert usb_scanner.details.adapter == "hci0"
+
+    # Simulate real UART adapter data
+    uart_adapter_data: dict[str, dict[str, Any]] = {
+        "hci1": {
+            "address": "AA:BB:CC:DD:EE:FF",
+            "sw_version": "homeassistant",
+            "hw_version": "uart:ttyUSB0",
+            "passive_scan": False,
+            "manufacturer": "cyber-blue(HK)Ltd",
+            "product": "Bluetooth 4.0 UART Module",
+            "vendor_id": None,
+            "product_id": None,
+            "adapter_type": "uart",
+        }
+    }
+
+    manager._adapters = uart_adapter_data
+
+    # Create UART scanner
+    uart_scanner = HaScanner(BluetoothScanningMode.PASSIVE, "hci1", "AA:BB:CC:DD:EE:FF")
+    assert uart_scanner.details.scanner_type is HaScannerType.UART
+    assert uart_scanner.details.adapter == "hci1"
+
+    # Test with macOS/Windows adapter (no adapter_type)
+    macos_adapter_data = {
+        "Core Bluetooth": {
+            "address": "00:00:00:00:00:00",
+            "passive_scan": False,
+            "sw_version": "18.7.0",
+            "manufacturer": "Apple",
+            "product": "Unknown MacOS Model",
+            "vendor_id": "Unknown",
+            "product_id": "Unknown",
+            "adapter_type": None,
+        }
+    }
+
+    manager._adapters = macos_adapter_data
+
+    # Create scanner with unknown adapter type
+    macos_scanner = HaScanner(
+        BluetoothScanningMode.ACTIVE, "Core Bluetooth", "00:00:00:00:00:00"
+    )
+    assert macos_scanner.details.scanner_type is HaScannerType.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_scanner_type_updates_after_adapter_refresh() -> None:
+    """Test scanner type is UNKNOWN initially, determined after adapters load."""
+    # Create a custom manager for this test
+    manager = BluetoothManager(bluetooth_adapters=MagicMock())
+    set_manager(manager)
+
+    # Initially no adapters cached
+    manager._adapters = None  # type: ignore[assignment]
+
+    # Create scanner - should be UNKNOWN
+    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
+    assert scanner.details.scanner_type is HaScannerType.UNKNOWN
+
+    # Now simulate adapter data becoming available
+    manager._adapters = {
+        "hci0": {
+            "address": "00:1A:7D:DA:71:04",
+            "adapter_type": "usb",
+            "manufacturer": "TestManufacturer",
+        }
+    }
+
+    # Create a new scanner with the same adapter - should now be USB
+    scanner2 = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
+    assert scanner2.details.scanner_type is HaScannerType.USB
+
+    # Note: The first scanner still has UNKNOWN since scanner_type is set at init
+    assert scanner.details.scanner_type is HaScannerType.UNKNOWN
+
+
+def test_multiple_scanner_types_simultaneously() -> None:
+    """Test that multiple scanners can have different types at the same time."""
+    manager = get_manager()
+
+    # Set up adapters with different types
+    mock_adapters = {
+        "hci0": {
+            "address": "00:1A:7D:DA:71:04",
+            "adapter_type": "usb",
+        },
+        "hci1": {
+            "address": "AA:BB:CC:DD:EE:FF",
+            "adapter_type": "uart",
+        },
+        "hci2": {
+            "address": "11:22:33:44:55:66",
+            "adapter_type": None,
+        },
+    }
+
+    with patch.object(manager, "_adapters", mock_adapters):
+        # Create scanners of different types
+        usb_scanner = HaScanner(
+            BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04"
+        )
+        uart_scanner = HaScanner(
+            BluetoothScanningMode.ACTIVE, "hci1", "AA:BB:CC:DD:EE:FF"
+        )
+        unknown_scanner = HaScanner(
+            BluetoothScanningMode.ACTIVE, "hci2", "11:22:33:44:55:66"
+        )
+
+        # Verify each has the correct type
+        assert usb_scanner.details.scanner_type is HaScannerType.USB
+        assert uart_scanner.details.scanner_type is HaScannerType.UART
+        assert unknown_scanner.details.scanner_type is HaScannerType.UNKNOWN
+
+        # Verify they all have different types
+        types = {
+            usb_scanner.details.scanner_type,
+            uart_scanner.details.scanner_type,
+            unknown_scanner.details.scanner_type,
+        }
+        assert len(types) == 3  # All different

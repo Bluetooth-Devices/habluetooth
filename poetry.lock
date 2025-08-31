@@ -165,14 +165,14 @@ dbus-fast = {version = ">=1.14.0", markers = "platform_system == \"Linux\""}
 
 [[package]]
 name = "bluetooth-adapters"
-version = "2.0.0"
+version = "2.1.0"
 description = "Tools to enumerate and find Bluetooth Adapters"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "bluetooth_adapters-2.0.0-py3-none-any.whl", hash = "sha256:7eff2c48dd3170e8ccf91888ddc97d847faa24cdd2678cf4b78166c1999171a8"},
-    {file = "bluetooth_adapters-2.0.0.tar.gz", hash = "sha256:ecdba203e806a90ea503cc32acfe11eafdc10813abac4591545d174da78d3c55"},
+    {file = "bluetooth_adapters-2.1.0-py3-none-any.whl", hash = "sha256:d40204ef5277209987a4ac7eb385ef11af477133e2dcdafd60bb65172c106797"},
+    {file = "bluetooth_adapters-2.1.0.tar.gz", hash = "sha256:ef7363c7557721fdad28df30fbdf0c7f2f793671ad259b99be4b38a78afe9038"},
 ]
 
 [package.dependencies]
@@ -2144,4 +2144,4 @@ all = ["winrt-Windows.Foundation.Collections[all] (>=3.2.1.0,<3.3.0.0)", "winrt-
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "97e8b97463f2ae04f99dfaf2e6d92a1a682b2da2aa116e50a245c5c7276b51db"
+content-hash = "33c85c796e4dd5c4fadc4468d408cbefcecb4d7d2dd82040a1b9f9d41d6d1cc5"
