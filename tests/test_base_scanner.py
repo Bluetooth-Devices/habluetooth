@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import timedelta
-from unittest.mock import ANY
+from typing import Any
+from unittest.mock import ANY, MagicMock
 
 import pytest
 from bleak.backends.device import BLEDevice
@@ -14,6 +15,7 @@ from bluetooth_data_tools import monotonic_time_coarse
 
 from habluetooth import (
     BaseHaRemoteScanner,
+    BaseHaScanner,
     BluetoothScanningMode,
     HaBluetoothConnector,
     HaScannerDetails,
@@ -812,3 +814,44 @@ async def test_scanner_mode_changes() -> None:
     # Clean up
     unsetup()
     cancel()
+
+
+def test_remote_scanner_type() -> None:
+    """Test that remote scanners have REMOTE type."""
+
+    class TestRemoteScanner(BaseHaRemoteScanner):
+        """Test remote scanner implementation."""
+
+        pass
+
+    scanner = TestRemoteScanner("test_source", "test_adapter")
+    assert scanner.details.scanner_type is HaScannerType.REMOTE
+
+
+def test_base_scanner_with_connector() -> None:
+    """Test BaseHaScanner with connector and adapter type."""
+    manager = get_manager()
+
+    mock_adapters: dict[str, dict[str, Any]] = {
+        "test_adapter": {
+            "address": "00:1A:7D:DA:71:04",
+            "adapter_type": "usb",
+        }
+    }
+
+    connector = HaBluetoothConnector(
+        client=MagicMock, source="test_source", can_connect=lambda: True
+    )
+
+    original_adapters = manager._adapters
+    manager._adapters = mock_adapters
+    try:
+        scanner = BaseHaScanner(
+            source="test_source",
+            adapter="test_adapter",
+            connector=connector,
+            connectable=True,
+        )
+        assert scanner.details.scanner_type is HaScannerType.USB
+    finally:
+        manager._adapters = original_adapters
