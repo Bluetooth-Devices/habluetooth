@@ -23,6 +23,7 @@ from .models import (
     HaScannerModeChange,
     HaScannerRegistration,
     HaScannerRegistrationEvent,
+    HaScannerType,
 )
 from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
 from .scanner_device import BluetoothScannerDevice
@@ -63,6 +64,7 @@ __all__ = [
     "HaScannerModeChange",
     "HaScannerRegistration",
     "HaScannerRegistrationEvent",
+    "HaScannerType",
     "ScannerStartError",
     "discovered_device_advertisement_data_from_dict",
     "discovered_device_advertisement_data_to_dict",

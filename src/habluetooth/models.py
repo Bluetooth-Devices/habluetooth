@@ -82,6 +82,16 @@ class HaScannerDetails:
     connectable: bool
     name: str
     adapter: str
+    scanner_type: HaScannerType
+
+
+class HaScannerType(Enum):
+    """The type of scanner."""
+
+    USB = "usb"
+    UART = "uart"
+    REMOTE = "remote"
+    UNKNOWN = "unknown"
 
 
 class BluetoothScanningMode(Enum):

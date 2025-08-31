@@ -18,6 +18,7 @@ from habluetooth import (
     HaBluetoothConnector,
     HaScannerDetails,
     HaScannerModeChange,
+    HaScannerType,
     get_manager,
 )
 from habluetooth.const import (
@@ -150,6 +151,7 @@ async def test_remote_scanner(name_2: str | None) -> None:
         connectable=scanner.connectable,
         name=scanner.name,
         adapter=scanner.adapter,
+        scanner_type=HaScannerType.REMOTE,
     )
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
@@ -538,6 +540,7 @@ async def test_merge_manufacturer_data_history_existing() -> None:
         connectable=scanner.connectable,
         name=scanner.name,
         adapter=scanner.adapter,
+        scanner_type=HaScannerType.REMOTE,
     )
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
@@ -616,6 +619,7 @@ async def test_merge_manufacturer_data_history_new() -> None:
         connectable=scanner.connectable,
         name=scanner.name,
         adapter=scanner.adapter,
+        scanner_type=HaScannerType.REMOTE,
     )
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
@@ -683,6 +687,7 @@ async def test_filter_apple_data() -> None:
         connectable=scanner.connectable,
         name=scanner.name,
         adapter=scanner.adapter,
+        scanner_type=HaScannerType.REMOTE,
     )
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)

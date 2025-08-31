@@ -281,6 +281,10 @@ class BluetoothManager:
             self._adapter_refresh_future.set_result(None)
             self._adapter_refresh_future = None
 
+    def get_cached_bluetooth_adapters(self) -> dict[str, AdapterDetails] | None:
+        """Get cached bluetooth adapters synchronously."""
+        return self._adapters
+
     async def async_get_bluetooth_adapters(
         self, cached: bool = True
     ) -> dict[str, AdapterDetails]:
