@@ -94,21 +94,19 @@ class BaseHaScanner:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._manager = get_manager()
         # Determine scanner type based on class type
+        scanner_type = HaScannerType.UNKNOWN
         if isinstance(self, BaseHaRemoteScanner):
             scanner_type = HaScannerType.REMOTE
-        else:
-            # Try to get adapter type from manager's cached adapters
-            scanner_type = HaScannerType.UNKNOWN
-            if (adapters := self._manager.get_cached_bluetooth_adapters()) and (
-                adapter_details := adapters.get(adapter)
-            ):
-                adapter_type = adapter_details.get("adapter_type")
-                if adapter_type == "usb":
-                    scanner_type = HaScannerType.USB
-                elif adapter_type == "uart":
-                    scanner_type = HaScannerType.UART
-                else:
-                    scanner_type = HaScannerType.UNKNOWN
+        # Try to get adapter type from manager's cached adapters
+        elif (
+            (adapters := self._manager.get_cached_bluetooth_adapters())
+            and (adapter_details := adapters.get(adapter))
+            and (adapter_type := adapter_details.get("adapter_type"))
+        ):
+            if adapter_type == "usb":
+                scanner_type = HaScannerType.USB
+            elif adapter_type == "uart":
+                scanner_type = HaScannerType.UART
         self.details = HaScannerDetails(
             source=self.source,
             connectable=self.connectable,
