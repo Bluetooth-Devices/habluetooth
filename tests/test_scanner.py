@@ -1259,13 +1259,9 @@ def test_usb_scanner_type() -> None:
         }
     }
 
-    original_adapters = manager._adapters
-    manager._adapters = mock_adapters
-    try:
+    with patch.object(manager, "_adapters", mock_adapters):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
         assert scanner.details.scanner_type is HaScannerType.USB
-    finally:
-        manager._adapters = original_adapters
 
 
 def test_uart_scanner_type() -> None:
@@ -1282,13 +1278,9 @@ def test_uart_scanner_type() -> None:
         }
     }
 
-    original_adapters = manager._adapters
-    manager._adapters = mock_adapters
-    try:
+    with patch.object(manager, "_adapters", mock_adapters):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
         assert scanner.details.scanner_type is HaScannerType.UART
-    finally:
-        manager._adapters = original_adapters
 
 
 def test_unknown_scanner_type_no_cached_adapters() -> None:
@@ -1296,13 +1288,9 @@ def test_unknown_scanner_type_no_cached_adapters() -> None:
     manager = get_manager()
 
     # No cached adapters
-    original_adapters = manager._adapters
-    manager._adapters = None  # type: ignore[assignment]
-    try:
+    with patch.object(manager, "_adapters", None):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
         assert scanner.details.scanner_type is HaScannerType.UNKNOWN
-    finally:
-        manager._adapters = original_adapters
 
 
 def test_unknown_scanner_type_adapter_not_found() -> None:
@@ -1317,13 +1305,9 @@ def test_unknown_scanner_type_adapter_not_found() -> None:
         }
     }
 
-    original_adapters = manager._adapters
-    manager._adapters = mock_adapters
-    try:
+    with patch.object(manager, "_adapters", mock_adapters):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
         assert scanner.details.scanner_type is HaScannerType.UNKNOWN
-    finally:
-        manager._adapters = original_adapters
 
 
 def test_unknown_scanner_type_no_adapter_type() -> None:
@@ -1339,13 +1323,9 @@ def test_unknown_scanner_type_no_adapter_type() -> None:
         }
     }
 
-    original_adapters = manager._adapters
-    manager._adapters = mock_adapters
-    try:
+    with patch.object(manager, "_adapters", mock_adapters):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04")
         assert scanner.details.scanner_type is HaScannerType.UNKNOWN
-    finally:
-        manager._adapters = original_adapters
 
 
 @pytest.mark.asyncio
@@ -1473,10 +1453,7 @@ def test_multiple_scanner_types_simultaneously() -> None:
         },
     }
 
-    # Temporarily set the adapters
-    original_adapters = manager._adapters
-    manager._adapters = mock_adapters
-    try:
+    with patch.object(manager, "_adapters", mock_adapters):
         # Create scanners of different types
         usb_scanner = HaScanner(
             BluetoothScanningMode.ACTIVE, "hci0", "00:1A:7D:DA:71:04"
@@ -1500,5 +1477,3 @@ def test_multiple_scanner_types_simultaneously() -> None:
             unknown_scanner.details.scanner_type,
         }
         assert len(types) == 3  # All different
-    finally:
-        manager._adapters = original_adapters

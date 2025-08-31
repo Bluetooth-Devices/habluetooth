@@ -6,7 +6,7 @@ import asyncio
 import time
 from datetime import timedelta
 from typing import Any
-from unittest.mock import ANY, MagicMock
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from bleak.backends.device import BLEDevice
@@ -843,9 +843,7 @@ def test_base_scanner_with_connector() -> None:
         client=MagicMock, source="test_source", can_connect=lambda: True
     )
 
-    original_adapters = manager._adapters
-    manager._adapters = mock_adapters
-    try:
+    with patch.object(manager, "_adapters", mock_adapters):
         scanner = BaseHaScanner(
             source="test_source",
             adapter="test_adapter",
@@ -853,5 +851,3 @@ def test_base_scanner_with_connector() -> None:
             connectable=True,
         )
         assert scanner.details.scanner_type is HaScannerType.USB
-    finally:
-        manager._adapters = original_adapters
