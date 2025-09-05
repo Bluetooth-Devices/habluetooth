@@ -330,6 +330,37 @@ class MGMTBluetoothCtl:
         self.protocol = cast(BluetoothMGMTProtocol, protocol)
         self._on_connection_lost_future = loop.create_future()
 
+    def _has_mgmt_capabilities_from_status(self, status: int) -> bool:
+        """
+        Check if a MGMT command status indicates we have capabilities.
+
+        Returns True if we have capabilities, False otherwise.
+
+        Status codes:
+        - 0x00 = Success (we have permissions)
+        - 0x01 = Unknown Command (might happen if kernel is too old)
+        - 0x0D = Invalid Parameters
+        - 0x10 = Not Powered (for some operations)
+        - 0x11 = Invalid Index (adapter doesn't exist but we have permissions)
+        - 0x14 = Permission Denied (missing NET_ADMIN/NET_RAW)
+        """
+        if status == 0x14:  # Permission denied
+            _LOGGER.debug(
+                "MGMT capability check failed with permission denied - "
+                "missing NET_ADMIN/NET_RAW"
+            )
+            return False
+        if status in (0x00, 0x11):  # Success or Invalid Index
+            _LOGGER.debug("MGMT capability check passed (status: %#x)", status)
+            return True
+        # Unknown status - log it and assume no permissions to be safe
+        _LOGGER.debug(
+            "MGMT capability check returned unexpected status %#x - "
+            "assuming missing permissions",
+            status,
+        )
+        return False
+
     async def _check_capabilities(self) -> bool:
         """
         Check if we have the necessary capabilities to use MGMT.
@@ -348,39 +379,7 @@ class MGMTBluetoothCtl:
         )
 
         try:
-            async with self.protocol.command_response(
-                MGMT_OP_GET_CONNECTIONS
-            ) as response_future:
-                self.protocol.transport.write(header)
-                # Wait for response with timeout
-                async with asyncio_timeout(5.0):
-                    status, _ = await response_future
-
-                # Check various error codes that indicate permission issues
-                # 0x01 = Unknown Command (might happen if kernel is too old)
-                # 0x14 = Permission Denied
-                # 0x11 = Invalid Index (adapter doesn't exist)
-                # 0x00 = Success (we have permissions)
-                # 0x0D = Invalid Parameters
-                # 0x10 = Not Powered (for some operations)
-
-                if status == 0x14:  # Permission denied
-                    _LOGGER.debug(
-                        "MGMT capability check failed with permission denied - "
-                        "missing NET_ADMIN/NET_RAW"
-                    )
-                    return False
-                if status in (0x00, 0x11):  # Success or Invalid Index
-                    _LOGGER.debug("MGMT capability check passed (status: %#x)", status)
-                    return True
-                # Unknown status - log it and assume no permissions to be safe
-                _LOGGER.debug(
-                    "MGMT capability check returned unexpected status %#x - "
-                    "assuming missing permissions",
-                    status,
-                )
-                return False
-
+            return await self._do_mgmt_op_get_connections(header)
         except (TimeoutError, OSError) as ex:
             _LOGGER.debug(
                 "MGMT capability check failed: %s - "
@@ -388,6 +387,20 @@ class MGMTBluetoothCtl:
                 ex,
             )
             return False
+
+    async def _do_mgmt_op_get_connections(self, header: bytes) -> bool:
+        """Send a MGMT_OP_GET_CONNECTIONS command and check capabilities."""
+        if not self.protocol or not self.protocol.transport:
+            return False
+
+        async with self.protocol.command_response(
+            MGMT_OP_GET_CONNECTIONS
+        ) as response_future:
+            self.protocol.transport.write(header)
+            # Wait for response with timeout
+            async with asyncio_timeout(5.0):
+                status, _ = await response_future
+            return self._has_mgmt_capabilities_from_status(status)
 
     async def setup(self) -> None:
         """Set up management interface."""
