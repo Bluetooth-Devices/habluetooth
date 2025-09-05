@@ -394,9 +394,12 @@ class MGMTBluetoothCtl:
 
         # Check if we actually have the capabilities to use MGMT
         if not await self._check_capabilities():
+            # Mark as shutting down to prevent reconnection attempts
+            self._shutting_down = True
             # Close the connection and raise an error to trigger fallback
             if self.protocol and self.protocol.transport:
                 self.protocol.transport.close()
+            btmgmt_socket.close(self.sock)
             raise PermissionError(
                 "Missing NET_ADMIN/NET_RAW capabilities for Bluetooth management"
             )
