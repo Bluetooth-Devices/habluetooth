@@ -674,6 +674,11 @@ async def test_setup_success() -> None:
                 loop.create_future(),
             ],  # First for connection, second for on_connection_lost
         ),
+        patch.object(
+            MGMTBluetoothCtl,
+            "_check_capabilities",
+            return_value=True,  # Mock successful capability check
+        ),
     ):
         ctl = MGMTBluetoothCtl(5.0, {})
         await ctl.setup()
