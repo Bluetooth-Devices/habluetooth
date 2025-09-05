@@ -39,6 +39,7 @@ ADV_MONITOR_DEVICE_FOUND = 0x002F
 MGMT_OP_READ_INDEX_LIST = 0x0003
 MGMT_OP_READ_INFO = 0x0004
 MGMT_OP_SET_POWERED = 0x0005
+MGMT_OP_GET_CONNECTIONS = 0x0015
 MGMT_OP_LOAD_CONN_PARAM = 0x0035
 
 # Management events
@@ -182,10 +183,10 @@ class BluetoothMGMTProtocol:
                     if opcode == MGMT_OP_LOAD_CONN_PARAM:
                         self._handle_load_conn_param_response(status, controller_idx)
                     elif (
-                        opcode == MGMT_OP_SET_POWERED
+                        opcode == MGMT_OP_GET_CONNECTIONS
                         and opcode in self._pending_commands
                     ):
-                        # Handle SET_POWERED response for capability check
+                        # Handle GET_CONNECTIONS response for capability check
                         future = self._pending_commands.pop(opcode)
                         if not future.done():
                             # Return status and any response data
@@ -341,22 +342,19 @@ class MGMTBluetoothCtl:
         if not self.protocol or not self.protocol.transport:
             return False
 
-        # Try SET_POWERED with current state (0x00 = off) for adapter 0
-        # This command requires NET_ADMIN to execute
-        # We use powered=off to avoid actually changing adapter state
+        # Try GET_CONNECTIONS for adapter 0 - this is a read-only command
+        # that requires NET_ADMIN privileges but doesn't change any state
         header = COMMAND_HEADER_PACK(
-            MGMT_OP_SET_POWERED,  # opcode
+            MGMT_OP_GET_CONNECTIONS,  # opcode
             0,  # controller index 0 (hci0)
-            1,  # parameter length (1 byte for powered state)
+            0,  # no parameters
         )
-        # Append powered state (0x00 = off, won't change anything if already off)
-        command = header + b"\x00"
 
         try:
             async with self.protocol.command_response(
-                MGMT_OP_SET_POWERED
+                MGMT_OP_GET_CONNECTIONS
             ) as response_future:
-                self.protocol.transport.write(command)
+                self.protocol.transport.write(header)
                 # Wait for response with timeout
                 async with asyncio_timeout(5.0):
                     status, _ = await response_future
