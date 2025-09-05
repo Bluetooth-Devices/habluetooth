@@ -1157,102 +1157,102 @@ async def test_bluez_mgmt_protocol_data_flow(mock_btmgmt_socket: Mock) -> None:
         ):
             await mgmt_ctl.setup()
 
-    # Set mgmt controller on manager
-    manager._mgmt_ctl = mgmt_ctl
-    manager.has_advertising_side_channel = True
+        # Set mgmt controller on manager
+        manager._mgmt_ctl = mgmt_ctl
+        manager.has_advertising_side_channel = True
 
-    # Register scanners for hci0 and hci1
-    scanner0 = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:00")
-    scanner0.async_setup()
-    manager.async_register_scanner(scanner0, connection_slots=2)
+        # Register scanners for hci0 and hci1
+        scanner0 = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:00")
+        scanner0.async_setup()
+        manager.async_register_scanner(scanner0, connection_slots=2)
 
-    scanner1 = HaScanner(BluetoothScanningMode.ACTIVE, "hci1", "AA:BB:CC:DD:EE:01")
-    scanner1.async_setup()
-    manager.async_register_scanner(scanner1, connection_slots=2)
+        scanner1 = HaScanner(BluetoothScanningMode.ACTIVE, "hci1", "AA:BB:CC:DD:EE:01")
+        scanner1.async_setup()
+        manager.async_register_scanner(scanner1, connection_slots=2)
 
-    # Start scanners
-    with patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner_class:
-        mock_scanner = Mock()
-        mock_scanner.start = AsyncMock()
-        mock_scanner.stop = AsyncMock()
-        mock_scanner.discovered_devices = []
-        mock_scanner_class.return_value = mock_scanner
-        await scanner0.async_start()
-        await scanner1.async_start()
+        # Start scanners
+        with patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner_class:
+            mock_scanner = Mock()
+            mock_scanner.start = AsyncMock()
+            mock_scanner.stop = AsyncMock()
+            mock_scanner.discovered_devices = []
+            mock_scanner_class.return_value = mock_scanner
+            await scanner0.async_start()
+            await scanner1.async_start()
 
-    # Verify scanners are registered in mgmt_ctl
-    assert 0 in mgmt_ctl.scanners
-    assert 1 in mgmt_ctl.scanners
-    assert mgmt_ctl.scanners[0] is scanner0
-    assert mgmt_ctl.scanners[1] is scanner1
+        # Verify scanners are registered in mgmt_ctl
+        assert 0 in mgmt_ctl.scanners
+        assert 1 in mgmt_ctl.scanners
+        assert mgmt_ctl.scanners[0] is scanner0
+        assert mgmt_ctl.scanners[1] is scanner1
 
-    # Test DEVICE_FOUND event for hci0
-    test_address = b"\x11\x22\x33\x44\x55\x66"
-    rssi_byte = b"\xc4"  # -60 in signed byte
-    event_data = (
-        test_address
-        + b"\x01"  # address_type
-        + rssi_byte
-        + b"\x06\x00\x00\x00"  # flags
-        + b"\x03\x00"  # data_len
-        + b"\x02\x01\x06"  # minimal adv data
-    )
+        # Test DEVICE_FOUND event for hci0
+        test_address = b"\x11\x22\x33\x44\x55\x66"
+        rssi_byte = b"\xc4"  # -60 in signed byte
+        event_data = (
+            test_address
+            + b"\x01"  # address_type
+            + rssi_byte
+            + b"\x06\x00\x00\x00"  # flags
+            + b"\x03\x00"  # data_len
+            + b"\x02\x01\x06"  # minimal adv data
+        )
 
-    packet = (
-        DEVICE_FOUND.to_bytes(2, "little")
-        + b"\x00\x00"  # controller_idx 0 (hci0)
-        + len(event_data).to_bytes(2, "little")
-        + event_data
-    )
+        packet = (
+            DEVICE_FOUND.to_bytes(2, "little")
+            + b"\x00\x00"  # controller_idx 0 (hci0)
+            + len(event_data).to_bytes(2, "little")
+            + event_data
+        )
 
-    # Feed packet to protocol
-    assert captured_protocol is not None
-    captured_protocol.data_received(packet)
+        # Feed packet to protocol
+        assert captured_protocol is not None
+        captured_protocol.data_received(packet)
 
-    # Verify device discovered on scanner0 only
-    assert len(scanner0._previous_service_info) == 1
-    assert "66:55:44:33:22:11" in scanner0._previous_service_info
-    assert len(scanner1._previous_service_info) == 0
+        # Verify device discovered on scanner0 only
+        assert len(scanner0._previous_service_info) == 1
+        assert "66:55:44:33:22:11" in scanner0._previous_service_info
+        assert len(scanner1._previous_service_info) == 0
 
-    # Test ADV_MONITOR_DEVICE_FOUND event for hci1
-    test_address2 = b"\xaa\xbb\xcc\xdd\xee\x02"
-    monitor_handle = b"\x01\x00"
-    rssi_byte2 = b"\xba"  # -70 in signed byte
-    event_data2 = (
-        monitor_handle
-        + test_address2
-        + b"\x02"  # address_type (random)
-        + rssi_byte2
-        + b"\x06\x00\x00\x00"  # flags
-        + b"\x03\x00"  # data_len
-        + b"\x02\x01\x06"  # minimal adv data
-    )
+        # Test ADV_MONITOR_DEVICE_FOUND event for hci1
+        test_address2 = b"\xaa\xbb\xcc\xdd\xee\x02"
+        monitor_handle = b"\x01\x00"
+        rssi_byte2 = b"\xba"  # -70 in signed byte
+        event_data2 = (
+            monitor_handle
+            + test_address2
+            + b"\x02"  # address_type (random)
+            + rssi_byte2
+            + b"\x06\x00\x00\x00"  # flags
+            + b"\x03\x00"  # data_len
+            + b"\x02\x01\x06"  # minimal adv data
+        )
 
-    packet2 = (
-        ADV_MONITOR_DEVICE_FOUND.to_bytes(2, "little")
-        + b"\x01\x00"  # controller_idx 1 (hci1)
-        + len(event_data2).to_bytes(2, "little")
-        + event_data2
-    )
+        packet2 = (
+            ADV_MONITOR_DEVICE_FOUND.to_bytes(2, "little")
+            + b"\x01\x00"  # controller_idx 1 (hci1)
+            + len(event_data2).to_bytes(2, "little")
+            + event_data2
+        )
 
-    assert captured_protocol is not None
-    captured_protocol.data_received(packet2)
+        assert captured_protocol is not None
+        captured_protocol.data_received(packet2)
 
-    # Verify device discovered on scanner1 only
-    assert len(scanner0._previous_service_info) == 1  # Still just the first device
-    assert len(scanner1._previous_service_info) == 1
-    assert "02:EE:DD:CC:BB:AA" in scanner1._previous_service_info
+        # Verify device discovered on scanner1 only
+        assert len(scanner0._previous_service_info) == 1  # Still just the first device
+        assert len(scanner1._previous_service_info) == 1
+        assert "02:EE:DD:CC:BB:AA" in scanner1._previous_service_info
 
-    # Verify RSSI values
-    info0 = scanner0._previous_service_info["66:55:44:33:22:11"]
-    assert info0.rssi == -60
+        # Verify RSSI values
+        info0 = scanner0._previous_service_info["66:55:44:33:22:11"]
+        assert info0.rssi == -60
 
-    info1 = scanner1._previous_service_info["02:EE:DD:CC:BB:AA"]
-    assert info1.rssi == -70
+        info1 = scanner1._previous_service_info["02:EE:DD:CC:BB:AA"]
+        assert info1.rssi == -70
 
-    await scanner0.async_stop()
-    await scanner1.async_stop()
-    manager.async_stop()
+        await scanner0.async_stop()
+        await scanner1.async_stop()
+        manager.async_stop()
 
 
 @pytest.mark.asyncio
