@@ -22,6 +22,7 @@ cdef class BluetoothMGMTProtocol:
     cdef unsigned int _pos
     cdef dict _scanners
     cdef object _on_connection_lost
+    cdef object _is_shutting_down
     cdef dict _pending_commands
 
     @cython.locals(bytes_data=bytes)

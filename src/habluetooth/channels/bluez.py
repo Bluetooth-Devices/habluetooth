@@ -73,6 +73,7 @@ class BluetoothMGMTProtocol:
         connection_made_future: asyncio.Future[None],
         scanners: dict[int, HaScanner],
         on_connection_lost: Callable[[], None],
+        is_shutting_down: Callable[[], bool],
     ) -> None:
         """Initialize the protocol."""
         self.transport: asyncio.Transport | None = None
@@ -82,6 +83,7 @@ class BluetoothMGMTProtocol:
         self._pos = 0
         self._scanners = scanners
         self._on_connection_lost = on_connection_lost
+        self._is_shutting_down = is_shutting_down
         self._pending_commands: dict[int, asyncio.Future[tuple[int, bytes]]] = {}
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
@@ -242,9 +244,10 @@ class BluetoothMGMTProtocol:
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Handle connection lost."""
-        if exc:
+        # Only log warnings if we're not shutting down
+        if exc and not self._is_shutting_down():
             _LOGGER.warning("Bluetooth management socket connection lost: %s", exc)
-        else:
+        elif not exc:
             _LOGGER.info("Bluetooth management socket connection closed")
         self.transport = None
         self._on_connection_lost()
@@ -313,7 +316,10 @@ class MGMTBluetoothCtl:
                 _, protocol = await loop._create_connection_transport(  # type: ignore[attr-defined]
                     self.sock,
                     lambda: BluetoothMGMTProtocol(
-                        connection_made_future, self.scanners, self._on_connection_lost
+                        connection_made_future,
+                        self.scanners,
+                        self._on_connection_lost,
+                        lambda: self._shutting_down,
                     ),
                     None,
                     None,
