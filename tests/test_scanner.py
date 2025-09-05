@@ -937,119 +937,123 @@ async def test_adapter_init_fails_fallback_to_passive(
 @pytest.mark.skipif(NOT_POSIX)
 async def test_scanner_with_bluez_mgmt_side_channel(mock_btmgmt_socket: Mock) -> None:
     """Test scanner receiving advertisements via BlueZ management side channel."""
-
-    # Create a custom manager that tracks discovered devices
-    class TestBluetoothManager(BluetoothManager):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.discovered_infos = []
-
-        def _discover_service_info(
-            self, service_info: BluetoothServiceInfoBleak
-        ) -> None:
-            """Track discovered service info."""
-            self.discovered_infos.append(service_info)
-
-    # Create manager and setup mgmt controller
-    adapters = FakeBluetoothAdapters()
-    slot_manager = BleakSlotManager()
-    manager = TestBluetoothManager(adapters, slot_manager)
-    set_manager(manager)
-
-    # Set up the manager first
-    await manager.async_setup()
-
-    # Create and setup the mgmt controller with the manager's side channel scanners
-    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners=manager._side_channel_scanners)
-
-    # Mock the protocol setup and capability check
-    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
-    mock_transport = Mock()
-    mock_protocol.transport = mock_transport
-
-    async def mock_setup():
-        mgmt_ctl.protocol = mock_protocol
-        mgmt_ctl._on_connection_lost_future = asyncio.get_running_loop().create_future()
-
-    # Mock both setup and capability check to avoid actual socket operations
+    # Mock capability check for the entire test
     with patch.object(MGMTBluetoothCtl, "_check_capabilities", return_value=True):
-        mgmt_ctl.setup = mock_setup  # type: ignore[method-assign]
 
-    # Inject mgmt controller into manager
-    manager._mgmt_ctl = mgmt_ctl
-    manager.has_advertising_side_channel = True
+        # Create a custom manager that tracks discovered devices
+        class TestBluetoothManager(BluetoothManager):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.discovered_infos = []
 
-    # Verify get_bluez_mgmt_ctl returns our controller
-    assert manager.get_bluez_mgmt_ctl() is mgmt_ctl
+            def _discover_service_info(
+                self, service_info: BluetoothServiceInfoBleak
+            ) -> None:
+                """Track discovered service info."""
+                self.discovered_infos.append(service_info)
 
-    # Register scanner
-    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
-    scanner.async_setup()
-    manager.async_register_scanner(scanner, connection_slots=2)
+        # Create manager and setup mgmt controller
+        adapters = FakeBluetoothAdapters()
+        slot_manager = BleakSlotManager()
+        manager = TestBluetoothManager(adapters, slot_manager)
+        set_manager(manager)
 
-    # Start scanner - should be created without detection callback
-    with patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner_class:
-        mock_scanner = Mock()
-        mock_scanner.start = AsyncMock()
-        mock_scanner.stop = AsyncMock()
-        mock_scanner.discovered_devices = []
-        mock_scanner_class.return_value = mock_scanner
+        # Set up the manager first
+        await manager.async_setup()
 
-        await scanner.async_start()
-
-        # Verify scanner was created without detection callback
-        # since side channel is available
-        mock_scanner_class.assert_called_once()
-        call_kwargs = mock_scanner_class.call_args[1]
-        assert (
-            "detection_callback" not in call_kwargs
-            or call_kwargs["detection_callback"] is None
+        # Create and setup the mgmt controller with the manager's side channel scanners
+        mgmt_ctl = MGMTBluetoothCtl(
+            timeout=5.0, scanners=manager._side_channel_scanners
         )
 
-    # Now simulate advertisement data coming through the mgmt protocol
-    # The manager should have registered the scanner with mgmt_ctl
-    assert 0 in mgmt_ctl.scanners  # hci0 is index 0
-    assert mgmt_ctl.scanners[0] is scanner
+        # Mock the protocol setup
+        mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+        mock_transport = Mock()
+        mock_protocol.transport = mock_transport
 
-    # Simulate the protocol calling the scanner's raw advertisement handler
-    test_address = b"\xaa\xbb\xcc\xdd\xee\xff"
-    test_rssi = -60
-    test_flags = 0x06
-    # Create valid advertisement data with flags
-    # Each AD structure is: length (1 byte), type (1 byte), data
-    test_data = (
-        b"\x02\x01\x06"  # Length=2, Type=0x01 (Flags), Data=0x06
-        # Length=8, Type=0x09 (Complete Local Name), Data="TestDev"
-        b"\x08\x09TestDev"
-    )
+        async def mock_setup():
+            mgmt_ctl.protocol = mock_protocol
+            mgmt_ctl._on_connection_lost_future = (
+                asyncio.get_running_loop().create_future()
+            )
 
-    # Call the method that the protocol would call
-    scanner._async_on_raw_bluez_advertisement(
-        test_address,
-        1,  # address_type: BDADDR_LE_PUBLIC
-        test_rssi,
-        test_flags,
-        test_data,
-    )
+        mgmt_ctl.setup = mock_setup  # type: ignore[method-assign]
 
-    # Allow time for processing
-    await asyncio.sleep(0)
+        # Inject mgmt controller into manager
+        manager._mgmt_ctl = mgmt_ctl
+        manager.has_advertising_side_channel = True
 
-    # Verify the device was discovered in the base scanner
-    assert len(scanner._previous_service_info) == 1
-    assert "FF:EE:DD:CC:BB:AA" in scanner._previous_service_info
+        # Verify get_bluez_mgmt_ctl returns our controller
+        assert manager.get_bluez_mgmt_ctl() is mgmt_ctl
 
-    service_info = scanner._previous_service_info["FF:EE:DD:CC:BB:AA"]
-    assert service_info.address == "FF:EE:DD:CC:BB:AA"
-    assert service_info.rssi == test_rssi
-    assert service_info.name == "TestDev"
+        # Register scanner
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        manager.async_register_scanner(scanner, connection_slots=2)
 
-    # Verify the manager also received the advertisement
-    assert len(manager.discovered_infos) == 1
-    assert manager.discovered_infos[0] is service_info
+        # Start scanner - should be created without detection callback
+        with patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner_class:
+            mock_scanner = Mock()
+            mock_scanner.start = AsyncMock()
+            mock_scanner.stop = AsyncMock()
+            mock_scanner.discovered_devices = []
+            mock_scanner_class.return_value = mock_scanner
 
-    await scanner.async_stop()
-    manager.async_stop()
+            await scanner.async_start()
+
+            # Verify scanner was created without detection callback
+            # since side channel is available
+            mock_scanner_class.assert_called_once()
+            call_kwargs = mock_scanner_class.call_args[1]
+            assert (
+                "detection_callback" not in call_kwargs
+                or call_kwargs["detection_callback"] is None
+            )
+
+        # Now simulate advertisement data coming through the mgmt protocol
+        # The manager should have registered the scanner with mgmt_ctl
+        assert 0 in mgmt_ctl.scanners  # hci0 is index 0
+        assert mgmt_ctl.scanners[0] is scanner
+
+        # Simulate the protocol calling the scanner's raw advertisement handler
+        test_address = b"\xaa\xbb\xcc\xdd\xee\xff"
+        test_rssi = -60
+        test_flags = 0x06
+        # Create valid advertisement data with flags
+        # Each AD structure is: length (1 byte), type (1 byte), data
+        test_data = (
+            b"\x02\x01\x06"  # Length=2, Type=0x01 (Flags), Data=0x06
+            # Length=8, Type=0x09 (Complete Local Name), Data="TestDev"
+            b"\x08\x09TestDev"
+        )
+
+        # Call the method that the protocol would call
+        scanner._async_on_raw_bluez_advertisement(
+            test_address,
+            1,  # address_type: BDADDR_LE_PUBLIC
+            test_rssi,
+            test_flags,
+            test_data,
+        )
+
+        # Allow time for processing
+        await asyncio.sleep(0)
+
+        # Verify the device was discovered in the base scanner
+        assert len(scanner._previous_service_info) == 1
+        assert "FF:EE:DD:CC:BB:AA" in scanner._previous_service_info
+
+        service_info = scanner._previous_service_info["FF:EE:DD:CC:BB:AA"]
+        assert service_info.address == "FF:EE:DD:CC:BB:AA"
+        assert service_info.rssi == test_rssi
+        assert service_info.name == "TestDev"
+
+        # Verify the manager also received the advertisement
+        assert len(manager.discovered_infos) == 1
+        assert manager.discovered_infos[0] is service_info
+
+        await scanner.async_stop()
+        manager.async_stop()
 
 
 @pytest.mark.asyncio
@@ -1108,53 +1112,50 @@ async def test_scanner_without_bluez_mgmt_side_channel() -> None:
 @pytest.mark.skipif(NOT_POSIX)
 async def test_bluez_mgmt_protocol_data_flow(mock_btmgmt_socket: Mock) -> None:
     """Test data flow from BlueZ protocol through manager to scanner."""
+    # Mock capability check for the entire test
+    with patch.object(MGMTBluetoothCtl, "_check_capabilities", return_value=True):
 
-    # Create manager
-    class TestBluetoothManager(BluetoothManager):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.discovered_infos = []
+        # Create manager
+        class TestBluetoothManager(BluetoothManager):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.discovered_infos = []
 
-        def _discover_service_info(
-            self, service_info: BluetoothServiceInfoBleak
-        ) -> None:
-            """Track discovered service info."""
-            self.discovered_infos.append(service_info)
+            def _discover_service_info(
+                self, service_info: BluetoothServiceInfoBleak
+            ) -> None:
+                """Track discovered service info."""
+                self.discovered_infos.append(service_info)
 
-    adapters = FakeBluetoothAdapters()
-    slot_manager = BleakSlotManager()
-    manager = TestBluetoothManager(adapters, slot_manager)
-    set_manager(manager)
+        adapters = FakeBluetoothAdapters()
+        slot_manager = BleakSlotManager()
+        manager = TestBluetoothManager(adapters, slot_manager)
+        set_manager(manager)
 
-    # Set up manager first
-    await manager.async_setup()
+        # Set up manager first
+        await manager.async_setup()
 
-    # Create mgmt controller with the manager's side channel scanners dictionary
-    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners=manager._side_channel_scanners)
+        # Create mgmt controller with the manager's side channel scanners dictionary
+        mgmt_ctl = MGMTBluetoothCtl(
+            timeout=5.0, scanners=manager._side_channel_scanners
+        )
 
-    # We'll capture the protocol when it's created
-    captured_protocol: BluetoothMGMTProtocol | None = None
+        # We'll capture the protocol when it's created
+        captured_protocol: BluetoothMGMTProtocol | None = None
 
-    async def mock_create_connection(sock, protocol_factory, *args, **kwargs):
-        nonlocal captured_protocol
-        captured_protocol = protocol_factory()
-        mock_transport = Mock()
-        captured_protocol.connection_made(mock_transport)
-        return mock_transport, captured_protocol
+        async def mock_create_connection(sock, protocol_factory, *args, **kwargs):
+            nonlocal captured_protocol
+            captured_protocol = protocol_factory()
+            mock_transport = Mock()
+            captured_protocol.connection_made(mock_transport)
+            return mock_transport, captured_protocol
 
-    with (
-        patch.object(
+        with patch.object(
             asyncio.get_running_loop(),
             "_create_connection_transport",
             mock_create_connection,
-        ),
-        patch.object(
-            MGMTBluetoothCtl,
-            "_check_capabilities",
-            return_value=True,  # Mock successful capability check
-        ),
-    ):
-        await mgmt_ctl.setup()
+        ):
+            await mgmt_ctl.setup()
 
     # Set mgmt controller on manager
     manager._mgmt_ctl = mgmt_ctl
