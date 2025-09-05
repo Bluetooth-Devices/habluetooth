@@ -345,7 +345,7 @@ class BluetoothManager:
         except PermissionError as ex:
             _LOGGER.error(
                 "Missing required permissions for Bluetooth management: %s. "
-                "Automatic adapter recovery is disabled. "
+                "Automatic adapter recovery is unavailable. "
                 "Add NET_ADMIN and NET_RAW capabilities to the container to enable it",
                 ex,
             )
