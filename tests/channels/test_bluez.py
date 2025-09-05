@@ -61,7 +61,10 @@ def test_connection_made(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
     protocol.connection_made(mock_transport)
 
     assert protocol.transport is mock_transport
@@ -77,7 +80,10 @@ def test_connection_lost(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
     protocol.connection_made(mock_transport)
 
     # Test with exception
@@ -96,7 +102,10 @@ def test_connection_lost_no_exception(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
     protocol.connection_made(mock_transport)
 
     # Test without exception
@@ -112,7 +121,10 @@ def test_data_received_device_found(
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a DEVICE_FOUND event (event_code 0x0012)
     # Header: event_code (2), controller_idx (2), param_len (2)
@@ -151,7 +163,10 @@ def test_data_received_adv_monitor_device_found(
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create an ADV_MONITOR_DEVICE_FOUND event (event_code 0x002F)
     # Has 2 extra bytes at the beginning of params
@@ -190,7 +205,10 @@ def test_data_received_cmd_complete_success(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_COMPLETE event for LOAD_CONN_PARAM
     header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -214,7 +232,10 @@ def test_data_received_cmd_complete_failure(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_COMPLETE event with failure
     header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -237,7 +258,10 @@ def test_data_received_cmd_status(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_STATUS event
     header = b"\x02\x00"  # MGMT_EV_CMD_STATUS
@@ -260,7 +284,10 @@ def test_data_received_partial_data(
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a DEVICE_FOUND event but send it in chunks
     ad_data = b"\x02\x01\x06"
@@ -287,7 +314,10 @@ def test_data_received_partial_data_split_in_params(
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a DEVICE_FOUND event
     ad_data = b"\x02\x01\x06\x03\xff\x00\x01"  # Longer ad data
@@ -320,7 +350,10 @@ def test_data_received_multiple_small_chunks(
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a DEVICE_FOUND event
     ad_data = b"\x02\x01\x06"
@@ -350,7 +383,10 @@ def test_data_received_multiple_events_in_one_chunk(
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create two events: a DEVICE_FOUND and a CMD_COMPLETE
     ad_data = b"\x02\x01\x06"
@@ -379,7 +415,10 @@ def test_data_received_partial_then_multiple_events(
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # First event (DEVICE_FOUND)
     ad_data1 = b"\x02\x01\x06"
@@ -434,7 +473,10 @@ def test_data_received_cmd_complete_different_opcode(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_COMPLETE event for a different opcode (e.g., 0x0004 - Add UUID)
     header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -458,7 +500,10 @@ def test_data_received_cmd_status_different_opcode(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_STATUS event for a different opcode
     header = b"\x02\x00"  # MGMT_EV_CMD_STATUS
@@ -482,7 +527,10 @@ def test_data_received_cmd_complete_short_params(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_COMPLETE event with param_len < 3
     header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -505,7 +553,10 @@ def test_data_received_cmd_status_param_len_1(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_STATUS event with param_len = 1
     header = b"\x02\x00"  # MGMT_EV_CMD_STATUS
@@ -528,7 +579,10 @@ def test_data_received_cmd_complete_param_len_0(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_COMPLETE event with param_len = 0
     header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -547,7 +601,10 @@ def test_data_received_unknown_event(event_loop: asyncio.AbstractEventLoop) -> N
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create an unknown event
     header = b"\xff\x00"  # Unknown event code
@@ -567,7 +624,10 @@ def test_data_received_no_scanner_for_controller(
     scanners: dict[int, HaScanner] = {}  # No scanner for controller 0
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a DEVICE_FOUND event for controller 0
     ad_data = b"\x02\x01\x06"
