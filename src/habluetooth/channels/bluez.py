@@ -37,6 +37,7 @@ ADV_MONITOR_DEVICE_FOUND = 0x002F
 
 # Management commands
 MGMT_OP_READ_INDEX_LIST = 0x0003
+MGMT_OP_READ_INFO = 0x0004
 MGMT_OP_LOAD_CONN_PARAM = 0x0035
 
 # Management events
@@ -178,10 +179,9 @@ class BluetoothMGMTProtocol:
                     if opcode == MGMT_OP_LOAD_CONN_PARAM:
                         self._handle_load_conn_param_response(status, controller_idx)
                     elif (
-                        opcode == MGMT_OP_READ_INDEX_LIST
-                        and opcode in self._pending_commands
+                        opcode == MGMT_OP_READ_INFO and opcode in self._pending_commands
                     ):
-                        # Handle READ_INDEX_LIST response for capability check
+                        # Handle READ_INFO response for capability check
                         future = self._pending_commands.pop(opcode)
                         if not future.done():
                             # Return status and any response data
@@ -333,33 +333,45 @@ class MGMTBluetoothCtl:
         if not self.protocol or not self.protocol.transport:
             return False
 
-        # Send READ_INDEX_LIST command to test permissions
-        # This is a simple read command that requires NET_ADMIN/NET_RAW
+        # Try READ_INFO for adapter 0 to test permissions
+        # This command should work if we have proper capabilities
         header = COMMAND_HEADER_PACK(
-            MGMT_OP_READ_INDEX_LIST,  # opcode
-            0xFFFF,  # non-controller index (applies to all)
+            MGMT_OP_READ_INFO,  # opcode
+            0,  # controller index 0 (hci0)
             0,  # no parameters
         )
 
         try:
             async with self.protocol.command_response(
-                MGMT_OP_READ_INDEX_LIST
+                MGMT_OP_READ_INFO
             ) as response_future:
                 self.protocol.transport.write(header)
                 # Wait for response with timeout
                 async with asyncio_timeout(5.0):
                     status, _ = await response_future
 
-                if status != 0:
+                # Check various error codes that indicate permission issues
+                # 0x01 = Unknown Command (might happen if kernel is too old)
+                # 0x14 = Permission Denied
+                # 0x11 = Invalid Index (adapter doesn't exist, but we have permissions)
+                # 0x00 = Success (we have permissions and adapter exists)
+
+                if status == 0x14:  # Permission denied
                     _LOGGER.debug(
-                        "MGMT capability check failed with status %d - "
-                        "likely missing NET_ADMIN/NET_RAW",
-                        status,
+                        "MGMT capability check failed with permission denied - "
+                        "missing NET_ADMIN/NET_RAW"
                     )
                     return False
-
-                _LOGGER.debug("MGMT capability check passed")
-                return True
+                if status in (0x00, 0x11):  # Success or Invalid Index
+                    _LOGGER.debug("MGMT capability check passed (status: %#x)", status)
+                    return True
+                # Unknown status - log it and assume no permissions to be safe
+                _LOGGER.debug(
+                    "MGMT capability check returned unexpected status %#x - "
+                    "assuming missing permissions",
+                    status,
+                )
+                return False
 
         except (TimeoutError, OSError) as ex:
             _LOGGER.debug(
