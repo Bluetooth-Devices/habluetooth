@@ -8,6 +8,7 @@ cdef unsigned short DEVICE_FOUND
 cdef unsigned short ADV_MONITOR_DEVICE_FOUND
 cdef unsigned short MGMT_OP_READ_INDEX_LIST
 cdef unsigned short MGMT_OP_READ_INFO
+cdef unsigned short MGMT_OP_SET_POWERED
 cdef unsigned short MGMT_OP_LOAD_CONN_PARAM
 cdef unsigned short MGMT_EV_CMD_COMPLETE
 cdef unsigned short MGMT_EV_CMD_STATUS

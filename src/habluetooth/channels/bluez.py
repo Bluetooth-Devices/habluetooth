@@ -38,6 +38,7 @@ ADV_MONITOR_DEVICE_FOUND = 0x002F
 # Management commands
 MGMT_OP_READ_INDEX_LIST = 0x0003
 MGMT_OP_READ_INFO = 0x0004
+MGMT_OP_SET_POWERED = 0x0005
 MGMT_OP_LOAD_CONN_PARAM = 0x0035
 
 # Management events
@@ -179,9 +180,10 @@ class BluetoothMGMTProtocol:
                     if opcode == MGMT_OP_LOAD_CONN_PARAM:
                         self._handle_load_conn_param_response(status, controller_idx)
                     elif (
-                        opcode == MGMT_OP_READ_INFO and opcode in self._pending_commands
+                        opcode == MGMT_OP_SET_POWERED
+                        and opcode in self._pending_commands
                     ):
-                        # Handle READ_INFO response for capability check
+                        # Handle SET_POWERED response for capability check
                         future = self._pending_commands.pop(opcode)
                         if not future.done():
                             # Return status and any response data
@@ -333,19 +335,22 @@ class MGMTBluetoothCtl:
         if not self.protocol or not self.protocol.transport:
             return False
 
-        # Try READ_INFO for adapter 0 to test permissions
-        # This command should work if we have proper capabilities
+        # Try SET_POWERED with current state (0x00 = off) for adapter 0
+        # This command requires NET_ADMIN to execute
+        # We use powered=off to avoid actually changing adapter state
         header = COMMAND_HEADER_PACK(
-            MGMT_OP_READ_INFO,  # opcode
+            MGMT_OP_SET_POWERED,  # opcode
             0,  # controller index 0 (hci0)
-            0,  # no parameters
+            1,  # parameter length (1 byte for powered state)
         )
+        # Append powered state (0x00 = off, won't change anything if already off)
+        command = header + b"\x00"
 
         try:
             async with self.protocol.command_response(
-                MGMT_OP_READ_INFO
+                MGMT_OP_SET_POWERED
             ) as response_future:
-                self.protocol.transport.write(header)
+                self.protocol.transport.write(command)
                 # Wait for response with timeout
                 async with asyncio_timeout(5.0):
                     status, _ = await response_future
@@ -353,8 +358,10 @@ class MGMTBluetoothCtl:
                 # Check various error codes that indicate permission issues
                 # 0x01 = Unknown Command (might happen if kernel is too old)
                 # 0x14 = Permission Denied
-                # 0x11 = Invalid Index (adapter doesn't exist, but we have permissions)
-                # 0x00 = Success (we have permissions and adapter exists)
+                # 0x11 = Invalid Index (adapter doesn't exist)
+                # 0x00 = Success (we have permissions)
+                # 0x0D = Invalid Parameters
+                # 0x10 = Not Powered (for some operations)
 
                 if status == 0x14:  # Permission denied
                     _LOGGER.debug(
