@@ -962,7 +962,7 @@ async def test_scanner_with_bluez_mgmt_side_channel(mock_btmgmt_socket: Mock) ->
     # Create and setup the mgmt controller with the manager's side channel scanners
     mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners=manager._side_channel_scanners)
 
-    # Mock the protocol setup
+    # Mock the protocol setup and capability check
     mock_protocol = Mock(spec=BluetoothMGMTProtocol)
     mock_transport = Mock()
     mock_protocol.transport = mock_transport
@@ -971,7 +971,9 @@ async def test_scanner_with_bluez_mgmt_side_channel(mock_btmgmt_socket: Mock) ->
         mgmt_ctl.protocol = mock_protocol
         mgmt_ctl._on_connection_lost_future = asyncio.get_running_loop().create_future()
 
-    mgmt_ctl.setup = mock_setup  # type: ignore[method-assign]
+    # Mock both setup and capability check to avoid actual socket operations
+    with patch.object(MGMTBluetoothCtl, "_check_capabilities", return_value=True):
+        mgmt_ctl.setup = mock_setup  # type: ignore[method-assign]
 
     # Inject mgmt controller into manager
     manager._mgmt_ctl = mgmt_ctl
