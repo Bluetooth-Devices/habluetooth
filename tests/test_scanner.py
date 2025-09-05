@@ -1140,10 +1140,17 @@ async def test_bluez_mgmt_protocol_data_flow(mock_btmgmt_socket: Mock) -> None:
         captured_protocol.connection_made(mock_transport)
         return mock_transport, captured_protocol
 
-    with patch.object(
-        asyncio.get_running_loop(),
-        "_create_connection_transport",
-        mock_create_connection,
+    with (
+        patch.object(
+            asyncio.get_running_loop(),
+            "_create_connection_transport",
+            mock_create_connection,
+        ),
+        patch.object(
+            MGMTBluetoothCtl,
+            "_check_capabilities",
+            return_value=True,  # Mock successful capability check
+        ),
     ):
         await mgmt_ctl.setup()
 
@@ -1243,6 +1250,45 @@ async def test_bluez_mgmt_protocol_data_flow(mock_btmgmt_socket: Mock) -> None:
     await scanner0.async_stop()
     await scanner1.async_stop()
     manager.async_stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(NOT_POSIX)
+async def test_mgmt_permission_error_fallback() -> None:
+    """Test that permission errors in MGMT setup fall back to BlueZ-only mode."""
+
+    # Create manager
+    class TestBluetoothManager(BluetoothManager):
+        def _discover_service_info(
+            self, service_info: BluetoothServiceInfoBleak
+        ) -> None:
+            """Track discovered service info."""
+            pass
+
+    adapters = FakeBluetoothAdapters()
+    slot_manager = BleakSlotManager()
+    manager = TestBluetoothManager(adapters, slot_manager)
+
+    # Mock MGMTBluetoothCtl setup to raise PermissionError
+    with (
+        patch("habluetooth.manager.MGMTBluetoothCtl") as mock_mgmt_cls,
+        patch("habluetooth.manager.IS_LINUX", True),
+    ):
+        mock_mgmt = Mock()
+        mock_mgmt.setup = AsyncMock(
+            side_effect=PermissionError(
+                "Missing NET_ADMIN/NET_RAW capabilities for Bluetooth management"
+            )
+        )
+        mock_mgmt_cls.return_value = mock_mgmt
+
+        # Setup should complete without raising the exception
+        await manager.async_setup()
+
+        # Verify MGMT was attempted but then set to None
+        mock_mgmt.setup.assert_called_once()
+        assert manager._mgmt_ctl is None
+        assert manager.has_advertising_side_channel is False
 
 
 def test_usb_scanner_type() -> None:

@@ -342,6 +342,13 @@ class BluetoothManager:
         self._mgmt_ctl = MGMTBluetoothCtl(10.0, self._side_channel_scanners)
         try:
             await self._mgmt_ctl.setup()
+        except PermissionError as ex:
+            _LOGGER.warning(
+                "Missing required permissions for Bluetooth management: %s. "
+                "Consider adding NET_ADMIN and NET_RAW capabilities to the container",
+                ex,
+            )
+            self._mgmt_ctl = None
         except CONNECTION_ERRORS as ex:
             _LOGGER.debug("Cannot start Bluetooth Management API: %s", ex)
             self._mgmt_ctl = None

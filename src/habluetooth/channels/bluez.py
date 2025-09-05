@@ -4,7 +4,8 @@ import asyncio
 import logging
 import socket
 from asyncio import timeout as asyncio_timeout
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from struct import Struct
 from typing import TYPE_CHECKING, cast
 
@@ -35,6 +36,7 @@ DEVICE_FOUND = 0x0012
 ADV_MONITOR_DEVICE_FOUND = 0x002F
 
 # Management commands
+MGMT_OP_READ_INDEX_LIST = 0x0003
 MGMT_OP_LOAD_CONN_PARAM = 0x0035
 
 # Management events
@@ -78,11 +80,34 @@ class BluetoothMGMTProtocol:
         self._pos = 0
         self._scanners = scanners
         self._on_connection_lost = on_connection_lost
+        self._pending_commands: dict[int, asyncio.Future[tuple[int, bytes]]] = {}
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         """Handle connection made."""
         _set_future_if_not_done(self.connection_made_future)
         self.transport = cast(asyncio.Transport, transport)
+
+    @asynccontextmanager
+    async def command_response(
+        self, opcode: int
+    ) -> AsyncIterator[asyncio.Future[tuple[int, bytes]]]:
+        """
+        Context manager for handling command responses.
+
+        Usage:
+            async with protocol.command_response(opcode) as future:
+                transport.write(command)
+                status, data = await future
+        """
+        future: asyncio.Future[tuple[int, bytes]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._pending_commands[opcode] = future
+        try:
+            yield future
+        finally:
+            # Clean up if the future wasn't resolved
+            self._pending_commands.pop(opcode, None)
 
     def _add_to_buffer(self, data: bytes | bytearray | memoryview) -> None:
         """Add data to the buffer."""
@@ -152,6 +177,18 @@ class BluetoothMGMTProtocol:
                     status = header[8]
                     if opcode == MGMT_OP_LOAD_CONN_PARAM:
                         self._handle_load_conn_param_response(status, controller_idx)
+                    elif (
+                        opcode == MGMT_OP_READ_INDEX_LIST
+                        and opcode in self._pending_commands
+                    ):
+                        # Handle READ_INDEX_LIST response for capability check
+                        future = self._pending_commands.pop(opcode)
+                        if not future.done():
+                            # Return status and any response data
+                            response_data = (
+                                header[9 : self._pos] if param_len > 3 else b""
+                            )
+                            future.set_result((status, response_data))
                 self._remove_from_buffer()
                 continue
             else:
@@ -287,9 +324,63 @@ class MGMTBluetoothCtl:
         self.protocol = cast(BluetoothMGMTProtocol, protocol)
         self._on_connection_lost_future = loop.create_future()
 
+    async def _check_capabilities(self) -> bool:
+        """
+        Check if we have the necessary capabilities to use MGMT.
+
+        Returns True if we have capabilities, False otherwise.
+        """
+        if not self.protocol or not self.protocol.transport:
+            return False
+
+        # Send READ_INDEX_LIST command to test permissions
+        # This is a simple read command that requires NET_ADMIN/NET_RAW
+        header = COMMAND_HEADER_PACK(
+            MGMT_OP_READ_INDEX_LIST,  # opcode
+            0xFFFF,  # non-controller index (applies to all)
+            0,  # no parameters
+        )
+
+        try:
+            async with self.protocol.command_response(
+                MGMT_OP_READ_INDEX_LIST
+            ) as response_future:
+                self.protocol.transport.write(header)
+                # Wait for response with timeout
+                async with asyncio_timeout(5.0):
+                    status, _ = await response_future
+
+                if status != 0:
+                    _LOGGER.debug(
+                        "MGMT capability check failed with status %d - "
+                        "likely missing NET_ADMIN/NET_RAW",
+                        status,
+                    )
+                    return False
+
+                _LOGGER.debug("MGMT capability check passed")
+                return True
+
+        except (TimeoutError, OSError) as ex:
+            _LOGGER.debug(
+                "MGMT capability check failed: %s - likely missing NET_ADMIN/NET_RAW",
+                ex,
+            )
+            return False
+
     async def setup(self) -> None:
         """Set up management interface."""
         await self._establish_connection()
+
+        # Check if we actually have the capabilities to use MGMT
+        if not await self._check_capabilities():
+            # Close the connection and raise an error to trigger fallback
+            if self.protocol and self.protocol.transport:
+                self.protocol.transport.close()
+            raise PermissionError(
+                "Missing NET_ADMIN/NET_RAW capabilities for Bluetooth management"
+            )
+
         self._reconnect_task = asyncio.create_task(self.reconnect_task())
 
     def load_conn_params(
