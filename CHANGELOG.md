@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.3.1 (2025-09-06)
+
+### Bug fixes
+
+
+- Detect missing net_admin/net_raw capabilities and fallback to bluez-only mode ([`1cf17c0`](https://github.com/Bluetooth-Devices/habluetooth/commit/1cf17c094fc2bce65e703d230259f3c2c66720e7))
+
+
 ## v5.3.0 (2025-08-31)
 
 ### Features
