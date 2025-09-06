@@ -29,9 +29,6 @@ from habluetooth.const import (
 )
 from habluetooth.scanner import HaScanner
 
-# Import FakeScanner from conftest for testing
-
-
 class MockHaScanner(HaScanner):
     """Mock HaScanner for testing with Cython."""
 
