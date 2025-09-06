@@ -4,7 +4,8 @@ import asyncio
 import logging
 import socket
 from asyncio import timeout as asyncio_timeout
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from struct import Struct
 from typing import TYPE_CHECKING, cast
 
@@ -35,6 +36,7 @@ DEVICE_FOUND = 0x0012
 ADV_MONITOR_DEVICE_FOUND = 0x002F
 
 # Management commands
+MGMT_OP_GET_CONNECTIONS = 0x0015
 MGMT_OP_LOAD_CONN_PARAM = 0x0035
 
 # Management events
@@ -69,6 +71,7 @@ class BluetoothMGMTProtocol:
         connection_made_future: asyncio.Future[None],
         scanners: dict[int, HaScanner],
         on_connection_lost: Callable[[], None],
+        is_shutting_down: Callable[[], bool],
     ) -> None:
         """Initialize the protocol."""
         self.transport: asyncio.Transport | None = None
@@ -78,11 +81,35 @@ class BluetoothMGMTProtocol:
         self._pos = 0
         self._scanners = scanners
         self._on_connection_lost = on_connection_lost
+        self._is_shutting_down = is_shutting_down
+        self._pending_commands: dict[int, asyncio.Future[tuple[int, bytes]]] = {}
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         """Handle connection made."""
         _set_future_if_not_done(self.connection_made_future)
         self.transport = cast(asyncio.Transport, transport)
+
+    @asynccontextmanager
+    async def command_response(
+        self, opcode: int
+    ) -> AsyncIterator[asyncio.Future[tuple[int, bytes]]]:
+        """
+        Context manager for handling command responses.
+
+        Usage:
+            async with protocol.command_response(opcode) as future:
+                transport.write(command)
+                status, data = await future
+        """
+        future: asyncio.Future[tuple[int, bytes]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._pending_commands[opcode] = future
+        try:
+            yield future
+        finally:
+            # Clean up if the future wasn't resolved
+            self._pending_commands.pop(opcode, None)
 
     def _add_to_buffer(self, data: bytes | bytearray | memoryview) -> None:
         """Add data to the buffer."""
@@ -152,6 +179,18 @@ class BluetoothMGMTProtocol:
                     status = header[8]
                     if opcode == MGMT_OP_LOAD_CONN_PARAM:
                         self._handle_load_conn_param_response(status, controller_idx)
+                    elif (
+                        opcode == MGMT_OP_GET_CONNECTIONS
+                        and opcode in self._pending_commands
+                    ):
+                        # Handle GET_CONNECTIONS response for capability check
+                        future = self._pending_commands.pop(opcode)
+                        if not future.done():
+                            # Return status and any response data
+                            response_data = (
+                                header[9 : self._pos] if param_len > 3 else b""
+                            )
+                            future.set_result((status, response_data))
                 self._remove_from_buffer()
                 continue
             else:
@@ -203,8 +242,10 @@ class BluetoothMGMTProtocol:
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Handle connection lost."""
+        # Only suppress warnings during shutdown, not info messages
         if exc:
-            _LOGGER.warning("Bluetooth management socket connection lost: %s", exc)
+            if not self._is_shutting_down():
+                _LOGGER.warning("Bluetooth management socket connection lost: %s", exc)
         else:
             _LOGGER.info("Bluetooth management socket connection closed")
         self.transport = None
@@ -274,7 +315,10 @@ class MGMTBluetoothCtl:
                 _, protocol = await loop._create_connection_transport(  # type: ignore[attr-defined]
                     self.sock,
                     lambda: BluetoothMGMTProtocol(
-                        connection_made_future, self.scanners, self._on_connection_lost
+                        connection_made_future,
+                        self.scanners,
+                        self._on_connection_lost,
+                        lambda: self._shutting_down,
                     ),
                     None,
                     None,
@@ -287,9 +331,95 @@ class MGMTBluetoothCtl:
         self.protocol = cast(BluetoothMGMTProtocol, protocol)
         self._on_connection_lost_future = loop.create_future()
 
+    def _has_mgmt_capabilities_from_status(self, status: int) -> bool:
+        """
+        Check if a MGMT command status indicates we have capabilities.
+
+        Returns True if we have capabilities, False otherwise.
+
+        Status codes:
+        - 0x00 = Success (we have permissions)
+        - 0x01 = Unknown Command (might happen if kernel is too old)
+        - 0x0D = Invalid Parameters
+        - 0x10 = Not Powered (for some operations)
+        - 0x11 = Invalid Index (adapter doesn't exist but we have permissions)
+        - 0x14 = Permission Denied (missing NET_ADMIN/NET_RAW)
+        """
+        if status == 0x14:  # Permission denied
+            _LOGGER.debug(
+                "MGMT capability check failed with permission denied - "
+                "missing NET_ADMIN/NET_RAW"
+            )
+            return False
+        if status in (0x00, 0x11):  # Success or Invalid Index
+            _LOGGER.debug("MGMT capability check passed (status: %#x)", status)
+            return True
+        # Unknown status - log it and assume no permissions to be safe
+        _LOGGER.debug(
+            "MGMT capability check returned unexpected status %#x - "
+            "assuming missing permissions",
+            status,
+        )
+        return False
+
+    async def _check_capabilities(self) -> bool:
+        """
+        Check if we have the necessary capabilities to use MGMT.
+
+        Returns True if we have capabilities, False otherwise.
+        """
+        if not self.protocol or not self.protocol.transport:
+            return False
+
+        # Try GET_CONNECTIONS for adapter 0 - this is a read-only command
+        # that requires NET_ADMIN privileges but doesn't change any state
+        header = COMMAND_HEADER_PACK(
+            MGMT_OP_GET_CONNECTIONS,  # opcode
+            0,  # controller index 0 (hci0)
+            0,  # no parameters
+        )
+
+        try:
+            return await self._do_mgmt_op_get_connections(header)
+        except (TimeoutError, OSError) as ex:
+            _LOGGER.debug(
+                "MGMT capability check failed: %s - "
+                "likely missing NET_ADMIN/NET_RAW",
+                ex,
+            )
+            return False
+
+    async def _do_mgmt_op_get_connections(self, header: bytes) -> bool:
+        """Send a MGMT_OP_GET_CONNECTIONS command and check capabilities."""
+        if TYPE_CHECKING:
+            assert self.protocol is not None
+            assert self.protocol.transport is not None
+
+        async with self.protocol.command_response(
+            MGMT_OP_GET_CONNECTIONS
+        ) as response_future:
+            self.protocol.transport.write(header)
+            # Wait for response with timeout
+            async with asyncio_timeout(5.0):
+                status, _ = await response_future
+            return self._has_mgmt_capabilities_from_status(status)
+
     async def setup(self) -> None:
         """Set up management interface."""
         await self._establish_connection()
+
+        # Check if we actually have the capabilities to use MGMT
+        if not await self._check_capabilities():
+            # Mark as shutting down to prevent reconnection attempts
+            self._shutting_down = True
+            # Close the connection and raise an error to trigger fallback
+            if self.protocol and self.protocol.transport:
+                self.protocol.transport.close()
+            btmgmt_socket.close(self.sock)
+            raise PermissionError(
+                "Missing NET_ADMIN/NET_RAW capabilities for Bluetooth management"
+            )
+
         self._reconnect_task = asyncio.create_task(self.reconnect_task())
 
     def load_conn_params(

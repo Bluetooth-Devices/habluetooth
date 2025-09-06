@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -29,6 +30,17 @@ from habluetooth.const import (
 from habluetooth.scanner import HaScanner
 
 
+class MockHaScanner(HaScanner):
+    """Mock HaScanner for testing with Cython."""
+
+    def __init__(self):
+        """Initialize without calling parent __init__ to avoid BleakScanner setup."""
+        self.source = "test"
+        self.connectable = True
+        # Mock the method that will be called
+        self._async_on_raw_bluez_advertisement: Any = Mock()
+
+
 @pytest.fixture
 def event_loop():
     """Create and manage event loop for tests."""
@@ -38,11 +50,9 @@ def event_loop():
 
 
 @pytest.fixture
-def mock_scanner() -> Mock:
-    """Create a mock scanner."""
-    scanner = Mock(spec=HaScanner)
-    scanner._async_on_raw_bluez_advertisement = Mock()
-    return scanner
+def mock_scanner() -> MockHaScanner:
+    """Create a mock scanner for testing."""
+    return MockHaScanner()
 
 
 @pytest.fixture
@@ -61,7 +71,10 @@ def test_connection_made(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
     protocol.connection_made(mock_transport)
 
     assert protocol.transport is mock_transport
@@ -77,7 +90,10 @@ def test_connection_lost(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
     protocol.connection_made(mock_transport)
 
     # Test with exception
@@ -96,7 +112,10 @@ def test_connection_lost_no_exception(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
     protocol.connection_made(mock_transport)
 
     # Test without exception
@@ -105,14 +124,17 @@ def test_connection_lost_no_exception(
 
 
 def test_data_received_device_found(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test data_received handles DEVICE_FOUND event."""
     future = event_loop.create_future()
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a DEVICE_FOUND event (event_code 0x0012)
     # Header: event_code (2), controller_idx (2), param_len (2)
@@ -144,14 +166,17 @@ def test_data_received_device_found(
 
 
 def test_data_received_adv_monitor_device_found(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test data_received handles ADV_MONITOR_DEVICE_FOUND event."""
     future = event_loop.create_future()
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create an ADV_MONITOR_DEVICE_FOUND event (event_code 0x002F)
     # Has 2 extra bytes at the beginning of params
@@ -190,7 +215,10 @@ def test_data_received_cmd_complete_success(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_COMPLETE event for LOAD_CONN_PARAM
     header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -214,7 +242,10 @@ def test_data_received_cmd_complete_failure(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_COMPLETE event with failure
     header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -237,7 +268,10 @@ def test_data_received_cmd_status(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_STATUS event
     header = b"\x02\x00"  # MGMT_EV_CMD_STATUS
@@ -253,14 +287,17 @@ def test_data_received_cmd_status(
 
 
 def test_data_received_partial_data(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test data_received handles partial data correctly."""
     future = event_loop.create_future()
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a DEVICE_FOUND event but send it in chunks
     ad_data = b"\x02\x01\x06"
@@ -280,14 +317,17 @@ def test_data_received_partial_data(
 
 
 def test_data_received_partial_data_split_in_params(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test data_received handles data split in the middle of params."""
     future = event_loop.create_future()
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a DEVICE_FOUND event
     ad_data = b"\x02\x01\x06\x03\xff\x00\x01"  # Longer ad data
@@ -313,14 +353,17 @@ def test_data_received_partial_data_split_in_params(
 
 
 def test_data_received_multiple_small_chunks(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test data_received handles data sent in many small chunks."""
     future = event_loop.create_future()
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a DEVICE_FOUND event
     ad_data = b"\x02\x01\x06"
@@ -350,7 +393,10 @@ def test_data_received_multiple_events_in_one_chunk(
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create two events: a DEVICE_FOUND and a CMD_COMPLETE
     ad_data = b"\x02\x01\x06"
@@ -372,14 +418,17 @@ def test_data_received_multiple_events_in_one_chunk(
 
 
 def test_data_received_partial_then_multiple_events(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test partial data followed by multiple complete events."""
     future = event_loop.create_future()
     scanners: dict[int, HaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # First event (DEVICE_FOUND)
     ad_data1 = b"\x02\x01\x06"
@@ -434,7 +483,10 @@ def test_data_received_cmd_complete_different_opcode(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_COMPLETE event for a different opcode (e.g., 0x0004 - Add UUID)
     header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -458,7 +510,10 @@ def test_data_received_cmd_status_different_opcode(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_STATUS event for a different opcode
     header = b"\x02\x00"  # MGMT_EV_CMD_STATUS
@@ -482,7 +537,10 @@ def test_data_received_cmd_complete_short_params(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_COMPLETE event with param_len < 3
     header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -505,7 +563,10 @@ def test_data_received_cmd_status_param_len_1(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_STATUS event with param_len = 1
     header = b"\x02\x00"  # MGMT_EV_CMD_STATUS
@@ -528,7 +589,10 @@ def test_data_received_cmd_complete_param_len_0(
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a CMD_COMPLETE event with param_len = 0
     header = b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -547,7 +611,10 @@ def test_data_received_unknown_event(event_loop: asyncio.AbstractEventLoop) -> N
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create an unknown event
     header = b"\xff\x00"  # Unknown event code
@@ -567,7 +634,10 @@ def test_data_received_no_scanner_for_controller(
     scanners: dict[int, HaScanner] = {}  # No scanner for controller 0
     on_connection_lost = Mock()
 
-    protocol = BluetoothMGMTProtocol(future, scanners, on_connection_lost)
+    is_shutting_down = Mock(return_value=False)
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
 
     # Create a DEVICE_FOUND event for controller 0
     ad_data = b"\x02\x01\x06"
@@ -613,6 +683,11 @@ async def test_setup_success() -> None:
                 mock_future,
                 loop.create_future(),
             ],  # First for connection, second for on_connection_lost
+        ),
+        patch.object(
+            MGMTBluetoothCtl,
+            "_check_capabilities",
+            return_value=True,  # Mock successful capability check
         ),
     ):
         ctl = MGMTBluetoothCtl(5.0, {})
@@ -957,3 +1032,391 @@ async def test_reconnect_task_shutdown() -> None:
 
         # _establish_connection should not have been called
         assert not establish_called
+
+
+@pytest.mark.asyncio
+async def test_command_response_context_manager() -> None:
+    """Test the command_response context manager."""
+    future = asyncio.get_running_loop().create_future()
+    future.set_result(None)  # Mark connection as made
+    scanners: dict[int, HaScanner] = {}
+    on_connection_lost = Mock()
+    is_shutting_down = Mock(return_value=False)
+
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
+
+    # Test successful command response
+    opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
+    async with protocol.command_response(opcode) as response_future:
+        # Verify we got a future
+        assert response_future is not None
+        assert isinstance(response_future, asyncio.Future)
+
+        # Simulate receiving a response
+        response_data = (
+            b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
+            + b"\x00\x00"  # controller index
+            + b"\x03\x00"  # param_len (3 bytes: opcode=2 + status=1)
+            + opcode.to_bytes(2, "little")  # opcode
+            + b"\x00"  # status (success)
+        )
+
+        protocol.data_received(response_data)
+
+        # Get the result
+        status, data = await response_future
+        assert status == 0  # Success
+
+    # After context exits, future should be resolved
+    assert response_future.done()
+
+
+@pytest.mark.asyncio
+async def test_command_response_cleanup_on_exception() -> None:
+    """Test that command_response cleans up even if an exception occurs."""
+    future = asyncio.get_running_loop().create_future()
+    scanners: dict[int, HaScanner] = {}
+    on_connection_lost = Mock()
+    is_shutting_down = Mock(return_value=False)
+
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
+
+    opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
+    # Test cleanup on exception
+    with pytest.raises(ValueError):
+        async with protocol.command_response(opcode) as response_future:
+            # Verify we got a future
+            assert response_future is not None
+            raise ValueError("Test exception")
+
+    # The future should still exist after exception
+    # (cleanup just removes it from internal tracking)
+
+
+@pytest.mark.asyncio
+async def test_get_connections_response_handling() -> None:
+    """Test handling of GET_CONNECTIONS command response."""
+    future = asyncio.get_running_loop().create_future()
+    scanners: dict[int, HaScanner] = {}
+    on_connection_lost = Mock()
+    is_shutting_down = Mock(return_value=False)
+
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
+
+    opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
+
+    # Use the command_response context manager to register the command
+    async with protocol.command_response(opcode) as response_future:
+        # Test with permission denied status (0x14)
+        response_data = (
+            b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
+            + b"\x00\x00"  # controller index
+            + b"\x03\x00"  # param_len
+            + opcode.to_bytes(2, "little")  # opcode
+            + b"\x14"  # status (permission denied)
+        )
+
+        protocol.data_received(response_data)
+
+        # Verify the future was resolved with the status
+        status, data = await response_future
+        assert status == 0x14  # Permission denied
+        assert data == b""  # No additional data for param_len <= 3
+
+
+@pytest.mark.asyncio
+async def test_get_connections_response_with_data() -> None:
+    """Test GET_CONNECTIONS response with additional data."""
+    future = asyncio.get_running_loop().create_future()
+    scanners: dict[int, HaScanner] = {}
+    on_connection_lost = Mock()
+    is_shutting_down = Mock(return_value=False)
+
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
+
+    opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
+
+    # Use the command_response context manager to register the command
+    async with protocol.command_response(opcode) as response_future:
+        # Test with success status and additional data
+        extra_data = b"\x01\x02\x03\x04"
+        response_data = (
+            b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
+            + b"\x00\x00"  # controller index
+            + (3 + len(extra_data)).to_bytes(
+                2, "little"
+            )  # param_len (opcode=2 + status=1 + extra_data)
+            + opcode.to_bytes(2, "little")  # opcode
+            + b"\x00"  # status (success)
+            + extra_data  # additional response data
+        )
+
+        protocol.data_received(response_data)
+
+        # Verify the future was resolved with status and data
+        status, data = await response_future
+        assert status == 0  # Success
+        assert data == extra_data
+
+
+@pytest.mark.asyncio
+async def test_has_mgmt_capabilities_from_status() -> None:
+    """Test _has_mgmt_capabilities_from_status helper function."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+
+    # Test permission denied
+    assert mgmt_ctl._has_mgmt_capabilities_from_status(0x14) is False
+
+    # Test success
+    assert mgmt_ctl._has_mgmt_capabilities_from_status(0x00) is True
+
+    # Test invalid index (still has permissions)
+    assert mgmt_ctl._has_mgmt_capabilities_from_status(0x11) is True
+
+    # Test unknown status (assumes no permissions)
+    assert mgmt_ctl._has_mgmt_capabilities_from_status(0xFF) is False
+    assert mgmt_ctl._has_mgmt_capabilities_from_status(0x01) is False
+    assert mgmt_ctl._has_mgmt_capabilities_from_status(0x0D) is False
+
+
+@pytest.mark.asyncio
+async def test_check_capabilities_success() -> None:
+    """Test _check_capabilities when permissions are available."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+
+    # Mock the protocol and transport
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_transport = Mock()
+    mock_protocol.transport = mock_transport
+    mgmt_ctl.protocol = mock_protocol
+
+    # Mock command_response to return success
+    def mock_command_response(opcode: int) -> object:
+        future = asyncio.get_running_loop().create_future()
+        future.set_result((0x00, b""))  # Success status
+
+        class MockContext:
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
+                return future
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+        return MockContext()
+
+    mock_protocol.command_response = mock_command_response
+
+    # Test capability check
+    result = await mgmt_ctl._check_capabilities()
+    assert result is True
+
+    # Verify the command was sent
+    mock_transport.write.assert_called_once()
+    sent_data = mock_transport.write.call_args[0][0]
+    # Check that it's a GET_CONNECTIONS command (opcode at bytes 0-1)
+    assert sent_data[0:2] == b"\x15\x00"  # MGMT_OP_GET_CONNECTIONS little-endian
+
+
+@pytest.mark.asyncio
+async def test_check_capabilities_permission_denied() -> None:
+    """Test _check_capabilities when permissions are denied."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+
+    # Mock the protocol and transport
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_transport = Mock()
+    mock_protocol.transport = mock_transport
+    mgmt_ctl.protocol = mock_protocol
+
+    # Mock command_response to return permission denied
+    def mock_command_response(opcode: int) -> object:
+        future = asyncio.get_running_loop().create_future()
+        future.set_result((0x14, b""))  # Permission denied status
+
+        class MockContext:
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
+                return future
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+        return MockContext()
+
+    mock_protocol.command_response = mock_command_response
+
+    # Test capability check
+    result = await mgmt_ctl._check_capabilities()
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_check_capabilities_invalid_index() -> None:
+    """Test _check_capabilities with invalid adapter index (still has permissions)."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+
+    # Mock the protocol and transport
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_transport = Mock()
+    mock_protocol.transport = mock_transport
+    mgmt_ctl.protocol = mock_protocol
+
+    # Mock command_response to return invalid index
+    def mock_command_response(opcode: int) -> object:
+        future = asyncio.get_running_loop().create_future()
+        future.set_result((0x11, b""))  # Invalid index
+
+        class MockContext:
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
+                return future
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+        return MockContext()
+
+    mock_protocol.command_response = mock_command_response
+
+    # Test capability check - invalid index means adapter doesn't exist
+    # but we still have permissions
+    result = await mgmt_ctl._check_capabilities()
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_check_capabilities_unknown_status() -> None:
+    """Test _check_capabilities with unknown status code."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+
+    # Mock the protocol and transport
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_transport = Mock()
+    mock_protocol.transport = mock_transport
+    mgmt_ctl.protocol = mock_protocol
+
+    # Mock command_response to return unknown status
+    def mock_command_response(opcode: int) -> object:
+        future = asyncio.get_running_loop().create_future()
+        future.set_result((0xFF, b""))  # Unknown status
+
+        class MockContext:
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
+                return future
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+        return MockContext()
+
+    mock_protocol.command_response = mock_command_response
+
+    # Test capability check - unknown status assumes no permissions
+    result = await mgmt_ctl._check_capabilities()
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_check_capabilities_timeout() -> None:
+    """Test _check_capabilities when command times out."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+
+    # Mock the protocol and transport
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_transport = Mock()
+    mock_protocol.transport = mock_transport
+    mgmt_ctl.protocol = mock_protocol
+
+    # Mock command_response to timeout
+    def mock_command_response(opcode: int) -> object:
+        future = asyncio.get_running_loop().create_future()
+        # Never resolve the future
+
+        class MockContext:
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
+                return future
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+        return MockContext()
+
+    mock_protocol.command_response = mock_command_response
+
+    # Test capability check with a very short timeout
+    with patch("habluetooth.channels.bluez.asyncio_timeout") as mock_timeout:
+        # Make timeout raise immediately
+        mock_timeout.side_effect = TimeoutError("Test timeout")
+
+        result = await mgmt_ctl._check_capabilities()
+        assert result is False
+
+
+@pytest.mark.asyncio
+async def test_check_capabilities_no_protocol() -> None:
+    """Test _check_capabilities when protocol is not set."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+
+    # No protocol set
+    mgmt_ctl.protocol = None
+
+    result = await mgmt_ctl._check_capabilities()
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_check_capabilities_no_transport() -> None:
+    """Test _check_capabilities when transport is not set."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+
+    # Mock protocol with no transport
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_protocol.transport = None
+    mgmt_ctl.protocol = mock_protocol
+
+    result = await mgmt_ctl._check_capabilities()
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_setup_with_failed_capabilities() -> None:
+    """Test setup raises PermissionError when capabilities check fails."""
+    with (
+        patch("habluetooth.channels.bluez.btmgmt_socket") as mock_btmgmt,
+        patch.object(MGMTBluetoothCtl, "_establish_connection") as mock_establish,
+        patch.object(MGMTBluetoothCtl, "_check_capabilities", return_value=False),
+    ):
+        mock_socket = Mock()
+        mock_socket.fileno.return_value = 99
+        mock_btmgmt.open.return_value = mock_socket
+
+        mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+
+        # Mock successful connection establishment
+        mock_establish.return_value = None
+
+        # Set the socket on mgmt_ctl
+        mgmt_ctl.sock = mock_socket
+
+        # Mock protocol for close operation
+        mock_protocol = Mock()
+        mock_transport = Mock()
+        mock_protocol.transport = mock_transport
+        mgmt_ctl.protocol = mock_protocol
+
+        # Setup should raise PermissionError
+        with pytest.raises(PermissionError) as exc_info:
+            await mgmt_ctl.setup()
+
+        assert "Missing NET_ADMIN/NET_RAW capabilities" in str(exc_info.value)
+
+        # Verify cleanup
+        assert mgmt_ctl._shutting_down is True
+        mock_transport.close.assert_called_once()
+        mock_btmgmt.close.assert_called_once_with(mock_socket)

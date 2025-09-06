@@ -6,18 +6,22 @@ cdef bint TYPE_CHECKING
 
 cdef unsigned short DEVICE_FOUND
 cdef unsigned short ADV_MONITOR_DEVICE_FOUND
+cdef unsigned short MGMT_OP_GET_CONNECTIONS
 cdef unsigned short MGMT_OP_LOAD_CONN_PARAM
 cdef unsigned short MGMT_EV_CMD_COMPLETE
 cdef unsigned short MGMT_EV_CMD_STATUS
 
 cdef class BluetoothMGMTProtocol:
 
-    cdef object transport
-    cdef object connection_mode_future
+    cdef public object transport
+    cdef object connection_made_future
     cdef bytes _buffer
     cdef unsigned int _buffer_len
     cdef unsigned int _pos
     cdef dict _scanners
+    cdef object _on_connection_lost
+    cdef object _is_shutting_down
+    cdef dict _pending_commands
 
     @cython.locals(bytes_data=bytes)
     cdef void _add_to_buffer(self, object data) except *
