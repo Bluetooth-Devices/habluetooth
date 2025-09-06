@@ -1028,6 +1028,7 @@ async def test_reconnect_task_shutdown() -> None:
 async def test_command_response_context_manager() -> None:
     """Test the command_response context manager."""
     future = asyncio.get_running_loop().create_future()
+    future.set_result(None)  # Mark connection as made
     scanners: dict[int, HaScanner] = {}
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
@@ -1047,7 +1048,7 @@ async def test_command_response_context_manager() -> None:
         response_data = (
             b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
             + b"\x00\x00"  # controller index
-            + b"\x04\x00"  # param_len (4 bytes: opcode + status)
+            + b"\x03\x00"  # param_len (3 bytes: opcode=2 + status=1)
             + opcode.to_bytes(2, "little")  # opcode
             + b"\x00"  # status (success)
         )
@@ -1106,7 +1107,7 @@ async def test_get_connections_response_handling() -> None:
         response_data = (
             b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
             + b"\x00\x00"  # controller index
-            + b"\x04\x00"  # param_len
+            + b"\x03\x00"  # param_len
             + opcode.to_bytes(2, "little")  # opcode
             + b"\x14"  # status (permission denied)
         )
@@ -1140,7 +1141,9 @@ async def test_get_connections_response_with_data() -> None:
         response_data = (
             b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
             + b"\x00\x00"  # controller index
-            + (4 + len(extra_data)).to_bytes(2, "little")  # param_len
+            + (3 + len(extra_data)).to_bytes(
+                2, "little"
+            )  # param_len (opcode=2 + status=1 + extra_data)
             + opcode.to_bytes(2, "little")  # opcode
             + b"\x00"  # status (success)
             + extra_data  # additional response data
