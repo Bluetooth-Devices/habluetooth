@@ -390,8 +390,9 @@ class MGMTBluetoothCtl:
 
     async def _do_mgmt_op_get_connections(self, header: bytes) -> bool:
         """Send a MGMT_OP_GET_CONNECTIONS command and check capabilities."""
-        if not self.protocol or not self.protocol.transport:
-            return False
+        if TYPE_CHECKING:
+            assert self.protocol is not None
+            assert self.protocol.transport is not None
 
         async with self.protocol.command_response(
             MGMT_OP_GET_CONNECTIONS
