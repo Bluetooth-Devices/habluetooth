@@ -1189,15 +1189,15 @@ async def test_check_capabilities_success() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return success
-    def mock_command_response(opcode):
+    def mock_command_response(opcode: int) -> object:
         future = asyncio.get_running_loop().create_future()
         future.set_result((0x00, b""))  # Success status
 
         class MockContext:
-            async def __aenter__(self):
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
                 return future
 
-            async def __aexit__(self, *args):
+            async def __aexit__(self, *args: object) -> None:
                 pass
 
         return MockContext()
@@ -1227,15 +1227,15 @@ async def test_check_capabilities_permission_denied() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return permission denied
-    def mock_command_response(opcode):
+    def mock_command_response(opcode: int) -> object:
         future = asyncio.get_running_loop().create_future()
         future.set_result((0x14, b""))  # Permission denied status
 
         class MockContext:
-            async def __aenter__(self):
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
                 return future
 
-            async def __aexit__(self, *args):
+            async def __aexit__(self, *args: object) -> None:
                 pass
 
         return MockContext()
