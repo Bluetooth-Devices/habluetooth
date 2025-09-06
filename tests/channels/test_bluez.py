@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -28,6 +29,19 @@ from habluetooth.const import (
 )
 from habluetooth.scanner import HaScanner
 
+# Import FakeScanner from conftest for testing
+
+
+class MockHaScanner(HaScanner):
+    """Mock HaScanner for testing with Cython."""
+
+    def __init__(self):
+        """Initialize without calling parent __init__ to avoid BleakScanner setup."""
+        self.source = "test"
+        self.connectable = True
+        # Mock the method that will be called
+        self._async_on_raw_bluez_advertisement: Any = Mock()
+
 
 @pytest.fixture
 def event_loop():
@@ -38,11 +52,9 @@ def event_loop():
 
 
 @pytest.fixture
-def mock_scanner() -> Mock:
-    """Create a mock scanner."""
-    scanner = Mock(spec=HaScanner)
-    scanner._async_on_raw_bluez_advertisement = Mock()
-    return scanner
+def mock_scanner() -> MockHaScanner:
+    """Create a mock scanner for testing."""
+    return MockHaScanner()
 
 
 @pytest.fixture
@@ -114,7 +126,7 @@ def test_connection_lost_no_exception(
 
 
 def test_data_received_device_found(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test data_received handles DEVICE_FOUND event."""
     future = event_loop.create_future()
@@ -156,7 +168,7 @@ def test_data_received_device_found(
 
 
 def test_data_received_adv_monitor_device_found(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test data_received handles ADV_MONITOR_DEVICE_FOUND event."""
     future = event_loop.create_future()
@@ -277,7 +289,7 @@ def test_data_received_cmd_status(
 
 
 def test_data_received_partial_data(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test data_received handles partial data correctly."""
     future = event_loop.create_future()
@@ -307,7 +319,7 @@ def test_data_received_partial_data(
 
 
 def test_data_received_partial_data_split_in_params(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test data_received handles data split in the middle of params."""
     future = event_loop.create_future()
@@ -343,7 +355,7 @@ def test_data_received_partial_data_split_in_params(
 
 
 def test_data_received_multiple_small_chunks(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test data_received handles data sent in many small chunks."""
     future = event_loop.create_future()
@@ -408,7 +420,7 @@ def test_data_received_multiple_events_in_one_chunk(
 
 
 def test_data_received_partial_then_multiple_events(
-    event_loop: asyncio.AbstractEventLoop, mock_scanner: Mock
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
     """Test partial data followed by multiple complete events."""
     future = event_loop.create_future()
