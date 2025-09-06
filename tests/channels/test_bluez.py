@@ -1259,15 +1259,15 @@ async def test_check_capabilities_invalid_index() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return invalid index
-    def mock_command_response(opcode):
+    def mock_command_response(opcode: int) -> object:
         future = asyncio.get_running_loop().create_future()
         future.set_result((0x11, b""))  # Invalid index
 
         class MockContext:
-            async def __aenter__(self):
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
                 return future
 
-            async def __aexit__(self, *args):
+            async def __aexit__(self, *args: object) -> None:
                 pass
 
         return MockContext()
@@ -1292,15 +1292,15 @@ async def test_check_capabilities_unknown_status() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return unknown status
-    def mock_command_response(opcode):
+    def mock_command_response(opcode: int) -> object:
         future = asyncio.get_running_loop().create_future()
         future.set_result((0xFF, b""))  # Unknown status
 
         class MockContext:
-            async def __aenter__(self):
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
                 return future
 
-            async def __aexit__(self, *args):
+            async def __aexit__(self, *args: object) -> None:
                 pass
 
         return MockContext()
@@ -1324,15 +1324,15 @@ async def test_check_capabilities_timeout() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to timeout
-    def mock_command_response(opcode):
+    def mock_command_response(opcode: int) -> object:
         future = asyncio.get_running_loop().create_future()
         # Never resolve the future
 
         class MockContext:
-            async def __aenter__(self):
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
                 return future
 
-            async def __aexit__(self, *args):
+            async def __aexit__(self, *args: object) -> None:
                 pass
 
         return MockContext()
