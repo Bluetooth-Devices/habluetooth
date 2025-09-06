@@ -29,6 +29,7 @@ from habluetooth.const import (
 )
 from habluetooth.scanner import HaScanner
 
+
 class MockHaScanner(HaScanner):
     """Mock HaScanner for testing with Cython."""
 
