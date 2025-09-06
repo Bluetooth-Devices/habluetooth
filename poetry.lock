@@ -148,14 +148,14 @@ pythonista = ["bleak-pythonista (>=0.1.1)"]
 
 [[package]]
 name = "bleak-retry-connector"
-version = "4.4.0"
+version = "4.4.3"
 description = "A connector for Bleak Clients that handles transient connection failures"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "bleak_retry_connector-4.4.0-py3-none-any.whl", hash = "sha256:c7d387e46489797c286a6c3c5c0723210338fafad38907c2dc17abb8ba9fb6fd"},
-    {file = "bleak_retry_connector-4.4.0.tar.gz", hash = "sha256:1d49292d23c4c5066003ec285d63247a55707eab2909bf968e8812cd4a6dbaed"},
+    {file = "bleak_retry_connector-4.4.3-py3-none-any.whl", hash = "sha256:17a478d525706488973b181fc789e960bc3fb4bcd94ccb0eee7b7b682442577b"},
+    {file = "bleak_retry_connector-4.4.3.tar.gz", hash = "sha256:70aa305dbd26eaf0586dd24723daac93ee3dd6a465e9782bf02b711fcbc4a527"},
 ]
 
 [package.dependencies]
@@ -1450,19 +1450,19 @@ test = ["cython (>=3.0)", "defusedxml (>=0.7.1)", "pytest (>=8.0)", "pytest-xdis
 
 [[package]]
 name = "sphinx-autobuild"
-version = "2024.10.3"
+version = "2025.8.25"
 description = "Rebuild Sphinx documentation on changes, with hot reloading in the browser."
 optional = false
-python-versions = ">=3.9"
+python-versions = ">=3.11"
 groups = ["docs"]
 files = [
-    {file = "sphinx_autobuild-2024.10.3-py3-none-any.whl", hash = "sha256:158e16c36f9d633e613c9aaf81c19b0fc458ca78b112533b20dafcda430d60fa"},
-    {file = "sphinx_autobuild-2024.10.3.tar.gz", hash = "sha256:248150f8f333e825107b6d4b86113ab28fa51750e5f9ae63b59dc339be951fb1"},
+    {file = "sphinx_autobuild-2025.8.25-py3-none-any.whl", hash = "sha256:b750ac7d5a18603e4665294323fd20f6dcc0a984117026d1986704fa68f0379a"},
+    {file = "sphinx_autobuild-2025.8.25.tar.gz", hash = "sha256:9cf5aab32853c8c31af572e4fecdc09c997e2b8be5a07daf2a389e270e85b213"},
 ]
 
 [package.dependencies]
 colorama = ">=0.4.6"
-sphinx = "*"
+Sphinx = "*"
 starlette = ">=0.35"
 uvicorn = ">=0.25"
 watchfiles = ">=0.20"
