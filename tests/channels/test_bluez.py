@@ -1189,7 +1189,7 @@ async def test_check_capabilities_success() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return success
-    async def mock_command_response(opcode):
+    def mock_command_response(opcode):
         future = asyncio.get_running_loop().create_future()
         future.set_result((0x00, b""))  # Success status
 
@@ -1227,7 +1227,7 @@ async def test_check_capabilities_permission_denied() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return permission denied
-    async def mock_command_response(opcode):
+    def mock_command_response(opcode):
         future = asyncio.get_running_loop().create_future()
         future.set_result((0x14, b""))  # Permission denied status
 
@@ -1259,7 +1259,7 @@ async def test_check_capabilities_invalid_index() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return invalid index
-    async def mock_command_response(opcode):
+    def mock_command_response(opcode):
         future = asyncio.get_running_loop().create_future()
         future.set_result((0x11, b""))  # Invalid index
 
@@ -1292,7 +1292,7 @@ async def test_check_capabilities_unknown_status() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return unknown status
-    async def mock_command_response(opcode):
+    def mock_command_response(opcode):
         future = asyncio.get_running_loop().create_future()
         future.set_result((0xFF, b""))  # Unknown status
 
@@ -1324,7 +1324,7 @@ async def test_check_capabilities_timeout() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to timeout
-    async def mock_command_response(opcode):
+    def mock_command_response(opcode):
         future = asyncio.get_running_loop().create_future()
         # Never resolve the future
 
@@ -1390,6 +1390,9 @@ async def test_setup_with_failed_capabilities() -> None:
 
         # Mock successful connection establishment
         mock_establish.return_value = None
+
+        # Set the socket on mgmt_ctl
+        mgmt_ctl.sock = mock_socket
 
         # Mock protocol for close operation
         mock_protocol = Mock()
