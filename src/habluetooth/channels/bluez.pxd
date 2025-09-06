@@ -13,7 +13,7 @@ cdef unsigned short MGMT_EV_CMD_STATUS
 
 cdef class BluetoothMGMTProtocol:
 
-    cdef object transport
+    cdef public object transport
     cdef object connection_made_future
     cdef bytes _buffer
     cdef unsigned int _buffer_len
