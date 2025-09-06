@@ -148,14 +148,14 @@ pythonista = ["bleak-pythonista (>=0.1.1)"]
 
 [[package]]
 name = "bleak-retry-connector"
-version = "4.4.0"
+version = "4.4.3"
 description = "A connector for Bleak Clients that handles transient connection failures"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "bleak_retry_connector-4.4.0-py3-none-any.whl", hash = "sha256:c7d387e46489797c286a6c3c5c0723210338fafad38907c2dc17abb8ba9fb6fd"},
-    {file = "bleak_retry_connector-4.4.0.tar.gz", hash = "sha256:1d49292d23c4c5066003ec285d63247a55707eab2909bf968e8812cd4a6dbaed"},
+    {file = "bleak_retry_connector-4.4.3-py3-none-any.whl", hash = "sha256:17a478d525706488973b181fc789e960bc3fb4bcd94ccb0eee7b7b682442577b"},
+    {file = "bleak_retry_connector-4.4.3.tar.gz", hash = "sha256:70aa305dbd26eaf0586dd24723daac93ee3dd6a465e9782bf02b711fcbc4a527"},
 ]
 
 [package.dependencies]
