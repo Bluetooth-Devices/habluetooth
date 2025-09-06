@@ -242,10 +242,11 @@ class BluetoothMGMTProtocol:
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Handle connection lost."""
-        # Only log warnings if we're not shutting down
-        if exc and not self._is_shutting_down():
-            _LOGGER.warning("Bluetooth management socket connection lost: %s", exc)
-        elif not exc:
+        # Only suppress warnings during shutdown, not info messages
+        if exc:
+            if not self._is_shutting_down():
+                _LOGGER.warning("Bluetooth management socket connection lost: %s", exc)
+        else:
             _LOGGER.info("Bluetooth management socket connection closed")
         self.transport = None
         self._on_connection_lost()
