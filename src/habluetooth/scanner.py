@@ -456,6 +456,7 @@ class HaScanner(BaseHaScanner):
             self._start_future = None
 
         self._log_start_success(attempt)
+        self._on_start_success()
         return True
 
     def _log_adapter_init_wait(self, attempt: int) -> None:

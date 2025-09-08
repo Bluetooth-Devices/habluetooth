@@ -123,6 +123,15 @@ class BaseHaScanner:
         self._connect_failures: dict[str, int] = {}
         self._connect_in_progress: dict[str, int] = {}
 
+    def _on_start_success(self) -> None:
+        """
+        Called when the scanner successfully starts.
+
+        Notifies the manager that this scanner has started.
+        """
+        if self._manager:
+            self._manager.on_scanner_start(self)
+
     def _clear_connection_history(self) -> None:
         """Clear the connection history for a scanner."""
         self._connect_failures.clear()
