@@ -1582,13 +1582,15 @@ async def test_connection_path_scoring_with_slots_and_logging(
                 # score = -65
                 assert "Scanner 2" in line
                 assert "(slots=2/3 free)" in line
-                assert "(score=-65)" in line
+                # Check for both -65 and -65.0
+                assert ("(score=-65)" in line) or ("(score=-65.0)" in line)
 
                 # Scanner 3 has RSSI -70 with all slots free, no penalty:
                 # score = -70
                 assert "Scanner 3" in line
                 assert "(slots=3/3 free)" in line
-                assert "(score=-70)" in line
+                # Check for both -70 and -70.0
+                assert ("(score=-70)" in line) or ("(score=-70.0)" in line)
 
                 # Verify order: Scanner 1 should be first (best score -63.8),
                 # then Scanner 2 (-65), then Scanner 3 (-70)
@@ -1705,7 +1707,8 @@ async def test_connection_path_scoring_no_slots_available(
                 # Scanner 2 should be present with normal score
                 assert "Scanner 2" in line
                 assert "(slots=3/3 free)" in line
-                assert "(score=-70)" in line
+                # Check for both -70 and -70.0
+                assert ("(score=-70)" in line) or ("(score=-70.0)" in line)
                 break
 
         cancel1()
