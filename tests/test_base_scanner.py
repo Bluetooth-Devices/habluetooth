@@ -11,11 +11,13 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from bleak_retry_connector import Allocations
 from bluetooth_data_tools import monotonic_time_coarse
 
 from habluetooth import (
     BaseHaRemoteScanner,
     BaseHaScanner,
+    BluetoothScannerDevice,
     BluetoothScanningMode,
     HaBluetoothConnector,
     HaScannerDetails,
@@ -851,3 +853,340 @@ def test_base_scanner_with_connector() -> None:
             connectable=True,
         )
         assert scanner.details.scanner_type is HaScannerType.USB
+
+
+class TestScanner(BaseHaScanner):
+    """Test scanner without slots for mocking."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._test_allocations = None
+
+    def get_allocations(self):
+        """Override to return test allocations."""
+        return self._test_allocations
+
+
+def test_score_with_no_allocations():
+    """Test scoring when no allocation info is available."""
+    scanner = TestScanner(
+        source="test_source",
+        adapter="test_adapter",
+        connectable=True,
+    )
+
+    ble_device = BLEDevice(
+        address="00:11:22:33:44:55",
+        name="Test Device",
+        details={},
+        rssi=-50,
+    )
+    advertisement = AdvertisementData(
+        local_name="Test Device",
+        manufacturer_data={},
+        service_data={},
+        service_uuids=[],
+        rssi=-50,
+        platform_data=(),
+        tx_power=None,
+    )
+    scanner_device = BluetoothScannerDevice(
+        scanner=scanner,
+        ble_device=ble_device,
+        advertisement=advertisement,
+    )
+
+    # No allocation info available, should just use RSSI
+    score = scanner._score_connection_paths(10, scanner_device)
+    assert score == -50
+
+
+def test_score_with_all_slots_free():
+    """Test scoring when all slots are free."""
+    scanner = TestScanner(
+        source="test_source",
+        adapter="test_adapter",
+        connectable=True,
+    )
+
+    # Set test allocations to return all slots free
+    scanner._test_allocations = Allocations(
+        adapter="test_adapter",
+        slots=5,
+        free=5,
+        allocated=[],
+    )
+
+    ble_device = BLEDevice(
+        address="00:11:22:33:44:55",
+        name="Test Device",
+        details={},
+        rssi=-50,
+    )
+    advertisement = AdvertisementData(
+        local_name="Test Device",
+        manufacturer_data={},
+        service_data={},
+        service_uuids=[],
+        rssi=-50,
+        platform_data=(),
+        tx_power=None,
+    )
+    scanner_device = BluetoothScannerDevice(
+        scanner=scanner,
+        ble_device=ble_device,
+        advertisement=advertisement,
+    )
+
+    # All slots free, no penalty
+    score = scanner._score_connection_paths(10, scanner_device)
+    assert score == -50
+
+
+def test_score_with_one_slot_remaining():
+    """Test scoring when only one slot remains."""
+    scanner = TestScanner(
+        source="test_source",
+        adapter="test_adapter",
+        connectable=True,
+    )
+
+    # Set test allocations to return only 1 slot free
+    scanner._test_allocations = Allocations(
+        adapter="test_adapter",
+        slots=5,
+        free=1,
+        allocated=[
+            "AA:BB:CC:DD:EE:01",
+            "AA:BB:CC:DD:EE:02",
+            "AA:BB:CC:DD:EE:03",
+            "AA:BB:CC:DD:EE:04",
+        ],
+    )
+
+    ble_device = BLEDevice(
+        address="00:11:22:33:44:55",
+        name="Test Device",
+        details={},
+        rssi=-50,
+    )
+    advertisement = AdvertisementData(
+        local_name="Test Device",
+        manufacturer_data={},
+        service_data={},
+        service_uuids=[],
+        rssi=-50,
+        platform_data=(),
+        tx_power=None,
+    )
+    scanner_device = BluetoothScannerDevice(
+        scanner=scanner,
+        ble_device=ble_device,
+        advertisement=advertisement,
+    )
+
+    # One slot remaining, small penalty (rssi_diff * 0.76)
+    score = scanner._score_connection_paths(10, scanner_device)
+    assert score == -50 - (10 * 0.76)
+    assert score == -57.6
+
+
+def test_score_with_no_slots_available():
+    """Test scoring when no slots are available."""
+    scanner = TestScanner(
+        source="test_source",
+        adapter="test_adapter",
+        connectable=True,
+    )
+
+    # Set test allocations to return no slots free
+    scanner._test_allocations = Allocations(
+        adapter="test_adapter",
+        slots=5,
+        free=0,
+        allocated=[
+            "AA:BB:CC:DD:EE:01",
+            "AA:BB:CC:DD:EE:02",
+            "AA:BB:CC:DD:EE:03",
+            "AA:BB:CC:DD:EE:04",
+            "AA:BB:CC:DD:EE:05",
+        ],
+    )
+
+    ble_device = BLEDevice(
+        address="00:11:22:33:44:55",
+        name="Test Device",
+        details={},
+        rssi=-50,
+    )
+    advertisement = AdvertisementData(
+        local_name="Test Device",
+        manufacturer_data={},
+        service_data={},
+        service_uuids=[],
+        rssi=-50,
+        platform_data=(),
+        tx_power=None,
+    )
+    scanner_device = BluetoothScannerDevice(
+        scanner=scanner,
+        ble_device=ble_device,
+        advertisement=advertisement,
+    )
+
+    # No slots available, returns NO_RSSI_VALUE (-127)
+    score = scanner._score_connection_paths(10, scanner_device)
+    assert score == -127
+
+
+def test_score_comparison_with_different_slot_availability():
+    """Test that scanners with more free slots score better."""
+    # Scanner with all slots free
+    scanner_all_free = TestScanner(
+        source="adapter1",
+        adapter="adapter1",
+        connectable=True,
+    )
+
+    # Scanner with one slot remaining
+    scanner_one_slot = TestScanner(
+        source="adapter2",
+        adapter="adapter2",
+        connectable=True,
+    )
+
+    # Scanner with no slots
+    scanner_no_slots = TestScanner(
+        source="adapter3",
+        adapter="adapter3",
+        connectable=True,
+    )
+
+    ble_device = BLEDevice(
+        address="00:11:22:33:44:55",
+        name="Test Device",
+        details={},
+        rssi=-50,
+    )
+    advertisement = AdvertisementData(
+        local_name="Test Device",
+        manufacturer_data={},
+        service_data={},
+        service_uuids=[],
+        rssi=-50,
+        platform_data=(),
+        tx_power=None,
+    )
+
+    # Create scanner devices for each scanner
+    device_all_free = BluetoothScannerDevice(
+        scanner=scanner_all_free,
+        ble_device=ble_device,
+        advertisement=advertisement,
+    )
+    device_one_slot = BluetoothScannerDevice(
+        scanner=scanner_one_slot,
+        ble_device=ble_device,
+        advertisement=advertisement,
+    )
+    device_no_slots = BluetoothScannerDevice(
+        scanner=scanner_no_slots,
+        ble_device=ble_device,
+        advertisement=advertisement,
+    )
+
+    # Set allocations for each scanner
+    scanner_all_free._test_allocations = Allocations(
+        adapter="adapter1",
+        slots=5,
+        free=5,
+        allocated=[],
+    )
+    scanner_one_slot._test_allocations = Allocations(
+        adapter="adapter2",
+        slots=5,
+        free=1,
+        allocated=[
+            "AA:BB:CC:DD:EE:01",
+            "AA:BB:CC:DD:EE:02",
+            "AA:BB:CC:DD:EE:03",
+            "AA:BB:CC:DD:EE:04",
+        ],
+    )
+    scanner_no_slots._test_allocations = Allocations(
+        adapter="adapter3",
+        slots=5,
+        free=0,
+        allocated=[
+            "AA:BB:CC:DD:EE:01",
+            "AA:BB:CC:DD:EE:02",
+            "AA:BB:CC:DD:EE:03",
+            "AA:BB:CC:DD:EE:04",
+            "AA:BB:CC:DD:EE:05",
+        ],
+    )
+
+    score_all_free = scanner_all_free._score_connection_paths(10, device_all_free)
+    score_one_slot = scanner_one_slot._score_connection_paths(10, device_one_slot)
+    score_no_slots = scanner_no_slots._score_connection_paths(10, device_no_slots)
+
+    # Verify the scoring order: all_free > one_slot > no_slots
+    assert score_all_free > score_one_slot
+    assert score_one_slot > score_no_slots
+
+    # Verify specific values
+    assert score_all_free == -50
+    assert score_one_slot == -57.6
+    assert score_no_slots == -127  # NO_RSSI_VALUE
+
+
+def test_score_with_connections_in_progress_and_slots():
+    """Test that both connection progress and slot availability are considered."""
+    scanner = TestScanner(
+        source="test_source",
+        adapter="test_adapter",
+        connectable=True,
+    )
+
+    # Add a connection in progress
+    scanner._add_connecting("FF:EE:DD:CC:BB:AA")
+
+    # Set test allocations to return only 1 slot free
+    scanner._test_allocations = Allocations(
+        adapter="test_adapter",
+        slots=5,
+        free=1,
+        allocated=[
+            "AA:BB:CC:DD:EE:01",
+            "AA:BB:CC:DD:EE:02",
+            "AA:BB:CC:DD:EE:03",
+            "AA:BB:CC:DD:EE:04",
+        ],
+    )
+
+    ble_device = BLEDevice(
+        address="00:11:22:33:44:55",
+        name="Test Device",
+        details={},
+        rssi=-50,
+    )
+    advertisement = AdvertisementData(
+        local_name="Test Device",
+        manufacturer_data={},
+        service_data={},
+        service_uuids=[],
+        rssi=-50,
+        platform_data=(),
+        tx_power=None,
+    )
+    scanner_device = BluetoothScannerDevice(
+        scanner=scanner,
+        ble_device=ble_device,
+        advertisement=advertisement,
+    )
+
+    # Both penalties should apply
+    score = scanner._score_connection_paths(10, scanner_device)
+    # -50 (RSSI) - 10.1 (connection in progress) - 7.6 (last slot)
+    assert score == -50 - 10.1 - 7.6
+    assert score == -67.7

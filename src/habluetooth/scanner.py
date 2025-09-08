@@ -16,7 +16,7 @@ from bleak import BleakError
 from bleak.assigned_numbers import AdvertisementDataType
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
-from bleak_retry_connector import restore_discoveries
+from bleak_retry_connector import Allocations, restore_discoveries
 from bleak_retry_connector.bluez import stop_discovery
 from bluetooth_adapters import DEFAULT_ADDRESS
 from bluetooth_data_tools import monotonic_time_coarse
@@ -252,6 +252,12 @@ class HaScanner(BaseHaScanner):
     ) -> tuple[BLEDevice, AdvertisementData] | None:
         """Return the advertisement data for a discovered device."""
         return self.discovered_devices_and_advertisement_data.get(address)
+
+    def get_allocations(self) -> Allocations | None:
+        """Get current connection slot allocations from BleakSlotManager."""
+        if self._manager and self._manager.slot_manager:
+            return self._manager.slot_manager.get_allocations(self.adapter)
+        return None
 
     def async_setup(self) -> CALLBACK_TYPE:
         """Set up the scanner."""
