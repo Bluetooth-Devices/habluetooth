@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.5.1 (2025-09-08)
+
+### Bug fixes
+
+
+- Handle case where two scanners have the exact same rssi ([`f51f700`](https://github.com/Bluetooth-Devices/habluetooth/commit/f51f700bdf41d508072c9ba1109a4bf7c7e5c57f))
+
+
 ## v5.5.0 (2025-09-08)
 
 ### Features
