@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from typing import Any
 from unittest.mock import Mock, patch
@@ -1716,9 +1716,7 @@ async def test_connection_path_scoring_no_slots_available(
 
 
 @pytest.mark.asyncio
-async def test_thundering_herd_connection_slots(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+async def test_thundering_herd_connection_slots() -> None:
     """
     Test thundering herd scenario with limited connection slots.
 
@@ -1734,19 +1732,32 @@ async def test_thundering_herd_connection_slots(
 
     manager = _get_manager()
 
+    # Track which backend each device connected to
+    connection_tracker = {}
+
     class FakeBleakClientThunderingHerd(BaseFakeBleakClient):
         """Fake bleak client for thundering herd test."""
 
-        def __init__(self, *args, **kwargs):
+        def __init__(self, address_or_ble_device, *args, **kwargs):
             """Initialize with tracking."""
-            super().__init__(*args, **kwargs)
+            super().__init__(address_or_ble_device, *args, **kwargs)
             self._connected = False
+            # Track the device and source
+            if hasattr(address_or_ble_device, "address"):
+                self._address = address_or_ble_device.address
+                self._source = address_or_ble_device.details.get("source")
+            else:
+                self._address = str(address_or_ble_device)
+                self._source = None
 
         async def connect(self, *args, **kwargs):
-            """Simulate connection."""
+            """Simulate connection and record which backend was used."""
             # Small delay to simulate connection time
             await asyncio.sleep(0.01)
             self._connected = True
+            # Record which backend this device connected to
+            if self._address and self._source:
+                connection_tracker[self._address] = self._source
             return True
 
         @property
@@ -1777,13 +1788,13 @@ async def test_thundering_herd_connection_slots(
     proxy3 = FakeScanner("proxy3", "Proxy 3 (Bad)", fake_connector_3, True)
 
     # Track actual slot allocations dynamically
-    proxy_allocations = {
+    proxy_allocations: dict[str, set[str]] = {
         "proxy1": set(),
         "proxy2": set(),
         "proxy3": set(),
     }
 
-    def get_proxy_allocations(proxy_name: str):
+    def get_proxy_allocations(proxy_name: str) -> Allocations:
         """Get allocations for a specific proxy."""
         allocated = proxy_allocations[proxy_name]
         return Allocations(
@@ -1794,14 +1805,14 @@ async def test_thundering_herd_connection_slots(
         )
 
     # Mock methods to track allocations
-    def make_add_connecting(proxy_name: str):
-        def _add_connecting(addr: str):
+    def make_add_connecting(proxy_name: str) -> Callable[[str], None]:
+        def _add_connecting(addr: str) -> None:
             proxy_allocations[proxy_name].add(addr)
 
         return _add_connecting
 
-    def make_finished_connecting(proxy_name: str):
-        def _finished_connecting(addr: str, success: bool):
+    def make_finished_connecting(proxy_name: str) -> Callable[[str, bool], None]:
+        def _finished_connecting(addr: str, success: bool) -> None:
             if not success:
                 proxy_allocations[proxy_name].discard(addr)
 
@@ -1857,37 +1868,26 @@ async def test_thundering_herd_connection_slots(
 
         await asyncio.sleep(0)
 
-        # Track connection results
-        connection_results = {}
+        # Clear the connection tracker before starting
+        connection_tracker.clear()
 
         async def connect_device(address: str) -> tuple[str, str | None]:
-            """Try to connect to a device and track which proxy was used."""
+            """Try to connect to a device."""
             client = bleak.BleakClient(address)
             try:
                 await client.connect()
-                # Find which proxy was used from logs
-                for line in caplog.text.splitlines():
-                    if f"{address} -" in line and "Connecting via" in line:
-                        if "proxy1" in line:
-                            return address, "proxy1"
-                        if "proxy2" in line:
-                            return address, "proxy2"
-                        if "proxy3" in line:
-                            return address, "proxy3"
-                return address, "unknown"
+                # The connection tracker should have recorded which backend was used
+                return address, connection_tracker.get(address, "unknown")
             except BleakError:
                 # Connection failed (no available backend)
                 return address, None
 
-        # Clear log before thundering herd
-        caplog.clear()
-
         # Simulate thundering herd - all devices try to connect at once
-        with caplog.at_level(logging.DEBUG):
-            tasks = [connect_device(addr) for addr in device_addresses]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = [connect_device(addr) for addr in device_addresses]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Process results
+        connection_results = {}
         for result in results:
             if isinstance(result, tuple):
                 address, proxy = result
@@ -1919,11 +1919,11 @@ async def test_thundering_herd_connection_slots(
             len(proxy3_connections) <= 3
         ), f"Proxy3 exceeded slot limit: {len(proxy3_connections)} > 3"
 
-        # 2. Good signal proxies should be preferred
+        # 2. Good signal proxies should be preferred and fill up first
         good_proxy_total = len(proxy1_connections) + len(proxy2_connections)
         assert (
-            good_proxy_total >= 6
-        ), f"Expected at least 6 connections on good proxies, got {good_proxy_total}"
+            good_proxy_total == 6
+        ), f"Expected exactly 6 connections on good proxies, got {good_proxy_total}"
 
         # 3. All 7 devices should connect (6 to good proxies, 1 to bad proxy)
         total_connected = (
@@ -1938,31 +1938,19 @@ async def test_thundering_herd_connection_slots(
             len(proxy3_connections) == 1
         ), f"Expected exactly 1 connection on proxy3, got {len(proxy3_connections)}"
 
-        # 5. Check that slot tracking worked properly in logs
-        log_text = caplog.text
+        # 5. Verify good distribution across proxy1 and proxy2
+        # Both should have roughly equal load (3 connections each)
+        assert (
+            len(proxy1_connections) == 3
+        ), f"Expected proxy1 to have 3 connections, got {len(proxy1_connections)}"
+        assert (
+            len(proxy2_connections) == 3
+        ), f"Expected proxy2 to have 3 connections, got {len(proxy2_connections)}"
 
-        # Should see various slot states
-        assert "(slots=3/3 free)" in log_text, "Should see initial full capacity"
-        assert "(slots=2/3 free)" in log_text, "Should see partial capacity"
-        assert "(slots=1/3 free)" in log_text, "Should see low capacity"
-        assert "(slots=0/3 free)" in log_text, "Should see no capacity"
-
-        # 6. Verify proxy3 was chosen because others were full
-        if proxy3_connections:
-            # Find log entries for the device that went to proxy3
-            device_on_proxy3 = proxy3_connections[0]
-            device_logs = [
-                line
-                for line in log_text.splitlines()
-                if device_on_proxy3 in line and "Found" in line
-            ]
-
-            # Should show that proxy3 was chosen despite bad signal
-            # because proxy1 and proxy2 had no slots
-            assert any(
-                "(slots=0/3 free)" in line or "score=-127" in line
-                for line in device_logs
-            ), f"Logs should show good proxies were full when {device_on_proxy3} connected"
+        # 6. No connections should fail
+        assert (
+            len(failed_connections) == 0
+        ), f"Expected no failed connections, but {len(failed_connections)} failed"
 
         # Clean up
         cancel1()
