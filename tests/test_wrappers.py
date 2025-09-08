@@ -1743,7 +1743,7 @@ async def test_thundering_herd_connection_slots() -> None:
             super().__init__(address_or_ble_device, *args, **kwargs)
             self._connected = False
             # Track the device and source
-            if hasattr(address_or_ble_device, "address"):
+            if isinstance(address_or_ble_device, BLEDevice):
                 self._address = address_or_ble_device.address
                 self._source = address_or_ble_device.details.get("source")
             else:
