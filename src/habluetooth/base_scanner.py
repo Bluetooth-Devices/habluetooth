@@ -194,15 +194,19 @@ class BaseHaScanner:
         scanner_connections_in_progress = len(self._connect_in_progress)
         previous_failures = self._connect_failures.get(address, 0)
 
+        # Use a minimum rssi_diff of 1 to ensure penalties are meaningful
+        # even when scanners have identical RSSI
+        effective_rssi_diff = max(rssi_diff, 1)
+
         # Penalize scanners with connections in progress
         if scanner_connections_in_progress:
             # Very large penalty for multiple connections in progress
             # to avoid overloading the adapter
-            score -= rssi_diff * scanner_connections_in_progress * 1.01
+            score -= effective_rssi_diff * scanner_connections_in_progress * 1.01
 
         # Penalize based on previous failures
         if previous_failures:
-            score -= rssi_diff * previous_failures * 0.51
+            score -= effective_rssi_diff * previous_failures * 0.51
 
         # Consider connection slot availability
         allocation = self.get_allocations()
@@ -212,7 +216,7 @@ class BaseHaScanner:
                 return NO_RSSI_VALUE
             if allocation.free == 1:
                 # Last slot available - small penalty to prefer adapters with more slots
-                score -= rssi_diff * 0.76
+                score -= effective_rssi_diff * 0.76
 
         return score
 

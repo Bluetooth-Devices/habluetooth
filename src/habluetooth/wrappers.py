@@ -442,6 +442,7 @@ class HaBleakClientWrapper(BleakClient):
             key=lambda x: x.advertisement.rssi,
             reverse=True,
         )
+        rssi_diff = 0  # Default when there's only one device
         if len(sorted_devices) > 1:
             rssi_diff = (
                 sorted_devices[0].advertisement.rssi
@@ -470,7 +471,7 @@ class HaBleakClientWrapper(BleakClient):
                             if (allocations := device.scanner.get_allocations())
                             else ""
                         )
-                        + f"(score={device.score_connection_path(0)})"
+                        + f"(score={device.score_connection_path(rssi_diff)})"
                     )
                     for device in sorted_devices
                 ),

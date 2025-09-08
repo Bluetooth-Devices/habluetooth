@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import Any
 from unittest.mock import Mock, patch
 
@@ -14,6 +14,7 @@ import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bleak.exc import BleakError
+from bleak_retry_connector import Allocations
 from bluetooth_data_tools import monotonic_time_coarse as MONOTONIC_TIME
 
 from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector
@@ -1465,3 +1466,247 @@ async def test_connection_params_no_adapter_idx(
         assert mock_mgmt_ctl.load_conn_params.call_count == 0
 
     cancel_remote()
+
+
+@pytest.mark.asyncio
+async def test_connection_path_scoring_with_slots_and_logging(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test connection path scoring and logging reflects slot availability."""
+    from bleak_retry_connector import Allocations
+
+    manager = _get_manager()
+
+    class FakeBleakClientNoConnect(BaseFakeBleakClient):
+        """Fake bleak client that doesn't connect."""
+
+        async def connect(self, *args, **kwargs):
+            """Don't actually connect."""
+            raise BleakError("Test - connection not needed")
+
+    # Create fake connectors
+    fake_connector_1 = HaBluetoothConnector(
+        client=FakeBleakClientNoConnect, source="scanner1", can_connect=lambda: True
+    )
+    fake_connector_2 = HaBluetoothConnector(
+        client=FakeBleakClientNoConnect, source="scanner2", can_connect=lambda: True
+    )
+    fake_connector_3 = HaBluetoothConnector(
+        client=FakeBleakClientNoConnect, source="scanner3", can_connect=lambda: True
+    )
+
+    # Create scanners with different sources
+    scanner1 = FakeScanner("scanner1", "Scanner 1", fake_connector_1, True)
+    scanner2 = FakeScanner("scanner2", "Scanner 2", fake_connector_2, True)
+    scanner3 = FakeScanner("scanner3", "Scanner 3", fake_connector_3, True)
+
+    # Mock get_allocations for each scanner using patch.object
+    with (
+        patch.object(
+            scanner1,
+            "get_allocations",
+            return_value=Allocations(
+                adapter="scanner1",
+                slots=3,
+                free=1,  # Only 1 slot free - should get penalty
+                allocated=["AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"],
+            ),
+        ),
+        patch.object(
+            scanner2,
+            "get_allocations",
+            return_value=Allocations(
+                adapter="scanner2",
+                slots=3,
+                free=2,  # 2 slots free - no penalty
+                allocated=["AA:BB:CC:DD:EE:03"],
+            ),
+        ),
+        patch.object(
+            scanner3,
+            "get_allocations",
+            return_value=Allocations(
+                adapter="scanner3",
+                slots=3,
+                free=3,  # All slots free - no penalty
+                allocated=[],
+            ),
+        ),
+    ):
+        cancel1 = manager.async_register_scanner(scanner1)
+        cancel2 = manager.async_register_scanner(scanner2)
+        cancel3 = manager.async_register_scanner(scanner3)
+
+        # Inject advertisements with different RSSI values
+        device1 = generate_ble_device(
+            "00:00:00:00:00:01", "Test Device", {"source": "scanner1"}
+        )
+        adv_data1 = generate_advertisement_data(local_name="Test Device", rssi=-60)
+        scanner1.inject_advertisement(device1, adv_data1)
+
+        device2 = generate_ble_device(
+            "00:00:00:00:00:01", "Test Device", {"source": "scanner2"}
+        )
+        adv_data2 = generate_advertisement_data(local_name="Test Device", rssi=-65)
+        scanner2.inject_advertisement(device2, adv_data2)
+
+        device3 = generate_ble_device(
+            "00:00:00:00:00:01", "Test Device", {"source": "scanner3"}
+        )
+        adv_data3 = generate_advertisement_data(local_name="Test Device", rssi=-70)
+        scanner3.inject_advertisement(device3, adv_data3)
+
+        await asyncio.sleep(0)
+
+        # Try to connect with logging enabled
+        with caplog.at_level(logging.INFO):
+            client = bleak.BleakClient("00:00:00:00:00:01")
+            with suppress(BleakError):
+                await client.connect()
+
+        # Check that the log contains the connection paths with correct scoring
+        log_text = caplog.text
+        assert "Found 3 connection path(s)" in log_text
+
+        # Extract the log line with connection paths
+        for line in caplog.text.splitlines():
+            if "Found 3 connection path(s)" in line:
+                # rssi_diff = best_rssi - second_best_rssi = -60 - (-65) = 5
+                # Scanner 1 has best RSSI (-60) but only 1 slot free, so with penalty:
+                # score = -60 - (5 * 0.76) = -63.8
+                assert "Scanner 1" in line
+                assert "(slots=1/3 free)" in line
+                assert "(score=-63.8)" in line
+
+                # Scanner 2 has RSSI -65 with 2 slots free, no penalty:
+                # score = -65
+                assert "Scanner 2" in line
+                assert "(slots=2/3 free)" in line
+                assert "(score=-65.0)" in line
+
+                # Scanner 3 has RSSI -70 with all slots free, no penalty:
+                # score = -70
+                assert "Scanner 3" in line
+                assert "(slots=3/3 free)" in line
+                assert "(score=-70.0)" in line
+
+                # Verify order: Scanner 1 should be first (best score -63.8),
+                # then Scanner 2 (-65), then Scanner 3 (-70)
+                scanner1_pos = line.find("Scanner 1")
+                scanner2_pos = line.find("Scanner 2")
+                scanner3_pos = line.find("Scanner 3")
+
+                assert scanner1_pos < scanner2_pos < scanner3_pos, (
+                    f"Expected Scanner 1 before Scanner 2 before Scanner 3, "
+                    f"but got positions {scanner1_pos}, {scanner2_pos}, {scanner3_pos}"
+                )
+                break
+        else:
+            pytest.fail("Could not find connection path log line")
+
+        cancel1()
+        cancel2()
+        cancel3()
+
+
+@pytest.mark.asyncio
+async def test_connection_path_scoring_no_slots_available(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that scanners with no free slots are excluded."""
+    manager = _get_manager()
+
+    class FakeBleakClientNoConnect(BaseFakeBleakClient):
+        """Fake bleak client that doesn't connect."""
+
+        async def connect(self, *args, **kwargs):
+            """Don't actually connect."""
+            raise BleakError("Test - connection not needed")
+
+    # Create fake connectors
+    fake_connector_1 = HaBluetoothConnector(
+        client=FakeBleakClientNoConnect, source="scanner1", can_connect=lambda: True
+    )
+    fake_connector_2 = HaBluetoothConnector(
+        client=FakeBleakClientNoConnect, source="scanner2", can_connect=lambda: True
+    )
+
+    # Create scanners
+    scanner1 = FakeScanner("scanner1", "Scanner 1", fake_connector_1, True)
+    scanner2 = FakeScanner("scanner2", "Scanner 2", fake_connector_2, True)
+
+    # Mock get_allocations - scanner1 has no free slots
+    with (
+        patch.object(
+            scanner1,
+            "get_allocations",
+            return_value=Allocations(
+                adapter="scanner1",
+                slots=3,
+                free=0,  # No slots available - should be excluded
+                allocated=[
+                    "AA:BB:CC:DD:EE:01",
+                    "AA:BB:CC:DD:EE:02",
+                    "AA:BB:CC:DD:EE:03",
+                ],
+            ),
+        ),
+        patch.object(
+            scanner2,
+            "get_allocations",
+            return_value=Allocations(
+                adapter="scanner2", slots=3, free=3, allocated=[]  # All slots free
+            ),
+        ),
+    ):
+        cancel1 = manager.async_register_scanner(scanner1)
+        cancel2 = manager.async_register_scanner(scanner2)
+
+        # Inject advertisements
+        device1 = generate_ble_device(
+            "00:00:00:00:00:02", "Test Device", {"source": "scanner1"}
+        )
+        adv_data1 = generate_advertisement_data(
+            local_name="Test Device", rssi=-50
+        )  # Better RSSI
+        scanner1.inject_advertisement(device1, adv_data1)
+
+        device2 = generate_ble_device(
+            "00:00:00:00:00:02", "Test Device", {"source": "scanner2"}
+        )
+        adv_data2 = generate_advertisement_data(
+            local_name="Test Device", rssi=-70
+        )  # Worse RSSI
+        scanner2.inject_advertisement(device2, adv_data2)
+
+        await asyncio.sleep(0)
+
+        # Try to connect with logging enabled
+        with caplog.at_level(logging.INFO):
+            client = bleak.BleakClient("00:00:00:00:00:02")
+            with suppress(BleakError):
+                await client.connect()
+
+        # Check that only scanner2 is in the connection paths
+        log_text = caplog.text
+        assert (
+            "Found 1 connection path(s)" in log_text
+            or "Found 2 connection path(s)" in log_text
+        )
+
+        # If both are shown, scanner1 should have bad score (NO_RSSI_VALUE = -127)
+        for line in caplog.text.splitlines():
+            if "connection path(s)" in line:
+                if "Scanner 1" in line:
+                    # Scanner 1 should show 0 free slots and bad score
+                    assert "(slots=0/3 free)" in line
+                    assert "(score=-127)" in line  # NO_RSSI_VALUE
+
+                # Scanner 2 should be present with normal score
+                assert "Scanner 2" in line
+                assert "(slots=3/3 free)" in line
+                assert "(score=-70.0)" in line
+                break
+
+        cancel1()
+        cancel2()
