@@ -215,6 +215,22 @@ class BluetoothManager:
         """Return if passive scan is supported."""
         return any(adapter[ADAPTER_PASSIVE_SCAN] for adapter in self._adapters.values())
 
+    def is_operating_degraded(self) -> bool:
+        """
+        Return if the manager is operating in degraded mode.
+
+        On Linux, we're in degraded mode if mgmt control is not available.
+        This typically means we don't have NET_ADMIN/NET_RAW capabilities.
+        """
+        return IS_LINUX and self._mgmt_ctl is None
+
+    def on_scanner_start(self, scanner: BaseHaScanner) -> None:
+        """
+        Called when a scanner starts.
+
+        Subclasses can override this to perform custom actions when a scanner starts.
+        """
+
     def async_scanner_count(self, connectable: bool = True) -> int:
         """Return the number of scanners."""
         if connectable:
