@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Final, final
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from bleak_retry_connector import NO_RSSI_VALUE
+from bleak_retry_connector import NO_RSSI_VALUE, Allocations
 from bluetooth_adapters import adapter_human_name
 from bluetooth_data_tools import monotonic_time_coarse, parse_advertisement_data_bytes
 
@@ -169,20 +169,51 @@ class BaseHaScanner:
         """Clear a connect failure."""
         self._connect_failures.pop(address, None)
 
+    def get_allocations(self) -> Allocations | None:
+        """
+        Get current connection slot allocations for this scanner.
+
+        Returns:
+            Allocations object with free/limit/allocated info, or None if not available.
+
+        Note:
+            Subclasses should override this method to provide their allocation info.
+            For local adapters, this will be overridden in HaScanner to query
+            BleakSlotManager.
+            For remote scanners, they should override to return their own tracking.
+
+        """
+        return None
+
     def _score_connection_paths(
         self, rssi_diff: _int, scanner_device: BluetoothScannerDevice
     ) -> float:
-        """Score the connection paths."""
+        """Score the connection paths considering slot availability."""
         address = scanner_device.ble_device.address
         score = scanner_device.advertisement.rssi or NO_RSSI_VALUE
         scanner_connections_in_progress = len(self._connect_in_progress)
         previous_failures = self._connect_failures.get(address, 0)
+
+        # Penalize scanners with connections in progress
         if scanner_connections_in_progress:
             # Very large penalty for multiple connections in progress
             # to avoid overloading the adapter
             score -= rssi_diff * scanner_connections_in_progress * 1.01
+
+        # Penalize based on previous failures
         if previous_failures:
             score -= rssi_diff * previous_failures * 0.51
+
+        # Consider connection slot availability
+        allocation = self.get_allocations()
+        if allocation and allocation.slots > 0:
+            if allocation.free == 0:
+                # No slots available - return NO_RSSI_VALUE to indicate unavailable
+                return NO_RSSI_VALUE
+            if allocation.free == 1:
+                # Last slot available - small penalty to prefer adapters with more slots
+                score -= rssi_diff * 0.76
+
         return score
 
     def _connections_in_progress(self) -> int:

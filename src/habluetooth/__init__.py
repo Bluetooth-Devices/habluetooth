@@ -1,5 +1,7 @@
 __version__ = "5.3.1"
 
+from bleak_retry_connector import Allocations
+
 from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
     AdvertisementTracker,
@@ -45,6 +47,7 @@ __all__ = [
     "TRACKER_BUFFERING_WOBBLE_SECONDS",
     "UNAVAILABLE_TRACK_SECONDS",
     "AdvertisementTracker",
+    "Allocations",
     "BaseHaRemoteScanner",
     "BaseHaScanner",
     "BluetoothManager",
