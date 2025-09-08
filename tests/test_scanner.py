@@ -1528,24 +1528,13 @@ def test_multiple_scanner_types_simultaneously() -> None:
         assert len(types) == 3  # All different
 
 
-def test_ha_scanner_get_allocations_no_manager() -> None:
-    """Test HaScanner.get_allocations returns None when no manager is set."""
-    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
-    # Clear the manager that gets auto-set
-    with patch.object(scanner, "_manager", None):
-        assert scanner.get_allocations() is None
-
-
 def test_ha_scanner_get_allocations_no_slot_manager() -> None:
     """Test HaScanner.get_allocations returns None when manager has no slot_manager."""
-    manager = get_manager()
     scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    manager = get_manager()
 
-    # Mock manager without slot_manager
-    with (
-        patch.object(scanner, "_manager", manager),
-        patch.object(manager, "slot_manager", None),
-    ):
+    # Mock slot_manager as None
+    with patch.object(manager, "slot_manager", None):
         assert scanner.get_allocations() is None
 
 
@@ -1553,8 +1542,8 @@ def test_ha_scanner_get_allocations_with_slot_manager() -> None:
     """Test HaScanner.get_allocations returns allocation info from BleakSlotManager."""
     from bleak_retry_connector import Allocations
 
-    manager = get_manager()
     scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    manager = get_manager()
 
     # Create mock allocations
     mock_allocations = Allocations(
@@ -1568,10 +1557,7 @@ def test_ha_scanner_get_allocations_with_slot_manager() -> None:
     mock_slot_manager = Mock(spec=BleakSlotManager)
     mock_slot_manager.get_allocations.return_value = mock_allocations
 
-    with (
-        patch.object(scanner, "_manager", manager),
-        patch.object(manager, "slot_manager", mock_slot_manager),
-    ):
+    with patch.object(manager, "slot_manager", mock_slot_manager):
         allocations = scanner.get_allocations()
 
         assert allocations is not None
@@ -1583,8 +1569,8 @@ def test_ha_scanner_get_allocations_updates_dynamically() -> None:
     """Test that HaScanner.get_allocations returns current values as they change."""
     from bleak_retry_connector import Allocations
 
-    manager = get_manager()
     scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    manager = get_manager()
 
     # Mock slot_manager
     mock_slot_manager = Mock(spec=BleakSlotManager)
@@ -1594,10 +1580,7 @@ def test_ha_scanner_get_allocations_updates_dynamically() -> None:
         adapter="hci0", slots=3, free=3, allocated=[]
     )
 
-    with (
-        patch.object(scanner, "_manager", manager),
-        patch.object(manager, "slot_manager", mock_slot_manager),
-    ):
+    with patch.object(manager, "slot_manager", mock_slot_manager):
         # Check initial state
         allocations = scanner.get_allocations()
         assert allocations is not None
