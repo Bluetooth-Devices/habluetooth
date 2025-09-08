@@ -1713,3 +1713,258 @@ async def test_connection_path_scoring_no_slots_available(
 
         cancel1()
         cancel2()
+
+
+@pytest.mark.asyncio
+async def test_thundering_herd_connection_slots(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Test thundering herd scenario with limited connection slots.
+
+    Simulates 7 devices trying to connect simultaneously to 3 proxies:
+    - Proxy 1 & 2: Good signal (-60 RSSI), 3 slots each
+    - Proxy 3: Bad signal (-95 RSSI), 3 slots each
+
+    Expected behavior:
+    - First 6 devices should connect to proxy1 and proxy2 (3 each)
+    - 7th device should connect to proxy3 (bad signal) when others are full
+    """
+    from bleak_retry_connector import Allocations
+
+    manager = _get_manager()
+
+    class FakeBleakClientThunderingHerd(BaseFakeBleakClient):
+        """Fake bleak client for thundering herd test."""
+
+        def __init__(self, *args, **kwargs):
+            """Initialize with tracking."""
+            super().__init__(*args, **kwargs)
+            self._connected = False
+
+        async def connect(self, *args, **kwargs):
+            """Simulate connection."""
+            # Small delay to simulate connection time
+            await asyncio.sleep(0.01)
+            self._connected = True
+            return True
+
+        @property
+        def is_connected(self) -> bool:
+            """Return connection state."""
+            return self._connected
+
+    # Create fake connectors for 3 proxies
+    fake_connector_1 = HaBluetoothConnector(
+        client=FakeBleakClientThunderingHerd,
+        source="proxy1",
+        can_connect=lambda: True,
+    )
+    fake_connector_2 = HaBluetoothConnector(
+        client=FakeBleakClientThunderingHerd,
+        source="proxy2",
+        can_connect=lambda: True,
+    )
+    fake_connector_3 = HaBluetoothConnector(
+        client=FakeBleakClientThunderingHerd,
+        source="proxy3",
+        can_connect=lambda: True,
+    )
+
+    # Create 3 scanners (proxies) with 3 connection slots each
+    proxy1 = FakeScanner("proxy1", "Proxy 1 (Good)", fake_connector_1, True)
+    proxy2 = FakeScanner("proxy2", "Proxy 2 (Good)", fake_connector_2, True)
+    proxy3 = FakeScanner("proxy3", "Proxy 3 (Bad)", fake_connector_3, True)
+
+    # Track actual slot allocations dynamically
+    proxy_allocations = {
+        "proxy1": set(),
+        "proxy2": set(),
+        "proxy3": set(),
+    }
+
+    def get_proxy_allocations(proxy_name: str):
+        """Get allocations for a specific proxy."""
+        allocated = proxy_allocations[proxy_name]
+        return Allocations(
+            adapter=proxy_name,
+            slots=3,
+            free=3 - len(allocated),
+            allocated=list(allocated),
+        )
+
+    # Mock methods to track allocations
+    def make_add_connecting(proxy_name: str):
+        def _add_connecting(addr: str):
+            proxy_allocations[proxy_name].add(addr)
+
+        return _add_connecting
+
+    def make_finished_connecting(proxy_name: str):
+        def _finished_connecting(addr: str, success: bool):
+            if not success:
+                proxy_allocations[proxy_name].discard(addr)
+
+        return _finished_connecting
+
+    # Mock get_allocations and connection tracking
+    with (
+        patch.object(
+            proxy1, "get_allocations", lambda: get_proxy_allocations("proxy1")
+        ),
+        patch.object(
+            proxy2, "get_allocations", lambda: get_proxy_allocations("proxy2")
+        ),
+        patch.object(
+            proxy3, "get_allocations", lambda: get_proxy_allocations("proxy3")
+        ),
+        patch.object(proxy1, "_add_connecting", make_add_connecting("proxy1")),
+        patch.object(proxy2, "_add_connecting", make_add_connecting("proxy2")),
+        patch.object(proxy3, "_add_connecting", make_add_connecting("proxy3")),
+        patch.object(
+            proxy1, "_finished_connecting", make_finished_connecting("proxy1")
+        ),
+        patch.object(
+            proxy2, "_finished_connecting", make_finished_connecting("proxy2")
+        ),
+        patch.object(
+            proxy3, "_finished_connecting", make_finished_connecting("proxy3")
+        ),
+    ):
+        cancel1 = manager.async_register_scanner(proxy1)
+        cancel2 = manager.async_register_scanner(proxy2)
+        cancel3 = manager.async_register_scanner(proxy3)
+
+        # Create 7 devices to connect
+        device_addresses = [f"AA:BB:CC:DD:EE:0{i}" for i in range(1, 8)]
+
+        # Inject advertisements for all devices on all proxies
+        for i, address in enumerate(device_addresses, 1):
+            # Good signal on proxy1
+            device1 = generate_ble_device(address, f"Device {i}", {"source": "proxy1"})
+            adv_data1 = generate_advertisement_data(local_name=f"Device {i}", rssi=-60)
+            proxy1.inject_advertisement(device1, adv_data1)
+
+            # Good signal on proxy2 (exactly same as proxy1)
+            device2 = generate_ble_device(address, f"Device {i}", {"source": "proxy2"})
+            adv_data2 = generate_advertisement_data(local_name=f"Device {i}", rssi=-60)
+            proxy2.inject_advertisement(device2, adv_data2)
+
+            # Bad signal on proxy3
+            device3 = generate_ble_device(address, f"Device {i}", {"source": "proxy3"})
+            adv_data3 = generate_advertisement_data(local_name=f"Device {i}", rssi=-95)
+            proxy3.inject_advertisement(device3, adv_data3)
+
+        await asyncio.sleep(0)
+
+        # Track connection results
+        connection_results = {}
+
+        async def connect_device(address: str) -> tuple[str, str | None]:
+            """Try to connect to a device and track which proxy was used."""
+            client = bleak.BleakClient(address)
+            try:
+                await client.connect()
+                # Find which proxy was used from logs
+                for line in caplog.text.splitlines():
+                    if f"{address} -" in line and "Connecting via" in line:
+                        if "proxy1" in line:
+                            return address, "proxy1"
+                        if "proxy2" in line:
+                            return address, "proxy2"
+                        if "proxy3" in line:
+                            return address, "proxy3"
+                return address, "unknown"
+            except BleakError:
+                # Connection failed (no available backend)
+                return address, None
+
+        # Clear log before thundering herd
+        caplog.clear()
+
+        # Simulate thundering herd - all devices try to connect at once
+        with caplog.at_level(logging.DEBUG):
+            tasks = [connect_device(addr) for addr in device_addresses]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process results
+        for result in results:
+            if isinstance(result, tuple):
+                address, proxy = result
+                connection_results[address] = proxy
+
+        # Count connections per proxy
+        proxy1_connections = [
+            addr for addr, p in connection_results.items() if p == "proxy1"
+        ]
+        proxy2_connections = [
+            addr for addr, p in connection_results.items() if p == "proxy2"
+        ]
+        proxy3_connections = [
+            addr for addr, p in connection_results.items() if p == "proxy3"
+        ]
+        failed_connections = [
+            addr for addr, p in connection_results.items() if p is None
+        ]
+
+        # Verify constraints
+        # 1. No proxy should exceed its slot limit
+        assert (
+            len(proxy1_connections) <= 3
+        ), f"Proxy1 exceeded slot limit: {len(proxy1_connections)} > 3"
+        assert (
+            len(proxy2_connections) <= 3
+        ), f"Proxy2 exceeded slot limit: {len(proxy2_connections)} > 3"
+        assert (
+            len(proxy3_connections) <= 3
+        ), f"Proxy3 exceeded slot limit: {len(proxy3_connections)} > 3"
+
+        # 2. Good signal proxies should be preferred
+        good_proxy_total = len(proxy1_connections) + len(proxy2_connections)
+        assert (
+            good_proxy_total >= 6
+        ), f"Expected at least 6 connections on good proxies, got {good_proxy_total}"
+
+        # 3. All 7 devices should connect (6 to good proxies, 1 to bad proxy)
+        total_connected = (
+            len(proxy1_connections) + len(proxy2_connections) + len(proxy3_connections)
+        )
+        assert (
+            total_connected == 7
+        ), f"Expected all 7 devices to connect, but only {total_connected} did"
+
+        # 4. The 7th device should go to proxy3 since good ones are full
+        assert (
+            len(proxy3_connections) == 1
+        ), f"Expected exactly 1 connection on proxy3, got {len(proxy3_connections)}"
+
+        # 5. Check that slot tracking worked properly in logs
+        log_text = caplog.text
+
+        # Should see various slot states
+        assert "(slots=3/3 free)" in log_text, "Should see initial full capacity"
+        assert "(slots=2/3 free)" in log_text, "Should see partial capacity"
+        assert "(slots=1/3 free)" in log_text, "Should see low capacity"
+        assert "(slots=0/3 free)" in log_text, "Should see no capacity"
+
+        # 6. Verify proxy3 was chosen because others were full
+        if proxy3_connections:
+            # Find log entries for the device that went to proxy3
+            device_on_proxy3 = proxy3_connections[0]
+            device_logs = [
+                line
+                for line in log_text.splitlines()
+                if device_on_proxy3 in line and "Found" in line
+            ]
+
+            # Should show that proxy3 was chosen despite bad signal
+            # because proxy1 and proxy2 had no slots
+            assert any(
+                "(slots=0/3 free)" in line or "score=-127" in line
+                for line in device_logs
+            ), f"Logs should show good proxies were full when {device_on_proxy3} connected"
+
+        # Clean up
+        cancel1()
+        cancel2()
+        cancel3()
