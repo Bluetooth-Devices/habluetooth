@@ -6,7 +6,7 @@ import asyncio
 import time
 from datetime import timedelta
 from typing import Any
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
 from bleak.backends.device import BLEDevice
@@ -17,6 +17,7 @@ from bluetooth_data_tools import monotonic_time_coarse
 from habluetooth import (
     BaseHaRemoteScanner,
     BaseHaScanner,
+    BluetoothManager,
     BluetoothScannerDevice,
     BluetoothScanningMode,
     HaBluetoothConnector,
@@ -24,6 +25,7 @@ from habluetooth import (
     HaScannerModeChange,
     HaScannerType,
     get_manager,
+    set_manager,
 )
 from habluetooth.const import (
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
@@ -44,6 +46,7 @@ from . import (
     patch_bluetooth_time,
     utcnow,
 )
+from .conftest import FakeBluetoothAdapters, MockBluetoothManagerWithCallbacks
 
 
 class FakeScanner(BaseHaRemoteScanner):
@@ -1190,3 +1193,91 @@ def test_score_with_connections_in_progress_and_slots():
     # -50 (RSSI) - 10.1 (connection in progress) - 7.6 (last slot)
     assert score == -50 - 10.1 - 7.6
     assert score == -67.7
+
+
+@pytest.mark.asyncio
+async def test_on_scanner_start_callback_remote_scanner(
+    async_mock_manager_with_scanner_callbacks: MockBluetoothManagerWithCallbacks,
+) -> None:
+    """Test that on_scanner_start is called when a remote scanner starts."""
+    manager = async_mock_manager_with_scanner_callbacks
+
+    # Create a fake remote scanner
+    scanner = FakeScanner(
+        source="esp32_proxy",
+        adapter="esp32_proxy",
+        connector=None,
+        connectable=True,
+    )
+
+    # Simulate scanner start success
+    scanner._on_start_success()
+
+    # Verify the callback was called
+    assert len(manager.scanner_start_calls) == 1
+    assert manager.scanner_start_calls[0] is scanner
+
+
+@pytest.mark.asyncio
+async def test_on_scanner_start_multiple_scanners(
+    async_mock_manager_with_scanner_callbacks: MockBluetoothManagerWithCallbacks,
+) -> None:
+    """Test that on_scanner_start is called for multiple scanners."""
+    manager = async_mock_manager_with_scanner_callbacks
+
+    # Create multiple scanners
+    scanner1 = FakeScanner(
+        source="scanner1",
+        adapter="scanner1",
+        connector=None,
+        connectable=True,
+    )
+
+    scanner2 = FakeScanner(
+        source="scanner2",
+        adapter="scanner2",
+        connector=None,
+        connectable=True,
+    )
+
+    # Simulate both scanners starting
+    scanner1._on_start_success()
+    scanner2._on_start_success()
+
+    # Verify both callbacks were called
+    assert len(manager.scanner_start_calls) == 2
+    assert scanner1 in manager.scanner_start_calls
+    assert scanner2 in manager.scanner_start_calls
+
+
+@pytest.mark.asyncio
+async def test_scanner_without_manager() -> None:
+    """Test that _on_start_success handles scanner without manager gracefully."""
+    # Set a temporary manager for scanner creation
+    mock_bluetooth_adapters = FakeBluetoothAdapters()
+    temp_manager = BluetoothManager(
+        mock_bluetooth_adapters,
+        slot_manager=Mock(),
+    )
+
+    original_manager = get_manager()
+    set_manager(temp_manager)
+
+    try:
+        # Create a scanner
+        scanner = FakeScanner(
+            source="test",
+            adapter="test",
+            connector=None,
+            connectable=True,
+        )
+
+        # Clear the manager to simulate no manager scenario
+        scanner._manager = None  # type: ignore[assignment]
+
+        # Should not raise an exception
+        scanner._on_start_success()
+
+    finally:
+        # Restore original manager
+        set_manager(original_manager)

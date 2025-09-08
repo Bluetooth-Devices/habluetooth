@@ -224,3 +224,68 @@ def register_non_connectable_scanner() -> Generator[None, None, None]:
     cancel = manager.async_register_scanner(remote_scanner)
     yield
     cancel()
+
+
+class MockBluetoothManagerWithCallbacks(BluetoothManager):
+    """Mock bluetooth manager that tracks scanner start callbacks."""
+
+    def __init__(self, *args, **kwargs):
+        """Initialize the mock manager."""
+        super().__init__(*args, **kwargs)
+        self.scanner_start_calls = []
+
+    def on_scanner_start(self, scanner):
+        """Track scanner start calls."""
+        self.scanner_start_calls.append(scanner)
+        super().on_scanner_start(scanner)
+
+
+@pytest.fixture
+def mock_manager_with_scanner_callbacks() -> (
+    Generator[MockBluetoothManagerWithCallbacks, None, None]
+):
+    """Provide a mock BluetoothManager that tracks scanner start callbacks."""
+    mock_bluetooth_adapters = FakeBluetoothAdapters()
+    manager = MockBluetoothManagerWithCallbacks(
+        mock_bluetooth_adapters,
+        slot_manager=MagicMock(),
+    )
+
+    # Save the original manager
+    original_manager = get_manager()
+
+    # Set our mock manager as the global manager
+    set_manager(manager)
+
+    try:
+        yield manager
+    finally:
+        # Restore the original manager
+        set_manager(original_manager)
+
+
+@pytest_asyncio.fixture
+async def async_mock_manager_with_scanner_callbacks() -> (
+    AsyncGenerator[MockBluetoothManagerWithCallbacks, None]
+):
+    """Provide an async mock BluetoothManager that tracks scanner start callbacks."""
+    mock_bluetooth_adapters = FakeBluetoothAdapters()
+    manager = MockBluetoothManagerWithCallbacks(
+        mock_bluetooth_adapters,
+        slot_manager=MagicMock(),
+    )
+
+    # Setup the manager
+    await manager.async_setup()
+
+    # Save the original manager
+    original_manager = get_manager()
+
+    # Set our mock manager as the global manager
+    set_manager(manager)
+
+    try:
+        yield manager
+    finally:
+        # Restore the original manager
+        set_manager(original_manager)

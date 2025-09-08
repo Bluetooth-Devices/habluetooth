@@ -4,7 +4,7 @@ import asyncio
 import time
 from datetime import timedelta
 from typing import Any
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 from bleak_retry_connector import AllocationChange, Allocations, BleakSlotManager
@@ -1328,3 +1328,81 @@ async def test_subclassing_bluetooth_manager(caplog: pytest.LogCaptureFixture) -
 
     TestBluetoothManager2(bluetooth_adapters, slot_manager)
     assert "does not implement _discover_service_info" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_is_operating_degraded_on_linux_with_mgmt() -> None:
+    """Test is_operating_degraded returns False on Linux with mgmt control."""
+    mock_bluetooth_adapters = FakeBluetoothAdapters()
+    manager = BluetoothManager(
+        mock_bluetooth_adapters,
+        slot_manager=Mock(),
+    )
+
+    with (
+        patch("habluetooth.manager.IS_LINUX", True),
+        patch.object(manager, "_mgmt_ctl", Mock()),
+    ):
+        # Mock mgmt_ctl being available
+        assert manager.is_operating_degraded() is False
+
+
+@pytest.mark.asyncio
+async def test_is_operating_degraded_on_linux_without_mgmt() -> None:
+    """Test is_operating_degraded returns True on Linux without mgmt control."""
+    mock_bluetooth_adapters = FakeBluetoothAdapters()
+    manager = BluetoothManager(
+        mock_bluetooth_adapters,
+        slot_manager=Mock(),
+    )
+
+    with patch("habluetooth.manager.IS_LINUX", True):
+        # mgmt_ctl is None by default
+        assert manager._mgmt_ctl is None
+        assert manager.is_operating_degraded() is True
+
+
+@pytest.mark.asyncio
+async def test_is_operating_degraded_on_non_linux() -> None:
+    """Test is_operating_degraded returns False on non-Linux systems."""
+    mock_bluetooth_adapters = FakeBluetoothAdapters()
+    manager = BluetoothManager(
+        mock_bluetooth_adapters,
+        slot_manager=Mock(),
+    )
+
+    with patch("habluetooth.manager.IS_LINUX", False):
+        # Should return False regardless of mgmt_ctl state
+        assert manager.is_operating_degraded() is False
+
+        # Even with mgmt_ctl set
+        manager._mgmt_ctl = Mock()
+        assert manager.is_operating_degraded() is False
+
+
+@pytest.mark.asyncio
+async def test_is_operating_degraded_after_permission_error() -> None:
+    """Test is_operating_degraded after mgmt setup fails with permission error."""
+    mock_bluetooth_adapters = FakeBluetoothAdapters()
+    manager = BluetoothManager(
+        mock_bluetooth_adapters,
+        slot_manager=Mock(),
+    )
+
+    with (
+        patch("habluetooth.manager.IS_LINUX", True),
+        patch("habluetooth.manager.MGMTBluetoothCtl") as mock_mgmt_class,
+    ):
+        # Make setup fail with permission error
+        mock_mgmt_instance = Mock()
+        mock_mgmt_instance.setup = AsyncMock(
+            side_effect=PermissionError("No permission")
+        )
+        mock_mgmt_class.return_value = mock_mgmt_instance
+
+        # Setup should handle the error and set mgmt_ctl to None
+        await manager.async_setup()
+
+        # Should be in degraded mode
+        assert manager._mgmt_ctl is None
+        assert manager.is_operating_degraded() is True

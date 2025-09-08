@@ -42,7 +42,7 @@ from . import (
     patch_bluetooth_time,
     utcnow,
 )
-from .conftest import FakeBluetoothAdapters
+from .conftest import FakeBluetoothAdapters, MockBluetoothManagerWithCallbacks
 
 DEVICE_FOUND = 0x0012
 ADV_MONITOR_DEVICE_FOUND = 0x002F
@@ -1611,3 +1611,33 @@ def test_ha_scanner_get_allocations_updates_dynamically() -> None:
         assert allocations is not None
         assert allocations.free == 1
         assert len(allocations.allocated) == 2
+
+
+@pytest.mark.asyncio
+async def test_on_scanner_start_callback(
+    async_mock_manager_with_scanner_callbacks: MockBluetoothManagerWithCallbacks,
+) -> None:
+    """Test that on_scanner_start is called when a local scanner starts."""
+    manager = async_mock_manager_with_scanner_callbacks
+
+    # Create a local scanner (it will get the manager from get_manager())
+    scanner = HaScanner(
+        mode=BluetoothScanningMode.ACTIVE,
+        adapter="hci0",
+        address="00:00:00:00:00:00",
+    )
+
+    # Register scanner with manager
+    manager.async_register_scanner(scanner)
+
+    # Setup the scanner
+    scanner.async_setup()
+
+    # Directly call _on_start_success to test the callback
+    # (In real usage, this is called by HaScanner._async_start_attempt
+    # after successful start)
+    scanner._on_start_success()
+
+    # Verify the callback was called
+    assert len(manager.scanner_start_calls) == 1
+    assert manager.scanner_start_calls[0] is scanner
