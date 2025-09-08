@@ -1526,3 +1526,105 @@ def test_multiple_scanner_types_simultaneously() -> None:
             unknown_scanner.details.scanner_type,
         }
         assert len(types) == 3  # All different
+
+
+def test_ha_scanner_get_allocations_no_manager() -> None:
+    """Test HaScanner.get_allocations returns None when no manager is set."""
+    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    # Clear the manager that gets auto-set
+    with patch.object(scanner, "_manager", None):
+        assert scanner.get_allocations() is None
+
+
+def test_ha_scanner_get_allocations_no_slot_manager() -> None:
+    """Test HaScanner.get_allocations returns None when manager has no slot_manager."""
+    manager = get_manager()
+    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+
+    # Mock manager without slot_manager
+    with (
+        patch.object(scanner, "_manager", manager),
+        patch.object(manager, "slot_manager", None),
+    ):
+        assert scanner.get_allocations() is None
+
+
+def test_ha_scanner_get_allocations_with_slot_manager() -> None:
+    """Test HaScanner.get_allocations returns allocation info from BleakSlotManager."""
+    from bleak_retry_connector import Allocations
+
+    manager = get_manager()
+    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+
+    # Create mock allocations
+    mock_allocations = Allocations(
+        adapter="hci0",
+        slots=5,
+        free=3,
+        allocated=["11:22:33:44:55:66", "AA:BB:CC:DD:EE:FF"],
+    )
+
+    # Mock slot_manager
+    mock_slot_manager = Mock(spec=BleakSlotManager)
+    mock_slot_manager.get_allocations.return_value = mock_allocations
+
+    with (
+        patch.object(scanner, "_manager", manager),
+        patch.object(manager, "slot_manager", mock_slot_manager),
+    ):
+        allocations = scanner.get_allocations()
+
+        assert allocations is not None
+        assert allocations == mock_allocations
+        mock_slot_manager.get_allocations.assert_called_once_with("hci0")
+
+
+def test_ha_scanner_get_allocations_updates_dynamically() -> None:
+    """Test that HaScanner.get_allocations returns current values as they change."""
+    from bleak_retry_connector import Allocations
+
+    manager = get_manager()
+    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+
+    # Mock slot_manager
+    mock_slot_manager = Mock(spec=BleakSlotManager)
+
+    # Initial state - 3 free slots
+    mock_slot_manager.get_allocations.return_value = Allocations(
+        adapter="hci0", slots=3, free=3, allocated=[]
+    )
+
+    with (
+        patch.object(scanner, "_manager", manager),
+        patch.object(manager, "slot_manager", mock_slot_manager),
+    ):
+        # Check initial state
+        allocations = scanner.get_allocations()
+        assert allocations is not None
+        assert allocations.free == 3
+        assert allocations.allocated == []
+
+        # Update mock to simulate connection made
+        mock_slot_manager.get_allocations.return_value = Allocations(
+            adapter="hci0", slots=3, free=2, allocated=["11:22:33:44:55:66"]
+        )
+
+        # Check updated state
+        allocations = scanner.get_allocations()
+        assert allocations is not None
+        assert allocations.free == 2
+        assert allocations.allocated == ["11:22:33:44:55:66"]
+
+        # Update mock to simulate another connection
+        mock_slot_manager.get_allocations.return_value = Allocations(
+            adapter="hci0",
+            slots=3,
+            free=1,
+            allocated=["11:22:33:44:55:66", "AA:BB:CC:DD:EE:FF"],
+        )
+
+        # Check final state
+        allocations = scanner.get_allocations()
+        assert allocations is not None
+        assert allocations.free == 1
+        assert len(allocations.allocated) == 2
