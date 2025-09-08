@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.4.0 (2025-09-08)
+
+### Features
+
+
+- Consider connection slots when selecting connection path ([`fb938fc`](https://github.com/Bluetooth-Devices/habluetooth/commit/fb938fc608fd9f846c3eedd70ff245d5b299b93c))
+
+
 ## v5.3.1 (2025-09-06)
 
 ### Bug fixes
