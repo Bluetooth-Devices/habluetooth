@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.6.0 (2025-09-08)
+
+### Features
+
+
+- Callback on scanner start success ([`782b717`](https://github.com/Bluetooth-Devices/habluetooth/commit/782b717044beff9758774c54cecbe3af9520e78b))
+
+
 ## v5.5.1 (2025-09-08)
 
 ### Bug fixes

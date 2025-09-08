@@ -1,4 +1,4 @@
-__version__ = "5.5.1"
+__version__ = "5.6.0"
 
 from bleak_retry_connector import Allocations
 
