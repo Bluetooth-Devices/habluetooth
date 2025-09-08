@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.5.0 (2025-09-08)
+
+### Features
+
+
+- Log slots when connecting ([`a3881c4`](https://github.com/Bluetooth-Devices/habluetooth/commit/a3881c4cccac52d668518dc8632104688dbf2788))
+
+
 ## v5.4.0 (2025-09-08)
 
 ### Features
