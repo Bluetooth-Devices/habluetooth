@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.6.2 (2025-09-09)
+
+### Bug fixes
+
+
+- Resolve crash when compiled with cython 3.1 ([`bac6dcf`](https://github.com/Bluetooth-Devices/habluetooth/commit/bac6dcffaba3940ff7331739866801729eee2032))
+
+
 ## v5.6.1 (2025-09-09)
 
 ### Bug fixes
