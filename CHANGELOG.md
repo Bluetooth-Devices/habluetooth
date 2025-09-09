@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.6.1 (2025-09-09)
+
+### Bug fixes
+
+
+- Rebuild wheels ([`bcc77be`](https://github.com/Bluetooth-Devices/habluetooth/commit/bcc77be98b6d3da33b8d74f1dda899e9823aa652))
+
+
 ## v5.6.0 (2025-09-08)
 
 ### Features
