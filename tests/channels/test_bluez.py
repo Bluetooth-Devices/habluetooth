@@ -60,6 +60,10 @@ def mock_transport() -> Mock:
     """Create a mock transport."""
     transport = Mock()
     transport.write = Mock()
+    # Create a mock socket for direct writes
+    mock_socket = Mock()
+    mock_socket.send = Mock(return_value=6)  # Default to successful send
+    transport.get_extra_info = Mock(return_value=mock_socket)
     return transport
 
 
@@ -734,6 +738,8 @@ async def test_load_conn_params_fast() -> None:
     mock_protocol = Mock(spec=BluetoothMGMTProtocol)
     mock_transport = Mock()
     mock_protocol.transport = mock_transport
+    # Mock the _write_to_socket method
+    mock_protocol._write_to_socket = Mock()
 
     ctl = MGMTBluetoothCtl(5.0, {})
     ctl.protocol = mock_protocol
@@ -749,8 +755,8 @@ async def test_load_conn_params_fast() -> None:
     assert result is True
 
     # Verify the command was sent
-    mock_transport.write.assert_called_once()
-    call_args = mock_transport.write.call_args[0][0]
+    mock_protocol._write_to_socket.assert_called_once()
+    call_args = mock_protocol._write_to_socket.call_args[0][0]
 
     # Check header (6 bytes)
     assert call_args[0:2] == b"\x35\x00"  # MGMT_OP_LOAD_CONN_PARAM
@@ -774,6 +780,8 @@ async def test_load_conn_params_medium() -> None:
     mock_protocol = Mock(spec=BluetoothMGMTProtocol)
     mock_transport = Mock()
     mock_protocol.transport = mock_transport
+    # Mock the _write_to_socket method
+    mock_protocol._write_to_socket = Mock()
 
     ctl = MGMTBluetoothCtl(5.0, {})
     ctl.protocol = mock_protocol
@@ -789,8 +797,8 @@ async def test_load_conn_params_medium() -> None:
     assert result is True
 
     # Verify the command was sent
-    mock_transport.write.assert_called_once()
-    call_args = mock_transport.write.call_args[0][0]
+    mock_protocol._write_to_socket.assert_called_once()
+    call_args = mock_protocol._write_to_socket.call_args[0][0]
 
     # Check header
     assert call_args[0:2] == b"\x35\x00"  # MGMT_OP_LOAD_CONN_PARAM
@@ -845,8 +853,12 @@ def test_load_conn_params_transport_error(caplog: pytest.LogCaptureFixture) -> N
     """Test load_conn_params with transport write error."""
     mock_protocol = Mock(spec=BluetoothMGMTProtocol)
     mock_transport = Mock()
-    mock_transport.write.side_effect = Exception("Transport error")
+    mock_socket = Mock()
+    mock_socket.send.side_effect = Exception("Transport error")
+    mock_transport.get_extra_info = Mock(return_value=mock_socket)
     mock_protocol.transport = mock_transport
+    mock_protocol._sock = mock_socket
+    mock_protocol._write_to_socket = Mock(side_effect=Exception("Transport error"))
 
     ctl = MGMTBluetoothCtl(5.0, {})
     ctl.protocol = mock_protocol
@@ -860,6 +872,34 @@ def test_load_conn_params_transport_error(caplog: pytest.LogCaptureFixture) -> N
 
     assert result is False
     assert "Failed to load conn params" in caplog.text
+
+
+def test_kernel_bug_workaround_send_returns_zero(
+    event_loop: asyncio.AbstractEventLoop, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test that the kernel bug workaround handles send returning 0."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {}
+    on_connection_lost = Mock()
+    is_shutting_down = Mock(return_value=False)
+
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
+
+    # Create a mock socket that returns 0 (kernel bug behavior)
+    mock_socket = Mock()
+    mock_socket.send = Mock(return_value=0)
+    protocol._sock = mock_socket
+
+    # Send some data
+    test_data = b"\x25\x00\x00\x00\x00\x00"
+    with caplog.at_level(logging.DEBUG):
+        protocol._write_to_socket(test_data)
+
+    # Verify the send was called and the workaround logged
+    mock_socket.send.assert_called_once_with(test_data)
+    assert "kernel bug workaround" in caplog.text
 
 
 def test_close() -> None:
@@ -1213,14 +1253,16 @@ async def test_check_capabilities_success() -> None:
         return MockContext()
 
     mock_protocol.command_response = mock_command_response
+    # Mock the _write_to_socket method
+    mock_protocol._write_to_socket = Mock()
 
     # Test capability check
     result = await mgmt_ctl._check_capabilities()
     assert result is True
 
     # Verify the command was sent
-    mock_transport.write.assert_called_once()
-    sent_data = mock_transport.write.call_args[0][0]
+    mock_protocol._write_to_socket.assert_called_once()
+    sent_data = mock_protocol._write_to_socket.call_args[0][0]
     # Check that it's a GET_CONNECTIONS command (opcode at bytes 0-1)
     assert sent_data[0:2] == b"\x15\x00"  # MGMT_OP_GET_CONNECTIONS little-endian
 
