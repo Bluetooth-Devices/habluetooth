@@ -25,8 +25,10 @@ from habluetooth import (
     scanner,
     set_manager,
 )
-from habluetooth.channels.bluez import BluetoothMGMTProtocol
-from habluetooth.channels.bluez_mgmt import MGMTBluetoothCtl
+from habluetooth.channels.bluez import (
+    BluetoothMGMTProtocol,
+    MGMTBluetoothCtl,
+)
 from habluetooth.scanner import (
     InvalidMessageError,
     bytes_mac_to_str,
@@ -94,7 +96,7 @@ def manager():
 @pytest.fixture
 def mock_btmgmt_socket():
     """Mock the btmgmt_socket module."""
-    with patch("habluetooth.channels.bluez_mgmt.btmgmt_socket") as mock_btmgmt:
+    with patch("habluetooth.channels.bluez.btmgmt_socket") as mock_btmgmt:
         mock_socket = Mock()
         # Make the socket look like a real socket with a file descriptor
         mock_socket.fileno.return_value = 99

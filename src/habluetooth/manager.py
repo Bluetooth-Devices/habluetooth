@@ -31,7 +31,7 @@ from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
     AdvertisementTracker,
 )
-from .channels.bluez_mgmt import CONNECTION_ERRORS, MGMTBluetoothCtl
+from .channels.bluez import CONNECTION_ERRORS, MGMTBluetoothCtl
 from .const import (
     ADV_RSSI_SWITCH_THRESHOLD,
     CALLBACK_TYPE,
