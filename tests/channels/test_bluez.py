@@ -930,6 +930,26 @@ def test_kernel_bug_workaround_send_raises_exception(
     mock_socket.send.assert_called_once_with(test_data)
 
 
+def test_kernel_bug_workaround_no_socket(event_loop: asyncio.AbstractEventLoop) -> None:
+    """Test that _write_to_socket raises RuntimeError when socket is not available."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {}
+    on_connection_lost = Mock()
+    is_shutting_down = Mock(return_value=False)
+
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
+
+    # Don't set _sock, leave it as None
+    protocol._sock = None
+
+    # Try to send data and expect RuntimeError
+    test_data = b"\x25\x00\x00\x00\x00\x00"
+    with pytest.raises(RuntimeError, match="Socket not available"):
+        protocol._write_to_socket(test_data)
+
+
 def test_close() -> None:
     """Test close method."""
     mock_protocol = Mock(spec=BluetoothMGMTProtocol)
