@@ -902,6 +902,34 @@ def test_kernel_bug_workaround_send_returns_zero(
     assert "kernel bug fix" in caplog.text
 
 
+def test_kernel_bug_workaround_send_raises_exception(
+    event_loop: asyncio.AbstractEventLoop, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test that _write_to_socket handles and re-raises exceptions."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {}
+    on_connection_lost = Mock()
+    is_shutting_down = Mock(return_value=False)
+
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down
+    )
+
+    # Create a mock socket that raises an exception
+    mock_socket = Mock()
+    mock_socket.send = Mock(side_effect=OSError("Socket error"))
+    protocol._sock = mock_socket
+
+    # Send some data and expect the exception to be re-raised
+    test_data = b"\x25\x00\x00\x00\x00\x00"
+    with pytest.raises(OSError, match="Socket error"):
+        protocol._write_to_socket(test_data)
+
+    # Verify the error was logged
+    assert "Failed to write to mgmt socket: Socket error" in caplog.text
+    mock_socket.send.assert_called_once_with(test_data)
+
+
 def test_close() -> None:
     """Test close method."""
     mock_protocol = Mock(spec=BluetoothMGMTProtocol)
