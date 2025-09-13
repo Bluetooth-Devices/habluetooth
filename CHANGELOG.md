@@ -1,5 +1,17 @@
 # Changelog
 
+## v5.6.4 (2025-09-13)
+
+### Bug fixes
+
+
+- Workaround kernel abi inconsistency in bluetooth mgmt socket send behavior ([`affc097`](https://github.com/Bluetooth-Devices/habluetooth/commit/affc0971edf310bfd6f5a9f880fa488b4ed5a215))
+
+
+### Unknown
+
+
+
 ## v5.6.3 (2025-09-13)
 
 ### Bug fixes
