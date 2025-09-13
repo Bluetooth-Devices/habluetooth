@@ -72,6 +72,7 @@ class BluetoothMGMTProtocol:
         scanners: dict[int, HaScanner],
         on_connection_lost: Callable[[], None],
         is_shutting_down: Callable[[], bool],
+        sock: socket.socket,
     ) -> None:
         """Initialize the protocol."""
         self.transport: asyncio.Transport | None = None
@@ -83,14 +84,12 @@ class BluetoothMGMTProtocol:
         self._on_connection_lost = on_connection_lost
         self._is_shutting_down = is_shutting_down
         self._pending_commands: dict[int, asyncio.Future[tuple[int, bytes]]] = {}
-        self._sock: socket.socket | None = None
+        self._sock = sock
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         """Handle connection made."""
         _set_future_if_not_done(self.connection_made_future)
         self.transport = cast(asyncio.Transport, transport)
-        # Store the socket for direct writes to work around kernel bug
-        self._sock = transport.get_extra_info("socket")
 
     def _write_to_socket(self, data: bytes) -> None:
         """
@@ -104,9 +103,6 @@ class BluetoothMGMTProtocol:
         Since mgmt sockets are SOCK_RAW, sends are atomic - either the entire
         packet is sent or nothing is sent.
         """
-        if not self._sock:
-            raise RuntimeError("Socket not available")
-
         try:
             n = self._sock.send(data)
             # On buggy kernels, n might be 0 even though the data was sent
@@ -351,6 +347,7 @@ class MGMTBluetoothCtl:
                         self.scanners,
                         self._on_connection_lost,
                         lambda: self._shutting_down,
+                        self.sock,
                     ),
                     None,
                     None,

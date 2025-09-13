@@ -76,8 +76,9 @@ def test_connection_made(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
     protocol.connection_made(mock_transport)
 
@@ -95,8 +96,9 @@ def test_connection_lost(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
     protocol.connection_made(mock_transport)
 
@@ -117,8 +119,9 @@ def test_connection_lost_no_exception(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
     protocol.connection_made(mock_transport)
 
@@ -136,8 +139,9 @@ def test_data_received_device_found(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a DEVICE_FOUND event (event_code 0x0012)
@@ -178,8 +182,9 @@ def test_data_received_adv_monitor_device_found(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create an ADV_MONITOR_DEVICE_FOUND event (event_code 0x002F)
@@ -220,8 +225,9 @@ def test_data_received_cmd_complete_success(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a CMD_COMPLETE event for LOAD_CONN_PARAM
@@ -247,8 +253,9 @@ def test_data_received_cmd_complete_failure(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a CMD_COMPLETE event with failure
@@ -273,8 +280,9 @@ def test_data_received_cmd_status(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a CMD_STATUS event
@@ -299,8 +307,9 @@ def test_data_received_partial_data(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a DEVICE_FOUND event but send it in chunks
@@ -329,8 +338,9 @@ def test_data_received_partial_data_split_in_params(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a DEVICE_FOUND event
@@ -365,8 +375,9 @@ def test_data_received_multiple_small_chunks(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a DEVICE_FOUND event
@@ -398,8 +409,9 @@ def test_data_received_multiple_events_in_one_chunk(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create two events: a DEVICE_FOUND and a CMD_COMPLETE
@@ -430,8 +442,9 @@ def test_data_received_partial_then_multiple_events(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # First event (DEVICE_FOUND)
@@ -488,8 +501,9 @@ def test_data_received_cmd_complete_different_opcode(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a CMD_COMPLETE event for a different opcode (e.g., 0x0004 - Add UUID)
@@ -515,8 +529,9 @@ def test_data_received_cmd_status_different_opcode(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a CMD_STATUS event for a different opcode
@@ -542,8 +557,9 @@ def test_data_received_cmd_complete_short_params(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a CMD_COMPLETE event with param_len < 3
@@ -568,8 +584,9 @@ def test_data_received_cmd_status_param_len_1(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a CMD_STATUS event with param_len = 1
@@ -594,8 +611,9 @@ def test_data_received_cmd_complete_param_len_0(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a CMD_COMPLETE event with param_len = 0
@@ -616,8 +634,9 @@ def test_data_received_unknown_event(event_loop: asyncio.AbstractEventLoop) -> N
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create an unknown event
@@ -639,8 +658,9 @@ def test_data_received_no_scanner_for_controller(
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Create a DEVICE_FOUND event for controller 0
@@ -883,14 +903,12 @@ def test_kernel_bug_workaround_send_returns_zero(
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
-    protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
-    )
-
     # Create a mock socket that returns 0 (kernel bug behavior)
     mock_socket = Mock()
     mock_socket.send = Mock(return_value=0)
-    protocol._sock = mock_socket
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down, mock_socket
+    )
 
     # Send some data
     test_data = b"\x25\x00\x00\x00\x00\x00"
@@ -911,14 +929,12 @@ def test_kernel_bug_workaround_send_raises_exception(
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
-    protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
-    )
-
     # Create a mock socket that raises an exception
     mock_socket = Mock()
     mock_socket.send = Mock(side_effect=OSError("Socket error"))
-    protocol._sock = mock_socket
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down, mock_socket
+    )
 
     # Send some data and expect the exception to be re-raised
     test_data = b"\x25\x00\x00\x00\x00\x00"
@@ -928,26 +944,6 @@ def test_kernel_bug_workaround_send_raises_exception(
     # Verify the error was logged
     assert "Failed to write to mgmt socket: Socket error" in caplog.text
     mock_socket.send.assert_called_once_with(test_data)
-
-
-def test_kernel_bug_workaround_no_socket(event_loop: asyncio.AbstractEventLoop) -> None:
-    """Test that _write_to_socket raises RuntimeError when socket is not available."""
-    future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
-    on_connection_lost = Mock()
-    is_shutting_down = Mock(return_value=False)
-
-    protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
-    )
-
-    # Don't set _sock, leave it as None
-    protocol._sock = None
-
-    # Try to send data and expect RuntimeError
-    test_data = b"\x25\x00\x00\x00\x00\x00"
-    with pytest.raises(RuntimeError, match="Socket not available"):
-        protocol._write_to_socket(test_data)
 
 
 def test_close() -> None:
@@ -1131,8 +1127,9 @@ async def test_command_response_context_manager() -> None:
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     # Test successful command response
@@ -1169,8 +1166,9 @@ async def test_command_response_cleanup_on_exception() -> None:
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
@@ -1193,8 +1191,9 @@ async def test_get_connections_response_handling() -> None:
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
@@ -1226,8 +1225,9 @@ async def test_get_connections_response_with_data() -> None:
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
+    mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
     opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
