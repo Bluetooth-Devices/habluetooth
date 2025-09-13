@@ -899,7 +899,7 @@ def test_kernel_bug_workaround_send_returns_zero(
 
     # Verify the send was called and the workaround logged
     mock_socket.send.assert_called_once_with(test_data)
-    assert "kernel bug workaround" in caplog.text
+    assert "kernel bug fix" in caplog.text
 
 
 def test_close() -> None:
