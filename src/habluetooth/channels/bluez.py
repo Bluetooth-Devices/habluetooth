@@ -72,6 +72,7 @@ class BluetoothMGMTProtocol:
         scanners: dict[int, HaScanner],
         on_connection_lost: Callable[[], None],
         is_shutting_down: Callable[[], bool],
+        sock: socket.socket,
     ) -> None:
         """Initialize the protocol."""
         self.transport: asyncio.Transport | None = None
@@ -83,11 +84,38 @@ class BluetoothMGMTProtocol:
         self._on_connection_lost = on_connection_lost
         self._is_shutting_down = is_shutting_down
         self._pending_commands: dict[int, asyncio.Future[tuple[int, bytes]]] = {}
+        self._sock = sock
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         """Handle connection made."""
         _set_future_if_not_done(self.connection_made_future)
         self.transport = cast(asyncio.Transport, transport)
+
+    def _write_to_socket(self, data: bytes) -> None:
+        """
+        Write data directly to the socket, bypassing asyncio transport.
+
+        This works around a kernel bug where sendto() on Bluetooth management
+        sockets returns 0 instead of the number of bytes sent on some platforms
+        (e.g., Odroid M1 with kernel 6.12.43). When asyncio sees 0, it thinks
+        the send failed and retries forever.
+
+        Since mgmt sockets are SOCK_RAW, sends are atomic - either the entire
+        packet is sent or nothing is sent.
+        """
+        try:
+            n = self._sock.send(data)
+            # On buggy kernels, n might be 0 even though the data was sent
+            # We treat 0 as success for mgmt sockets
+            if n == 0 and len(data) > 0:
+                # Kernel bug: returned 0 but data was actually sent
+                _LOGGER.debug(
+                    "Bluetooth mgmt socket returned 0 for %d bytes (kernel bug fix)",
+                    len(data),
+                )
+        except Exception as exc:
+            _LOGGER.error("Failed to write to mgmt socket: %s", exc)
+            raise
 
     @asynccontextmanager
     async def command_response(
@@ -319,6 +347,7 @@ class MGMTBluetoothCtl:
                         self.scanners,
                         self._on_connection_lost,
                         lambda: self._shutting_down,
+                        self.sock,
                     ),
                     None,
                     None,
@@ -398,7 +427,7 @@ class MGMTBluetoothCtl:
         async with self.protocol.command_response(
             MGMT_OP_GET_CONNECTIONS
         ) as response_future:
-            self.protocol.transport.write(header)
+            self.protocol._write_to_socket(header)
             # Wait for response with timeout
             async with asyncio_timeout(5.0):
                 status, _ = await response_future
@@ -500,7 +529,7 @@ class MGMTBluetoothCtl:
                 adapter_idx,  # controller index
                 len(cmd_data),  # parameter length
             )
-            self.protocol.transport.write(header + cmd_data)
+            self.protocol._write_to_socket(header + cmd_data)
             _LOGGER.debug(
                 "Loaded conn params for %s: interval=%d-%d, latency=%d, timeout=%d",
                 address,
