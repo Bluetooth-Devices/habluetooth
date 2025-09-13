@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.6.3 (2025-09-13)
+
+### Bug fixes
+
+
+- High cpu usage by replacing async context manager with setup/cleanup pattern to avoid cython bug ([`8aa021a`](https://github.com/Bluetooth-Devices/habluetooth/commit/8aa021aee970fc01ccdb3d7f3242eee7fc3802cf))
+
+
 ## v5.6.2 (2025-09-09)
 
 ### Bug fixes
