@@ -553,7 +553,7 @@ async def test_find_device_by_address(
     install_bleak_catcher: None,
 ) -> None:
     """Ensure the client wrapper can handle a subclassed str as the address."""
-    _, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    _, _cancel_hci0, _cancel_hci1 = _generate_scanners_with_fake_devices()
     device = await bleak.BleakScanner.find_device_by_address("00:00:00:00:00:01")
     assert device.address == "00:00:00:00:00:01"
     device = await bleak.BleakScanner().find_device_by_address("00:00:00:00:00:01")
@@ -567,7 +567,7 @@ async def test_discover(
     install_bleak_catcher: None,
 ) -> None:
     """Ensure the discover is implemented."""
-    _, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    _, _cancel_hci0, _cancel_hci1 = _generate_scanners_with_fake_devices()
     devices = await bleak.BleakScanner.discover()
     assert any(device.address == "00:00:00:00:00:01" for device in devices)
     devices_adv = await bleak.BleakScanner.discover(return_adv=True)
@@ -1132,12 +1132,10 @@ async def test_passive_only_scanner_error_message() -> None:
     client = bleak.BleakClient("00:00:00:00:00:01")
     with pytest.raises(
         BleakError,
-        match=(
-            "00:00:00:00:00:01: No connectable Bluetooth adapters. "
-            "Shelly devices are passive-only and cannot connect. "
-            "Need local Bluetooth adapter or ESPHome proxy. "
-            "Available: shelly_plus1pm_e86bea01020c \\(passive_scanner_1\\)"
-        ),
+        match=r"00:00:00:00:00:01: No connectable Bluetooth adapters\. "
+        r"Shelly devices are passive-only and cannot connect\. "
+        r"Need local Bluetooth adapter or ESPHome proxy\. "
+        r"Available: shelly_plus1pm_e86bea01020c \(passive_scanner_1\)",
     ):
         await client.connect()
 
@@ -1309,7 +1307,7 @@ async def test_get_device_address_type_random(
     install_bleak_catcher: None,
 ) -> None:
     """Test _get_device_address_type returns BDADDR_LE_RANDOM for random address."""
-    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    _hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
 
     # Create a device with random address type
     device = generate_ble_device(
