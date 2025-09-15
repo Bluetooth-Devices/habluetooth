@@ -143,7 +143,7 @@ def test_discovered_device_advertisement_data_from_dict():
                 expected_advertisement_data,
             )
         },
-        discovered_device_timestamps={"AA:BB:CC:DD:EE:FF": ANY},
+        discovered_device_timestamps={"AA:BB:CC:DD:EE:FF": ANY},  # type: ignore[dict-item]
         discovered_device_raw={
             "AA:BB:CC:DD:EE:FF": b"\x02\x15\xaa\xbb\xcc\xdd\xee\xff"
         },

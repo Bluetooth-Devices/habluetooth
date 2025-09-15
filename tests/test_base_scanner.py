@@ -231,8 +231,8 @@ async def test_remote_scanner(name_2: str | None) -> None:
     assert scanner.serialize_discovered_devices() == DiscoveredDeviceAdvertisementData(
         connectable=True,
         expire_seconds=195,
-        discovered_device_advertisement_datas={"44:44:33:11:23:45": ANY},
-        discovered_device_timestamps={"44:44:33:11:23:45": ANY},
+        discovered_device_advertisement_datas={"44:44:33:11:23:45": ANY},  # type: ignore[dict-item]
+        discovered_device_timestamps={"44:44:33:11:23:45": ANY},  # type: ignore[dict-item]
         discovered_device_raw={
             "44:44:33:11:23:45": b"\x12!\x1a\x02"
             b"\n\x05\n\xff"

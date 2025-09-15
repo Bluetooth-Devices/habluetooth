@@ -1151,7 +1151,7 @@ async def test_command_response_context_manager() -> None:
         protocol.data_received(response_data)
 
         # Get the result
-        status, data = await response_future
+        status, _data = await response_future
         assert status == 0  # Success
 
     # After context exits, future should be resolved
