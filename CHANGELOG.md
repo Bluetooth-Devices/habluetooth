@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.7.0 (2025-10-04)
+
+### Features
+
+
+- Python 3.14 support ([`3ef7243`](https://github.com/Bluetooth-Devices/habluetooth/commit/3ef7243b2fe996970a3bd18a279a550f10233ede))
+
+
 ## v5.6.4 (2025-09-13)
 
 ### Bug fixes
