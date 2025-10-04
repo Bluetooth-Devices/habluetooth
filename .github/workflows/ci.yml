@@ -39,6 +39,8 @@ jobs:
           - "3.11"
           - "3.12"
           - "3.13"
+          - "3.14"
+          - "3.14t"
         os:
           - ubuntu-latest
           - macOS-latest
@@ -56,6 +58,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: "poetry"
+          allow-prereleases: true
       - name: Install Dependencies
         run: |
           if [ "${{ matrix.extension }}" = "skip_cython" ]; then
@@ -178,6 +181,14 @@ jobs:
             qemu: armv7l
             musl: "musllinux"
             pyver: cp313
+          - os: ubuntu-latest
+            qemu: armv7l
+            musl: "musllinux"
+            pyver: cp314
+          - os: ubuntu-latest
+            qemu: armv7l
+            musl: "musllinux"
+            pyver: cp314t
           # qemu is slow, make a single
           # runner per Python version
           - os: ubuntu-latest
@@ -192,6 +203,14 @@ jobs:
             qemu: armv7l
             musl: ""
             pyver: cp313
+          - os: ubuntu-latest
+            qemu: armv7l
+            musl: ""
+            pyver: cp314
+          - os: ubuntu-latest
+            qemu: armv7l
+            musl: ""
+            pyver: cp314t
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v4
         with:
