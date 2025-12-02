@@ -61,6 +61,7 @@ class _HaWrappedBleakBackend:
     scanner: BaseHaScanner
     client: type[BaseBleakClient]
     source: str | None
+    backend_name: str | None = None
 
 
 class HaBleakScannerWrapper(BaseBleakScanner):
@@ -417,8 +418,14 @@ class HaBleakClientWrapper(BleakClient):
                 return None
             backend = get_platform_client_backend_type()
             # bleak 2.0.0+ returns a tuple (backend_class, backend_id)
-            cls = backend[0] if isinstance(backend, tuple) else backend
-            return _HaWrappedBleakBackend(ble_device, scanner, cls, source)
+            if isinstance(backend, tuple):
+                cls, backend_name = backend
+            else:
+                cls = backend
+                backend_name = type(cls).__name__
+            return _HaWrappedBleakBackend(
+                ble_device, scanner, cls, source, backend_name
+            )
 
         # Make sure the backend can connect to the device
         # as some backends have connection limits
@@ -426,7 +433,11 @@ class HaBleakClientWrapper(BleakClient):
             return None
 
         return _HaWrappedBleakBackend(
-            ble_device, scanner, scanner.connector.client, source
+            ble_device,
+            scanner,
+            scanner.connector.client,
+            source,
+            type(scanner.connector.client).__name__,
         )
 
     def _async_get_best_available_backend_and_device(
