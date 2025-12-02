@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.8.0 (2025-12-02)
+
+### Features
+
+
+- Support bleak 2.0 ([`15ca6d3`](https://github.com/Bluetooth-Devices/habluetooth/commit/15ca6d33ab0ce02a00b223fa7659f62b27291fca))
+
+
 ## v5.7.0 (2025-10-04)
 
 ### Features
