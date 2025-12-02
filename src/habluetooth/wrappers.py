@@ -335,8 +335,17 @@ class HaBleakClientWrapper(BleakClient):
                 assert device_adv is not None
             adv = device_adv[1]
             rssi = adv.rssi
+            backend_name = (
+                f" [{wrapped_backend.backend_name}]"
+                if wrapped_backend.backend_name
+                else ""
+            )
             _LOGGER.debug(
-                "%s: Connecting via %s (last rssi: %s)", description, scanner.name, rssi
+                "%s: Connecting via %s%s (last rssi: %s)",
+                description,
+                scanner.name,
+                backend_name,
+                rssi,
             )
 
         # Load fast connection parameters before connecting if mgmt API is available
@@ -377,10 +386,11 @@ class HaBleakClientWrapper(BleakClient):
 
         if debug_logging:
             _LOGGER.debug(
-                "%s: %s via %s (last rssi: %s)",
+                "%s: %s via %s%s (last rssi: %s)",
                 description,
                 "Connected" if connected else "Failed to connect",
                 scanner.name,
+                backend_name,
                 rssi,
             )
         return
