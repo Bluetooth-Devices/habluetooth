@@ -415,7 +415,9 @@ class HaBleakClientWrapper(BleakClient):
             # its the client for this platform
             if not manager.async_allocate_connection_slot(ble_device):
                 return None
-            cls = get_platform_client_backend_type()
+            backend = get_platform_client_backend_type()
+            # bleak 2.0.0+ returns a tuple (backend_class, backend_id)
+            cls = backend[0] if isinstance(backend, tuple) else backend
             return _HaWrappedBleakBackend(ble_device, scanner, cls, source)
 
         # Make sure the backend can connect to the device
