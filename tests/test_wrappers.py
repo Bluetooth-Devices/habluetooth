@@ -1954,3 +1954,93 @@ async def test_thundering_herd_connection_slots() -> None:
         cancel1()
         cancel2()
         cancel3()
+
+
+@pytest.mark.asyncio
+async def test_backend_name_from_tuple(
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Test that backend name is extracted from tuple (bleak 2.0.0+)."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, _ = _generate_scanners_with_fake_devices()
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=(FakeBleakClient, "TestBackend"),
+    ):
+        ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+        client = bleak.BleakClient(ble_device)
+
+        # Access the wrapped backend through the client
+        # The backend name should be extracted from the tuple
+        wrapped_backend = client._async_get_best_available_backend_and_device(manager)
+        assert wrapped_backend.backend_name == "TestBackend"
+        assert wrapped_backend.client == FakeBleakClient
+
+    cancel_hci0()
+
+
+@pytest.mark.asyncio
+async def test_backend_name_from_class(
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Test that backend name is derived from class name (pre-bleak 2.0.0)."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, _ = _generate_scanners_with_fake_devices()
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=FakeBleakClient,
+    ):
+        ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+        client = bleak.BleakClient(ble_device)
+
+        # Access the wrapped backend through the client
+        # The backend name should be derived from the class name
+        wrapped_backend = client._async_get_best_available_backend_and_device(manager)
+        assert wrapped_backend.backend_name == "type"
+        assert wrapped_backend.client == FakeBleakClient
+
+    cancel_hci0()
+
+
+@pytest.mark.asyncio
+async def test_backend_name_in_logs(
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that backend name appears in debug logs."""
+    caplog.set_level(logging.DEBUG)
+
+    hci0_device_advs, cancel_hci0, _ = _generate_scanners_with_fake_devices()
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=(FakeBleakClient, "TestBackend"),
+    ):
+        ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+        with patch.object(FakeBleakClient, "is_connected", return_value=True):
+            client = bleak.BleakClient(ble_device)
+            await client.connect()
+
+        # Check that the backend name appears in the logs
+        assert any(
+            "[TestBackend]" in record.message
+            for record in caplog.records
+            if "Connecting via" in record.message
+        ), f"Backend name not found in logs: {[r.message for r in caplog.records]}"
+        assert any(
+            "[TestBackend]" in record.message
+            for record in caplog.records
+            if "Connected via" in record.message
+        ), f"Backend name not found in logs: {[r.message for r in caplog.records]}"
+
+        await client.disconnect()
+
+    cancel_hci0()
