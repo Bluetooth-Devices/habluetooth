@@ -118,14 +118,14 @@ lxml = ["lxml"]
 
 [[package]]
 name = "bleak"
-version = "2.0.0"
+version = "2.1.0"
 description = "Bluetooth Low Energy platform Agnostic Klient"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "bleak-2.0.0-py3-none-any.whl", hash = "sha256:a4ee68ab98b0d39eb3b2a937b2f95b93123258f301b0d0087edc4529809c77b1"},
-    {file = "bleak-2.0.0.tar.gz", hash = "sha256:a8043fc0f3af1a00a84963824195463ca39789ae4f6804d3d7b1423e6083254a"},
+    {file = "bleak-2.1.0-py3-none-any.whl", hash = "sha256:d31cb6da13d77ac3c7759ec9e96baa652ea6ae8bd264d2159c9ba273bc4540ae"},
+    {file = "bleak-2.1.0.tar.gz", hash = "sha256:f628d61efddc8b4b2338649195cbbe32b3f0f79e11678fcb3f30de9e1be537da"},
 ]
 
 [package.dependencies]
@@ -1668,7 +1668,7 @@ version = "2.6.0"
 description = "HTTP library with thread-safe connection pooling, file post, and more."
 optional = false
 python-versions = ">=3.9"
-groups = ["dev", "docs"]
+groups = ["docs"]
 files = [
     {file = "urllib3-2.6.0-py3-none-any.whl", hash = "sha256:c90f7a39f716c572c4e3e58509581ebd83f9b59cced005b7db7ad2d22b0db99f"},
     {file = "urllib3-2.6.0.tar.gz", hash = "sha256:cb9bcef5a4b345d5da5d145dc3e30834f58e8018828cbc724d30b4cb7d4d49f1"},
