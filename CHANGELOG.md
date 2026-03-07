@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.9.1 (2026-03-07)
+
+### Bug fixes
+
+
+- Warn when connection params cannot be set ([`e9e4ed0`](https://github.com/Bluetooth-Devices/habluetooth/commit/e9e4ed0e47d24192eaf4edf247950e6b37bf91bb))
+
+
 ## v5.9.0 (2026-03-07)
 
 ### Features
