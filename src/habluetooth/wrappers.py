@@ -269,7 +269,6 @@ class HaBleakClientWrapper(BleakClient):
         if self._backend is not None and hasattr(
             self._backend, "set_connection_params"
         ):
-            # ESPHome path - delegate to backend
             await self._backend.set_connection_params(
                 min_interval, max_interval, latency, timeout
             )
@@ -289,6 +288,14 @@ class HaBleakClientWrapper(BleakClient):
                 max_interval,
                 latency,
                 timeout,
+            )
+            return
+        if self._backend is not None:
+            _LOGGER.warning(
+                "%s: Backend %s does not support setting connection"
+                " parameters; Upgrade the backend library",
+                self.__address,
+                type(self._backend).__name__,
             )
 
     def set_disconnected_callback(

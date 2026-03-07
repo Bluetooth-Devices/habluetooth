@@ -2186,5 +2186,7 @@ async def test_set_connection_params_no_mgmt_no_backend(
         # Should not raise any error
         await client.set_connection_params(800, 800, 0, 300)
 
+    assert "does not support setting connection parameters" in caplog.text
+
     cancel_hci0()
     cancel_hci1()
