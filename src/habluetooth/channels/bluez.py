@@ -542,3 +542,72 @@ class MGMTBluetoothCtl:
         except Exception:
             _LOGGER.exception("Failed to load conn params")
             return False
+
+    def load_conn_params_explicit(
+        self,
+        adapter_idx: int,
+        address: str,
+        address_type: int,
+        min_interval: int,
+        max_interval: int,
+        latency: int,
+        timeout: int,
+    ) -> bool:
+        """
+        Load explicit connection parameters for a specific device.
+
+        Args:
+            adapter_idx: Adapter index (e.g., 0 for hci0)
+            address: Device MAC address (e.g., "AA:BB:CC:DD:EE:FF")
+            address_type: BDADDR_LE_PUBLIC (1) or BDADDR_LE_RANDOM (2)
+            min_interval: Minimum connection interval (units of 1.25ms)
+            max_interval: Maximum connection interval (units of 1.25ms)
+            latency: Connection latency (number of events)
+            timeout: Supervision timeout (units of 10ms)
+
+        Returns:
+            True if command was sent successfully
+
+        """
+        if not self.protocol or not self.protocol.transport:
+            _LOGGER.error("Cannot load conn params: no connection")
+            return False
+
+        # Parse MAC address
+        addr_bytes = bytes.fromhex(address.replace(":", ""))
+        if len(addr_bytes) != 6:
+            _LOGGER.error("Invalid MAC address: %s", address)
+            return False
+
+        # Pack the command
+        cmd_data = CONN_PARAM_PACK(
+            1,  # param_count = 1
+            addr_bytes[::-1],  # bdaddr (reversed for little endian)
+            address_type,  # address type
+            min_interval,
+            max_interval,
+            latency,
+            timeout,
+        )
+
+        # Send the command
+        try:
+            header = COMMAND_HEADER_PACK(
+                MGMT_OP_LOAD_CONN_PARAM,  # opcode
+                adapter_idx,  # controller index
+                len(cmd_data),  # parameter length
+            )
+            self.protocol._write_to_socket(header + cmd_data)
+            _LOGGER.debug(
+                "Loaded explicit conn params for %s:"
+                " interval=%d-%d, latency=%d, timeout=%d",
+                address,
+                min_interval,
+                max_interval,
+                latency,
+                timeout,
+            )
+            return True
+        except Exception:
+            _LOGGER.exception("Failed to load conn params")
+            return False

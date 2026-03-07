@@ -240,6 +240,8 @@ class HaBleakClientWrapper(BleakClient):
         self.__timeout = timeout
         self.__services = services
         self._backend: BaseBleakClient | None = None
+        self._connected_scanner: BaseHaScanner | None = None
+        self._connected_device: BLEDevice | None = None
         self._pair_before_connect = pair
         # Check if this client is being created through establish_connection
         # by checking for the '_is_retry_client' marker in kwargs
@@ -255,6 +257,39 @@ class HaBleakClientWrapper(BleakClient):
         if self._backend is not None and hasattr(self._backend, "clear_cache"):
             return await self._backend.clear_cache()
         return await clear_cache(self.__address)
+
+    async def set_connection_params(
+        self,
+        min_interval: int,
+        max_interval: int,
+        latency: int,
+        timeout: int,
+    ) -> None:
+        """Set BLE connection parameters on a connected device."""
+        if self._backend is not None and hasattr(
+            self._backend, "set_connection_params"
+        ):
+            # ESPHome path - delegate to backend
+            await self._backend.set_connection_params(
+                min_interval, max_interval, latency, timeout
+            )
+            return
+        # BlueZ local path - use mgmt API
+        if (
+            self._connected_scanner is not None
+            and self._connected_device is not None
+            and (adapter_idx := self._connected_scanner.adapter_idx) is not None
+            and (mgmt_ctl := self.__manager.get_bluez_mgmt_ctl())
+        ):
+            mgmt_ctl.load_conn_params_explicit(
+                adapter_idx,
+                self._connected_device.address,
+                _get_device_address_type(self._connected_device),
+                min_interval,
+                max_interval,
+                latency,
+                timeout,
+            )
 
     def set_disconnected_callback(
         self,
@@ -376,6 +411,8 @@ class HaBleakClientWrapper(BleakClient):
 
         # Load medium connection parameters after successful connection
         if connected:
+            self._connected_scanner = scanner
+            self._connected_device = device
             self._load_conn_params(
                 scanner,
                 device,
