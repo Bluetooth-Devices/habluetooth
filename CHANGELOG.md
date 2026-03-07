@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.9.0 (2026-03-07)
+
+### Features
+
+
+- Add ble connection parameters api ([`53f1e3e`](https://github.com/Bluetooth-Devices/habluetooth/commit/53f1e3ec1c3609c48143d335876e3b84a1e3b43b))
+
+
 ## v5.8.0 (2025-12-02)
 
 ### Features
