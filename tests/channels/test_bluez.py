@@ -894,6 +894,102 @@ def test_load_conn_params_transport_error(caplog: pytest.LogCaptureFixture) -> N
     assert "Failed to load conn params" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_load_conn_params_explicit() -> None:
+    """Test loading explicit connection parameters."""
+    mock_sock = Mock()
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_transport = Mock()
+    mock_protocol.transport = mock_transport
+    mock_protocol._write_to_socket = Mock()
+
+    ctl = MGMTBluetoothCtl(5.0, {})
+    ctl.protocol = mock_protocol
+    ctl.sock = mock_sock
+
+    result = ctl.load_conn_params_explicit(
+        0,  # adapter_idx
+        "AA:BB:CC:DD:EE:FF",  # address
+        BDADDR_LE_PUBLIC,  # address_type
+        800,  # min_interval
+        800,  # max_interval
+        0,  # latency
+        300,  # timeout
+    )
+
+    assert result is True
+
+    mock_protocol._write_to_socket.assert_called_once()
+    call_args = mock_protocol._write_to_socket.call_args[0][0]
+
+    # Check header (6 bytes)
+    assert call_args[0:2] == b"\x35\x00"  # MGMT_OP_LOAD_CONN_PARAM
+    assert call_args[2:4] == b"\x00\x00"  # adapter_idx = 0
+    assert call_args[4:6] == b"\x11\x00"  # param_len = 17 (2 + 15)
+
+    # Check command data
+    assert call_args[6:8] == b"\x01\x00"  # param_count = 1
+    assert call_args[8:14] == b"\xff\xee\xdd\xcc\xbb\xaa"  # address (reversed)
+    assert call_args[14] == BDADDR_LE_PUBLIC  # address_type
+    assert call_args[15:17] == (800).to_bytes(2, "little")  # min_interval
+    assert call_args[17:19] == (800).to_bytes(2, "little")  # max_interval
+    assert call_args[19:21] == (0).to_bytes(2, "little")  # latency
+    assert call_args[21:23] == (300).to_bytes(2, "little")  # timeout
+
+
+def test_load_conn_params_explicit_no_protocol(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test load_conn_params_explicit when protocol is not connected."""
+    ctl = MGMTBluetoothCtl(5.0, {})
+
+    result = ctl.load_conn_params_explicit(
+        0, "AA:BB:CC:DD:EE:FF", BDADDR_LE_PUBLIC, 800, 800, 0, 300
+    )
+
+    assert result is False
+    assert "Cannot load conn params: no connection" in caplog.text
+
+
+def test_load_conn_params_explicit_invalid_address(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test load_conn_params_explicit with invalid MAC address."""
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_transport = Mock()
+    mock_protocol.transport = mock_transport
+
+    ctl = MGMTBluetoothCtl(5.0, {})
+    ctl.protocol = mock_protocol
+
+    result = ctl.load_conn_params_explicit(
+        0, "AA:BB", BDADDR_LE_PUBLIC, 800, 800, 0, 300
+    )
+
+    assert result is False
+    assert "Invalid MAC address: AA:BB" in caplog.text
+
+
+def test_load_conn_params_explicit_transport_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test load_conn_params_explicit with transport write error."""
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_transport = Mock()
+    mock_protocol.transport = mock_transport
+    mock_protocol._write_to_socket = Mock(side_effect=Exception("Transport error"))
+
+    ctl = MGMTBluetoothCtl(5.0, {})
+    ctl.protocol = mock_protocol
+
+    result = ctl.load_conn_params_explicit(
+        0, "AA:BB:CC:DD:EE:FF", BDADDR_LE_PUBLIC, 800, 800, 0, 300
+    )
+
+    assert result is False
+    assert "Failed to load conn params" in caplog.text
+
+
 def test_kernel_bug_workaround_send_returns_zero(
     event_loop: asyncio.AbstractEventLoop, caplog: pytest.LogCaptureFixture
 ) -> None:
