@@ -229,7 +229,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         self.time = time
         self.tx_power = tx_power
         self.raw = raw
-        self._adv_data_changed = _ADV_DATA_CHANGED
+        self._adv_data_changed = _ADV_DATA_UNKNOWN
 
     def __repr__(self) -> str:
         """Return the representation of the object."""
