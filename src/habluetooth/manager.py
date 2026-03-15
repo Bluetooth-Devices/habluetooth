@@ -568,7 +568,7 @@ class BluetoothManager:
         # Pre-filter noisy apple devices as they can account for 20-35% of the
         # traffic on a typical network.
         if (
-            not service_info.service_data
+            len(service_info.service_data) == 0
             and len(service_info.manufacturer_data) == 1
             and (apple_data := service_info.manufacturer_data.get(APPLE_MFR_ID))
         ):
