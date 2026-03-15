@@ -286,12 +286,9 @@ async def test_adv_data_unchanged_different_source():
         details,
         1.0,
     )
-    mock_discover = MagicMock()
-    manager._subclass_discover_info = mock_discover
 
-    # Scanner 2 sends same data — _adv_data_changed=UNCHANGED from scanner2's
-    # perspective, but _all_history has source1's info. The stale time check
-    # will prefer the new source since old is stale (time diff > fallback max).
+    # Scanner 2 sends first adv — seeds scanner2's _previous_service_info.
+    # _all_history switches to source2 (stale time diff).
     scanner2._async_on_advertisement(
         "AA:BB:CC:DD:EE:FF",
         -40,
@@ -303,10 +300,61 @@ async def test_adv_data_unchanged_different_source():
         details,
         1000.0,
     )
+    assert manager._all_history["AA:BB:CC:DD:EE:FF"].source == "source2"
 
-    # Different source with stale old data — should dispatch (source switch)
+    # Scanner 1 sends again — seeds scanner1's _previous_service_info with
+    # same data. _all_history now has source2.
+    scanner1._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -50,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        2001.0,
+    )
+    # _all_history switches back to source1 (stale time diff)
+    assert manager._all_history["AA:BB:CC:DD:EE:FF"].source == "source1"
+
+    mock_discover = MagicMock()
+    manager._subclass_discover_info = mock_discover
+
+    # Scanner 1 sends SAME data again — _adv_data_changed=UNCHANGED from
+    # scanner1's perspective, but _all_history has source1 now, so
+    # old_service_info.source IS service_info.source → dedup returns early.
+    scanner1._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -50,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        2002.0,
+    )
+    # Same source, unchanged — dedup should skip dispatch
+    mock_discover.assert_not_called()
+
+    # Now scanner 2 sends same data again — _adv_data_changed=UNCHANGED from
+    # scanner2's perspective, but _all_history has source1.
+    # old_service_info.source (source1) is NOT service_info.source (source2).
+    # This covers line 704 being False.
+    scanner2._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -40,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        3001.0,
+    )
+    # Different source — should dispatch despite _adv_data_changed=UNCHANGED
     mock_discover.assert_called_once()
-    # _all_history should now have source2's info
     assert manager._all_history["AA:BB:CC:DD:EE:FF"].source == "source2"
 
     cancel1()
