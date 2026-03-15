@@ -9,7 +9,9 @@ from habluetooth import (
     BluetoothScanningMode,
     HaBluetoothConnector,
     HaScanner,
+    get_manager,
 )
+from habluetooth.models import ADV_DATA_UNKNOWN, BluetoothServiceInfoBleak
 
 
 class MockBleakClient:
@@ -212,3 +214,130 @@ def test__async_on_advertisement_prefers_longest_local_name():
 def test_create_ha_scanner():
     scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
     assert isinstance(scanner, HaScanner)
+
+
+def test_adv_data_unchanged_dedup_same_source():
+    """Test that _adv_data_changed=UNCHANGED skips dedup when source matches."""
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    details = scanner._details | {}
+
+    # First advertisement — seeds _all_history
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        ["service_uuid"],
+        {"service_uuid": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        1.0,
+    )
+    # Second identical advertisement — _adv_data_changed will be UNCHANGED
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        ["service_uuid"],
+        {"service_uuid": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        2.0,
+    )
+
+
+def test_adv_data_unchanged_different_source():
+    """Test _adv_data_changed=UNCHANGED with different source falls through."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+
+    scanner1 = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel1 = manager.async_register_scanner(scanner1)
+
+    scanner2 = BaseHaRemoteScanner("source2", "source2", connector, True)
+    cancel2 = manager.async_register_scanner(scanner2)
+
+    details: dict[str, str] = {}
+
+    # Scanner 1 sends advertisement — seeds _all_history with source1
+    scanner1._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -50,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        1.0,
+    )
+    # Scanner 2 sends same data — _adv_data_changed=UNCHANGED from scanner2's
+    # perspective, but _all_history has source1's info. The stale time check
+    # will prefer the new source since old is stale (time diff > fallback max).
+    scanner2._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -40,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        1000.0,
+    )
+
+    cancel1()
+    cancel2()
+
+
+def test_adv_data_unknown_dedup():
+    """Test that _adv_data_changed=UNKNOWN falls back to field comparison."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel = manager.async_register_scanner(scanner)
+
+    device = BLEDevice("AA:BB:CC:DD:EE:FF", "name", {})
+    mfr_data = {1: b"\x01"}
+    svc_data = {"service_uuid": b"\x01"}
+    svc_uuids = ["service_uuid"]
+
+    # First advertisement — seeds _all_history
+    info1 = BluetoothServiceInfoBleak(
+        name="name",
+        address="AA:BB:CC:DD:EE:FF",
+        rssi=-88,
+        manufacturer_data=mfr_data,
+        service_data=svc_data,
+        service_uuids=svc_uuids,
+        source="source1",
+        device=device,
+        advertisement=None,
+        connectable=True,
+        time=1.0,
+        tx_power=-88,
+    )
+    manager.scanner_adv_received(info1)
+
+    # Second advertisement with same data but _adv_data_changed=UNKNOWN
+    # (simulates Bleak/HaScanner path)
+    info2 = BluetoothServiceInfoBleak(
+        name="name",
+        address="AA:BB:CC:DD:EE:FF",
+        rssi=-88,
+        manufacturer_data=mfr_data,
+        service_data=svc_data,
+        service_uuids=svc_uuids,
+        source="source1",
+        device=device,
+        advertisement=None,
+        connectable=True,
+        time=2.0,
+        tx_power=-88,
+    )
+    info2._adv_data_changed = ADV_DATA_UNKNOWN
+    manager.scanner_adv_received(info2)
+
+    cancel()
