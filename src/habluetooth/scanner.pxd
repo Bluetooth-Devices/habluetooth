@@ -4,6 +4,8 @@ import cython
 from .base_scanner cimport BaseHaScanner
 from .models cimport BluetoothServiceInfoBleak
 
+cdef int _ADV_DATA_UNKNOWN
+
 cdef object NO_RSSI_VALUE
 cdef object AdvertisementData
 cdef object BLEDevice

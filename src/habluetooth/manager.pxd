@@ -4,6 +4,9 @@ from .advertisement_tracker cimport AdvertisementTracker
 from .base_scanner cimport BaseHaScanner
 from .models cimport BluetoothServiceInfoBleak
 
+cdef int _ADV_DATA_UNCHANGED
+cdef int _ADV_DATA_UNKNOWN
+
 cdef int NO_RSSI_VALUE
 cdef int ADV_RSSI_SWITCH_THRESHOLD
 cdef double TRACKER_BUFFERING_WOBBLE_SECONDS

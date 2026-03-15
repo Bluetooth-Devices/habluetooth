@@ -2,6 +2,9 @@
 import cython
 
 from .models cimport BluetoothServiceInfoBleak
+
+cdef int _ADV_DATA_CHANGED
+cdef int _ADV_DATA_UNCHANGED
 from .manager cimport BluetoothManager
 
 cdef object parse_advertisement_data_bytes
