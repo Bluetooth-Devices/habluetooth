@@ -25,13 +25,13 @@ _BluetoothServiceInfoBleakSelfT = TypeVar(
 SOURCE_LOCAL: Final = "local"
 TUPLE_NEW: Final = tuple.__new__
 
-_ADV_DATA_UNKNOWN: Final = -1
-_ADV_DATA_UNCHANGED: Final = 0
-_ADV_DATA_CHANGED: Final = 1
+ADV_DATA_UNKNOWN: Final = -1
+ADV_DATA_UNCHANGED: Final = 0
+ADV_DATA_CHANGED: Final = 1
 
-ADV_DATA_UNKNOWN = _ADV_DATA_UNKNOWN
-ADV_DATA_UNCHANGED = _ADV_DATA_UNCHANGED
-ADV_DATA_CHANGED = _ADV_DATA_CHANGED
+_ADV_DATA_UNKNOWN = ADV_DATA_UNKNOWN
+_ADV_DATA_UNCHANGED = ADV_DATA_UNCHANGED
+_ADV_DATA_CHANGED = ADV_DATA_CHANGED
 
 _float = float  # avoid cython conversion since we always want a pyfloat
 _str = str  # avoid cython conversion since we always want a pystr

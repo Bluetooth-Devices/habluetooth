@@ -23,8 +23,8 @@ from .const import (
     SCANNER_WATCHDOG_TIMEOUT,
 )
 from .models import (
-    _ADV_DATA_CHANGED,
-    _ADV_DATA_UNCHANGED,
+    ADV_DATA_CHANGED,
+    ADV_DATA_UNCHANGED,
     BluetoothScanningMode,
     BluetoothServiceInfoBleak,
     HaBluetoothConnector,
@@ -36,6 +36,9 @@ from .storage import DiscoveredDeviceAdvertisementData
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
+
+_ADV_DATA_CHANGED = ADV_DATA_CHANGED
+_ADV_DATA_UNCHANGED = ADV_DATA_UNCHANGED
 
 
 _bytes = bytes

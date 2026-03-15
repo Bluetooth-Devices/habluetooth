@@ -29,8 +29,10 @@ from .const import (
     START_TIMEOUT,
     STOP_TIMEOUT,
 )
-from .models import _ADV_DATA_UNKNOWN, BluetoothScanningMode, BluetoothServiceInfoBleak
+from .models import ADV_DATA_UNKNOWN, BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
+
+_ADV_DATA_UNKNOWN = ADV_DATA_UNKNOWN
 
 int_ = int
 

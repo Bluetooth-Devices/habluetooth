@@ -40,8 +40,8 @@ from .const import (
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .models import (
-    _ADV_DATA_UNCHANGED,
-    _ADV_DATA_UNKNOWN,
+    ADV_DATA_UNCHANGED,
+    ADV_DATA_UNKNOWN,
     BluetoothServiceInfoBleak,
     HaBluetoothSlotAllocations,
     HaScannerModeChange,
@@ -59,6 +59,9 @@ if TYPE_CHECKING:
     from .base_scanner import BaseHaScanner
     from .scanner import HaScanner
 
+
+_ADV_DATA_UNCHANGED = ADV_DATA_UNCHANGED
+_ADV_DATA_UNKNOWN = ADV_DATA_UNKNOWN
 
 SYSTEM = platform.system()
 IS_LINUX = SYSTEM == "Linux"
