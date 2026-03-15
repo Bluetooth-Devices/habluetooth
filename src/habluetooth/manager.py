@@ -692,8 +692,44 @@ class BluetoothManager:
             not (service_info.connectable and old_connectable_service_info is None)
             # Than check if advertisement data is the same
             and old_service_info is not None
-            and not service_info.adv_data_changed
-            and old_service_info.source is service_info.source
+            # If the base scanner already determined data hasn't changed
+            # and the source is the same, we can skip the comparison.
+            and (
+                (
+                    not service_info.adv_data_changed
+                    and old_service_info.source is service_info.source
+                )
+                or (
+                    # Fallback to field-by-field comparison for paths that
+                    # don't go through base_scanner merge (e.g. Bleak/HaScanner).
+                    # The common case is that its the same object for remote
+                    # scanners so the identity check short-circuits.
+                    not (
+                        (
+                            service_info.manufacturer_data
+                            is not old_service_info.manufacturer_data
+                            and service_info.manufacturer_data
+                            != old_service_info.manufacturer_data
+                        )
+                        or (
+                            service_info.service_data
+                            is not old_service_info.service_data
+                            and service_info.service_data
+                            != old_service_info.service_data
+                        )
+                        or (
+                            service_info.service_uuids
+                            is not old_service_info.service_uuids
+                            and service_info.service_uuids
+                            != old_service_info.service_uuids
+                        )
+                        or (
+                            service_info.name is not old_service_info.name
+                            and service_info.name != old_service_info.name
+                        )
+                    )
+                )
+            )
         ):
             return
 
