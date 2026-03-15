@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import MagicMock
+
 import pytest
 from bleak.backends.scanner import AdvertisementData
 from bluetooth_data_tools import monotonic_time_coarse
 from pytest_codspeed import BenchmarkFixture
 
 from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector, get_manager
-from habluetooth.models import BluetoothServiceInfoBleak
+from habluetooth.channels.bluez import BluetoothMGMTProtocol
+from habluetooth.models import BluetoothScanningMode, BluetoothServiceInfoBleak
+from habluetooth.scanner import HaScanner
 
 from . import (
     MockBleakClient,
@@ -916,3 +921,105 @@ async def test_inject_100_bleak_changed_advertisements(
 
     cancel()
     unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_inject_100_bluez_raw_end_to_end_unchanged(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """Test 100 unchanged advertisements through full BlueZ MGMT protocol path."""
+    manager = get_manager()
+    loop = asyncio.get_running_loop()
+
+    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    scanners: dict[int, HaScanner] = {0: scanner}
+    future: asyncio.Future[None] = loop.create_future()
+    mock_sock = MagicMock()
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, lambda: None, lambda: False, mock_sock
+    )
+
+    # Build a DEVICE_FOUND MGMT packet
+    # AD data: flags + local name + manufacturer data
+    ad_data = (
+        b"\x02\x01\x06"  # Flags
+        b"\x08\x09TestDev"  # Complete Local Name = "TestDev"
+        b"\x04\xff\x01\x00\xaa"  # Manufacturer data: company 0x0001, data 0xaa
+    )
+    param_len = 6 + 1 + 1 + 4 + 2 + len(ad_data)
+    packet = (
+        b"\x12\x00"  # DEVICE_FOUND event
+        b"\x00\x00"  # controller_idx = 0
+        + param_len.to_bytes(2, "little")
+        + b"\xaa\xbb\xcc\xdd\xee\xff"  # address
+        + b"\x01"  # address_type
+        + b"\xc4"  # rssi = -60
+        + b"\x00\x00\x00\x00"  # flags
+        + len(ad_data).to_bytes(2, "little")
+        + ad_data
+    )
+
+    # Seed first advertisement
+    protocol.data_received(packet)
+
+    @benchmark
+    def run():
+        for _ in range(100):
+            protocol.data_received(packet)
+
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_inject_100_bluez_raw_end_to_end_changed(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """Test 100 changed advertisements through full BlueZ MGMT protocol path."""
+    manager = get_manager()
+    loop = asyncio.get_running_loop()
+
+    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    scanners: dict[int, HaScanner] = {0: scanner}
+    future: asyncio.Future[None] = loop.create_future()
+    mock_sock = MagicMock()
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, lambda: None, lambda: False, mock_sock
+    )
+
+    # Build 100 different DEVICE_FOUND MGMT packets with varying manufacturer data
+    packets: list[bytes] = []
+    for i in range(100):
+        ad_data = (
+            b"\x02\x01\x06"  # Flags
+            b"\x08\x09TestDev"  # Complete Local Name = "TestDev"
+            + b"\x04\xff\x01\x00"  # Manufacturer data header: company 0x0001
+            + bytes((i,))  # Varying data byte
+        )
+        param_len = 6 + 1 + 1 + 4 + 2 + len(ad_data)
+        packet = (
+            b"\x12\x00"  # DEVICE_FOUND event
+            b"\x00\x00"  # controller_idx = 0
+            + param_len.to_bytes(2, "little")
+            + b"\xaa\xbb\xcc\xdd\xee\xff"  # address
+            + b"\x01"  # address_type
+            + b"\xc4"  # rssi = -60
+            + b"\x00\x00\x00\x00"  # flags
+            + len(ad_data).to_bytes(2, "little")
+            + ad_data
+        )
+        packets.append(packet)
+
+    @benchmark
+    def run():
+        for packet in packets:
+            protocol.data_received(packet)
+
+    cancel()
