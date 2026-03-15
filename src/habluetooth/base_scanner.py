@@ -619,7 +619,7 @@ class BaseHaScanner:
         info.tx_power = tx_power
         info.raw = raw
         self._previous_service_info[address] = info
-        self._manager.scanner_adv_received(info)
+        self._manager._scanner_adv_received(info)
 
     def _async_expire_devices(self) -> None:
         """Expire old devices."""
