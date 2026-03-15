@@ -1,5 +1,19 @@
 # Changelog
 
+## v5.10.0 (2026-03-15)
+
+### Features
+
+
+- Split scanner_adv_received into cpdef entry + cdef internal ([`f05ea67`](https://github.com/Bluetooth-Devices/habluetooth/commit/f05ea67493ff9806dd4e389dcf4ae2d03874d831))
+
+
+### Performance improvements
+
+
+- Use len() for dict truthiness check in hot path ([`33d8a67`](https://github.com/Bluetooth-Devices/habluetooth/commit/33d8a676f9617a01b7e20e654d0231938028007b))
+
+
 ## v5.9.1 (2026-03-07)
 
 ### Bug fixes
