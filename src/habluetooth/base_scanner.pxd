@@ -83,7 +83,13 @@ cdef class BaseHaScanner:
         double advertisement_monotonic_time
     )
 
-    @cython.locals(parsed=tuple)
+    @cython.locals(
+        parsed=tuple,
+        local_name=str,
+        service_uuids=list,
+        service_data=dict,
+        manufacturer_data=dict,
+    )
     cdef void _async_on_raw_advertisement_cdef(
         self,
         str address,

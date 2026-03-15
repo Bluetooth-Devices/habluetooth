@@ -479,14 +479,19 @@ class BaseHaScanner:
         advertisement_monotonic_time: _float,
     ) -> None:
         parsed = parse_advertisement_data_bytes(raw)
+        local_name: str | None = parsed[0]
+        service_uuids: list[str] = parsed[1]
+        service_data: dict[str, bytes] = parsed[2]
+        manufacturer_data: dict[int, bytes] = parsed[3]
+        tx_power: int | None = parsed[4]
         self._async_on_advertisement_internal(
             address,
             rssi,
-            parsed[0],
-            parsed[1],
-            parsed[2],
-            parsed[3],
-            parsed[4],
+            local_name,
+            service_uuids,
+            service_data,
+            manufacturer_data,
+            tx_power,
             details,
             advertisement_monotonic_time,
             raw,
