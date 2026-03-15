@@ -20,7 +20,7 @@ cdef unsigned char APPLE_HOMEKIT_NOTIFY_START_BYTE
 cdef unsigned char APPLE_DEVICE_ID_START_BYTE
 cdef unsigned char APPLE_FINDMY_START_BYTE
 
-cdef object APPLE_MFR_ID
+cdef int APPLE_MFR_ID
 
 @cython.locals(uuids=set)
 cdef _dispatch_bleak_callback(
