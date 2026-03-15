@@ -583,9 +583,12 @@ class BluetoothManager:
                 return
 
         if service_info.connectable:
-            old_connectable_service_info = self._connectable_history.get(
-                service_info.address
-            )
+            try:
+                old_connectable_service_info = self._connectable_history[
+                    service_info.address
+                ]
+            except KeyError:
+                old_connectable_service_info = None
         else:
             old_connectable_service_info = None
         # This logic is complex due to the many combinations of scanners
@@ -604,9 +607,13 @@ class BluetoothManager:
         #                       scanners with the best advertisement from each
         #                       connectable scanner
         #
+        try:
+            old_service_info = self._all_history[service_info.address]
+        except KeyError:
+            old_service_info = None
+
         if (
-            (old_service_info := self._all_history.get(service_info.address))
-            is not None
+            old_service_info is not None
             and service_info.source is not old_service_info.source
             and service_info.source != old_service_info.source
             and (scanner := self._sources.get(old_service_info.source)) is not None
