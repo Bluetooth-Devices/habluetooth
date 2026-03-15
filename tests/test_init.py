@@ -1,5 +1,6 @@
-from unittest.mock import ANY
+from unittest.mock import ANY, MagicMock
 
+import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
@@ -9,7 +10,9 @@ from habluetooth import (
     BluetoothScanningMode,
     HaBluetoothConnector,
     HaScanner,
+    get_manager,
 )
+from habluetooth.models import BluetoothServiceInfoBleak
 
 
 class MockBleakClient:
@@ -212,3 +215,215 @@ def test__async_on_advertisement_prefers_longest_local_name():
 def test_create_ha_scanner():
     scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
     assert isinstance(scanner, HaScanner)
+
+
+@pytest.mark.asyncio
+async def test_dedup_unchanged_same_source():
+    """Test that unchanged data from the same source is deduped (skipped)."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel = manager.async_register_scanner(scanner)
+    details = scanner._details | {}
+
+    # First advertisement — seeds _all_history
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        ["service_uuid"],
+        {"service_uuid": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        1.0,
+    )
+    mock_discover = MagicMock()
+    manager._subclass_discover_info = mock_discover
+
+    # Second identical advertisement — same source, so dedup should skip dispatch
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        ["service_uuid"],
+        {"service_uuid": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        2.0,
+    )
+    # Dedup should have returned early — _subclass_discover_info not called
+    mock_discover.assert_not_called()
+
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_dedup_unchanged_different_source():
+    """Test unchanged data from a different source dispatches when data changes."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+
+    scanner1 = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel1 = manager.async_register_scanner(scanner1)
+
+    scanner2 = BaseHaRemoteScanner("source2", "source2", connector, True)
+    cancel2 = manager.async_register_scanner(scanner2)
+
+    details: dict[str, str] = {}
+
+    # Scanner 1 sends advertisement — seeds _all_history with source1
+    scanner1._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -50,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        1.0,
+    )
+
+    # Scanner 2 sends first adv — seeds scanner2's _previous_service_info.
+    # _all_history switches to source2 (stale time diff).
+    scanner2._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -40,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        1000.0,
+    )
+    assert manager._all_history["AA:BB:CC:DD:EE:FF"].source == "source2"
+
+    # Scanner 1 sends again — seeds scanner1's _previous_service_info with
+    # same data. _all_history now has source2.
+    scanner1._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -50,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        2001.0,
+    )
+    # _all_history switches back to source1 (stale time diff)
+    assert manager._all_history["AA:BB:CC:DD:EE:FF"].source == "source1"
+
+    mock_discover = MagicMock()
+    manager._subclass_discover_info = mock_discover
+
+    # Scanner 1 sends SAME data again — unchanged from scanner1's perspective,
+    # dedup via field comparison detects no change → returns early.
+    scanner1._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -50,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        2002.0,
+    )
+    # Same data, same source — dedup should skip dispatch
+    mock_discover.assert_not_called()
+
+    # Scanner 2 sends same data — source switches (stale), but field comparison
+    # detects no data change, so dedup still skips dispatch on main.
+    scanner2._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -40,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        3001.0,
+    )
+    # On main, field-level dedup returns early even with source change
+    mock_discover.assert_not_called()
+    # But _all_history still tracks the source switch
+    assert manager._all_history["AA:BB:CC:DD:EE:FF"].source == "source2"
+
+    # Now scanner 2 sends CHANGED data — should dispatch
+    scanner2._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -40,
+        "name",
+        ["svc"],
+        {"svc": b"\x02"},
+        {1: b"\x02"},
+        -88,
+        details,
+        3002.0,
+    )
+    mock_discover.assert_called_once()
+
+    cancel1()
+    cancel2()
+
+
+@pytest.mark.asyncio
+async def test_dedup_same_data_via_scanner_adv_received():
+    """Test that scanner_adv_received deduplicates same data via field comparison."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel = manager.async_register_scanner(scanner)
+
+    device = BLEDevice("AA:BB:CC:DD:EE:FF", "name", {})
+    mfr_data = {1: b"\x01"}
+    svc_data = {"service_uuid": b"\x01"}
+    svc_uuids = ["service_uuid"]
+
+    # First advertisement — seeds _all_history
+    info1 = BluetoothServiceInfoBleak(
+        name="name",
+        address="AA:BB:CC:DD:EE:FF",
+        rssi=-88,
+        manufacturer_data=mfr_data,
+        service_data=svc_data,
+        service_uuids=svc_uuids,
+        source="source1",
+        device=device,
+        advertisement=None,
+        connectable=True,
+        time=1.0,
+        tx_power=-88,
+    )
+    manager.scanner_adv_received(info1)
+
+    # Second advertisement with same data
+    info2 = BluetoothServiceInfoBleak(
+        name="name",
+        address="AA:BB:CC:DD:EE:FF",
+        rssi=-88,
+        manufacturer_data=mfr_data,
+        service_data=svc_data,
+        service_uuids=svc_uuids,
+        source="source1",
+        device=device,
+        advertisement=None,
+        connectable=True,
+        time=2.0,
+        tx_power=-88,
+    )
+
+    mock_discover = MagicMock()
+    manager._subclass_discover_info = mock_discover
+
+    manager.scanner_adv_received(info2)
+
+    # Same data — field comparison should detect no change and dedup
+    mock_discover.assert_not_called()
+
+    cancel()
