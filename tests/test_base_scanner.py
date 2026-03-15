@@ -248,6 +248,54 @@ async def test_remote_scanner(name_2: str | None) -> None:
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_raw_advertisement_fast_path_unchanged() -> None:
+    """Test that sending the same raw bytes twice uses the fast path."""
+    manager = get_manager()
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = FakeScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    raw_adv = b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x04"
+    address = "44:44:33:11:23:45"
+
+    # First raw advertisement — takes the slow path (parse + merge)
+    scanner.inject_raw_advertisement(address, -60, raw_adv, 1.0)
+    info1 = scanner._previous_service_info[address]
+    assert info1.rssi == -60
+    assert info1.raw == raw_adv
+
+    # Second raw advertisement with same bytes — takes the fast path
+    scanner.inject_raw_advertisement(address, -50, raw_adv, 2.0)
+    info2 = scanner._previous_service_info[address]
+    assert info2.rssi == -50
+    assert info2.time == 2.0
+    # Fast path reuses parsed data from prev_info
+    assert info2.manufacturer_data is info1.manufacturer_data
+    assert info2.service_data is info1.service_data
+    assert info2.service_uuids is info1.service_uuids
+    assert info2.name is info1.name
+    assert info2.device is info1.device
+    assert info2.raw is info1.raw
+
+    # Third raw advertisement with different bytes — takes the slow path
+    raw_adv_changed = b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x05"
+    scanner.inject_raw_advertisement(address, -40, raw_adv_changed, 3.0)
+    info3 = scanner._previous_service_info[address]
+    assert info3.rssi == -40
+    assert info3.raw == raw_adv_changed
+    # Slow path re-parsed, so objects may differ
+    assert info3.raw is not info1.raw
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_remote_scanner_expires_connectable() -> None:
     """Test the remote scanner expires stale connectable data."""
     manager = get_manager()
