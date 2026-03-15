@@ -182,7 +182,15 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     internal details.
     """
 
-    __slots__ = ("_advertisement", "connectable", "device", "raw", "time", "tx_power")
+    __slots__ = (
+        "_advertisement",
+        "adv_data_changed",
+        "connectable",
+        "device",
+        "raw",
+        "time",
+        "tx_power",
+    )
 
     def __init__(
         self,
@@ -213,6 +221,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         self.time = time
         self.tx_power = tx_power
         self.raw = raw
+        self.adv_data_changed = True
 
     def __repr__(self) -> str:
         """Return the representation of the object."""
@@ -346,4 +355,5 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         new_obj.time = self.time
         new_obj.tx_power = self.tx_power
         new_obj.raw = self.raw
+        new_obj.adv_data_changed = self.adv_data_changed
         return new_obj

@@ -618,6 +618,15 @@ class BaseHaScanner:
         info.time = advertisement_monotonic_time
         info.tx_power = tx_power
         info.raw = raw
+        if prev_info is None:
+            info.adv_data_changed = True
+        else:
+            info.adv_data_changed = (
+                info.manufacturer_data is not prev_info.manufacturer_data
+                or info.service_data is not prev_info.service_data
+                or info.service_uuids is not prev_info.service_uuids
+                or info.name is not prev_info.name
+            )
         self._previous_service_info[address] = info
         self._manager._scanner_adv_received(info)
 
