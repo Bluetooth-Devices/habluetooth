@@ -564,18 +564,13 @@ class BaseHaScanner:
                 info.device.name = local_name
                 info.name = local_name if local_name else address
 
-            has_service_uuids = bool(service_uuids)
             if (
-                has_service_uuids
+                service_uuids
                 and service_uuids is not prev_info.service_uuids
                 and service_uuids != prev_info.service_uuids
             ):
                 info.service_uuids = list({*service_uuids, *prev_info.service_uuids})
-            elif not has_service_uuids:
-                info.service_uuids = prev_info.service_uuids
             else:
-                # Content is the same — reuse prev_info's object to
-                # preserve identity for downstream dedup checks.
                 info.service_uuids = prev_info.service_uuids
 
             has_service_data = bool(service_data)
