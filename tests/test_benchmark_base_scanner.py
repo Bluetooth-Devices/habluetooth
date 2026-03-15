@@ -8,6 +8,7 @@ from bluetooth_data_tools import monotonic_time_coarse
 from pytest_codspeed import BenchmarkFixture
 
 from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector, get_manager
+from habluetooth.models import BluetoothServiceInfoBleak
 
 from . import (
     MockBleakClient,
@@ -745,6 +746,173 @@ async def test_filter_wanted_apple_advs(benchmark: BenchmarkFixture) -> None:
                 _details,
                 _now,
             )
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_inject_100_raw_unchanged_advertisements(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """Test injecting 100 raw unchanged advertisements (BlueZ raw path)."""
+    manager = get_manager()
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = BaseHaRemoteScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    _address = "44:44:33:11:23:45"
+    _raw = b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x04"
+    _details = {"scanner_specific_data": "test"}
+    _now = monotonic_time_coarse()
+
+    # Seed the first advertisement
+    scanner._async_on_raw_advertisement(_address, -100, _raw, _details, _now)
+
+    @benchmark
+    def run():
+        for _ in range(100):
+            scanner._async_on_raw_advertisement(
+                _address,
+                -100,
+                _raw,
+                _details,
+                _now,
+            )
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_inject_100_bleak_unchanged_advertisements(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """Test injecting 100 unchanged advertisements via Bleak/HaScanner path."""
+    manager = get_manager()
+
+    device = generate_ble_device(
+        "44:44:33:11:23:45",
+        "wohand",
+        {},
+        rssi=-100,
+    )
+    adv = generate_advertisement_data(
+        local_name="wohand",
+        service_uuids=["050a021a-0000-1000-8000-00805f9b34fb"],
+        service_data={"050a021a-0000-1000-8000-00805f9b34fb": b"\n\xff"},
+        manufacturer_data={1: b"\x01"},
+        rssi=-100,
+    )
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = BaseHaRemoteScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    _now = monotonic_time_coarse()
+
+    # Seed the first advertisement through the manager
+    service_info = BluetoothServiceInfoBleak(
+        name=adv.local_name or device.name or device.address,
+        address=device.address,
+        rssi=adv.rssi,
+        manufacturer_data=adv.manufacturer_data,
+        service_data=adv.service_data,
+        service_uuids=adv.service_uuids,
+        source="esp32",
+        device=device,
+        advertisement=adv,
+        connectable=True,
+        time=_now,
+        tx_power=adv.tx_power,
+    )
+    manager.scanner_adv_received(service_info)
+
+    @benchmark
+    def run():
+        for _ in range(100):
+            info = BluetoothServiceInfoBleak(
+                name=adv.local_name or device.name or device.address,
+                address=device.address,
+                rssi=adv.rssi,
+                manufacturer_data=adv.manufacturer_data,
+                service_data=adv.service_data,
+                service_uuids=adv.service_uuids,
+                source="esp32",
+                device=device,
+                advertisement=adv,
+                connectable=True,
+                time=_now,
+                tx_power=adv.tx_power,
+            )
+            manager.scanner_adv_received(info)
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_inject_100_bleak_changed_advertisements(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """Test injecting 100 changed advertisements via Bleak/HaScanner path."""
+    manager = get_manager()
+
+    device = generate_ble_device(
+        "44:44:33:11:23:45",
+        "wohand",
+        {},
+        rssi=-100,
+    )
+
+    advs: list[AdvertisementData] = []
+    for i in range(100):
+        adv = generate_advertisement_data(
+            local_name="wohand",
+            service_uuids=["050a021a-0000-1000-8000-00805f9b34fb"],
+            service_data={"050a021a-0000-1000-8000-00805f9b34fb": b"\n\xff"},
+            manufacturer_data={1: bytes((i,))},
+            rssi=-100,
+        )
+        advs.append(adv)
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = BaseHaRemoteScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    _now = monotonic_time_coarse()
+
+    @benchmark
+    def run():
+        for adv in advs:
+            info = BluetoothServiceInfoBleak(
+                name=adv.local_name or device.name or device.address,
+                address=device.address,
+                rssi=adv.rssi,
+                manufacturer_data=adv.manufacturer_data,
+                service_data=adv.service_data,
+                service_uuids=adv.service_uuids,
+                source="esp32",
+                device=device,
+                advertisement=adv,
+                connectable=True,
+                time=_now,
+                tx_power=adv.tx_power,
+            )
+            manager.scanner_adv_received(info)
 
     cancel()
     unsetup()
