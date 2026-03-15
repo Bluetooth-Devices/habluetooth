@@ -29,7 +29,7 @@ from .const import (
     START_TIMEOUT,
     STOP_TIMEOUT,
 )
-from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
+from .models import ADV_DATA_UNKNOWN, BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
 
 int_ = int
@@ -328,7 +328,7 @@ class HaScanner(BaseHaScanner):
         service_info.time = callback_time
         service_info.tx_power = tx_power
         service_info.raw = None  # not available in bleak.
-        service_info._adv_data_changed = -1
+        service_info._adv_data_changed = ADV_DATA_UNKNOWN
         self._manager._scanner_adv_received(service_info)
 
     async def async_start(self) -> None:

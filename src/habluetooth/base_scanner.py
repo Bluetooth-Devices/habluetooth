@@ -23,6 +23,8 @@ from .const import (
     SCANNER_WATCHDOG_TIMEOUT,
 )
 from .models import (
+    ADV_DATA_CHANGED,
+    ADV_DATA_UNCHANGED,
     BluetoothScanningMode,
     BluetoothServiceInfoBleak,
     HaBluetoothConnector,
@@ -618,15 +620,15 @@ class BaseHaScanner:
         info.time = advertisement_monotonic_time
         info.tx_power = tx_power
         info.raw = raw
-        if prev_info is None:
-            info._adv_data_changed = 1
+        if prev_info is None or (
+            info.manufacturer_data is not prev_info.manufacturer_data
+            or info.service_data is not prev_info.service_data
+            or info.service_uuids is not prev_info.service_uuids
+            or info.name is not prev_info.name
+        ):
+            info._adv_data_changed = ADV_DATA_CHANGED
         else:
-            info._adv_data_changed = (
-                info.manufacturer_data is not prev_info.manufacturer_data
-                or info.service_data is not prev_info.service_data
-                or info.service_uuids is not prev_info.service_uuids
-                or info.name is not prev_info.name
-            )
+            info._adv_data_changed = ADV_DATA_UNCHANGED
         self._previous_service_info[address] = info
         self._manager._scanner_adv_received(info)
 

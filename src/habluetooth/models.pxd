@@ -12,6 +12,10 @@ cdef object NO_RSSI_VALUE
 
 cdef object TUPLE_NEW
 
+cdef int ADV_DATA_UNKNOWN
+cdef int ADV_DATA_UNCHANGED
+cdef int ADV_DATA_CHANGED
+
 cdef class BluetoothServiceInfo:
     """Prepared info from bluetooth entries."""
 

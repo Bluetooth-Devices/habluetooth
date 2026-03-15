@@ -25,6 +25,10 @@ _BluetoothServiceInfoBleakSelfT = TypeVar(
 SOURCE_LOCAL: Final = "local"
 TUPLE_NEW: Final = tuple.__new__
 
+ADV_DATA_UNKNOWN: Final = -1
+ADV_DATA_UNCHANGED: Final = 0
+ADV_DATA_CHANGED: Final = 1
+
 _float = float  # avoid cython conversion since we always want a pyfloat
 _str = str  # avoid cython conversion since we always want a pystr
 _int = int  # avoid cython conversion since we always want a pyint
@@ -221,7 +225,7 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
         self.time = time
         self.tx_power = tx_power
         self.raw = raw
-        self._adv_data_changed = 1
+        self._adv_data_changed = ADV_DATA_CHANGED
 
     def __repr__(self) -> str:
         """Return the representation of the object."""
