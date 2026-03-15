@@ -466,24 +466,29 @@ class BaseHaScanner:
         details: dict[str, Any],
         advertisement_monotonic_time: _float,
     ) -> None:
-        prev_info = self._previous_service_info.get(address)
-        if prev_info is not None and prev_info.raw == raw:
-            # Raw advertisement data unchanged — skip parse_advertisement_data_bytes
-            # and pass the previous parsed data to _async_on_advertisement_internal.
-            # The merge logic will see identical objects via `is` checks and
-            # short-circuit, avoiding all dict iteration and comparison work.
-            self._async_on_advertisement_internal(
-                address,
-                rssi,
-                prev_info.name,
-                prev_info.service_uuids,
-                prev_info.service_data,
-                prev_info.manufacturer_data,
-                prev_info.tx_power,
-                details,
-                advertisement_monotonic_time,
-                raw,
-            )
+        if (
+            prev_info := self._previous_service_info.get(address)
+        ) is not None and prev_info.raw == raw:
+            # Raw advertisement data unchanged — skip parsing and merge
+            # logic, reuse the previous parsed data directly.
+            self.scanning = not self._connecting
+            self._last_detection = advertisement_monotonic_time
+            info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
+            info.device = prev_info.device
+            info.name = prev_info.name
+            info.manufacturer_data = prev_info.manufacturer_data
+            info.service_data = prev_info.service_data
+            info.service_uuids = prev_info.service_uuids
+            info.address = address
+            info.rssi = rssi
+            info.source = self.source
+            info._advertisement = None
+            info.connectable = self.connectable
+            info.time = advertisement_monotonic_time
+            info.tx_power = prev_info.tx_power
+            info.raw = prev_info.raw
+            self._previous_service_info[address] = info
+            self._manager._scanner_adv_received(info)
             return
         parsed = parse_advertisement_data_bytes(raw)
         self._async_on_advertisement_internal(
