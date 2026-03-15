@@ -696,7 +696,7 @@ class BluetoothManager:
             # and the source is the same, we can skip the comparison.
             and (
                 (
-                    not service_info.adv_data_changed
+                    not service_info._adv_data_changed
                     and old_service_info.source is service_info.source
                 )
                 or (

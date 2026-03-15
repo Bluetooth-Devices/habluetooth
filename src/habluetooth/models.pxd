@@ -33,7 +33,7 @@ cdef class BluetoothServiceInfoBleak(BluetoothServiceInfo):
     cdef public double time
     cdef public object tx_power
     cdef public bytes raw
-    cdef public bint adv_data_changed
+    cdef public bint _adv_data_changed
 
     @cython.locals(new_obj=BluetoothServiceInfoBleak)
     cpdef BluetoothServiceInfoBleak _as_connectable(self)
