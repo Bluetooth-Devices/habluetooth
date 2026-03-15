@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.10.2 (2026-03-15)
+
+### Bug fixes
+
+
+- Remove macos-13 from wheel build matrix ([`13166b2`](https://github.com/Bluetooth-Devices/habluetooth/commit/13166b2a00b776738f27097ae40742dc03b4364d))
+
+
 ## v5.10.1 (2026-03-15)
 
 ### Performance improvements
