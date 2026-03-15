@@ -523,7 +523,9 @@ class BaseHaScanner:
         self._last_detection = advertisement_monotonic_time
         info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
 
-        if (prev_info := self._previous_service_info.get(address)) is None:
+        try:
+            prev_info = self._previous_service_info[address]
+        except KeyError:
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
