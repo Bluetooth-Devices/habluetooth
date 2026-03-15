@@ -152,14 +152,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os:
-          [
-            windows-latest,
-            ubuntu-24.04-arm,
-            ubuntu-latest,
-            macos-13,
-            macos-latest,
-          ]
+        os: [windows-latest, ubuntu-24.04-arm, ubuntu-latest, macos-latest]
         qemu: [""]
         musl: [""]
         pyver: [""]
