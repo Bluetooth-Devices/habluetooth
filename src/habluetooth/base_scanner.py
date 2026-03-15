@@ -573,8 +573,7 @@ class BaseHaScanner:
             else:
                 info.service_uuids = prev_info.service_uuids
 
-            has_service_data = bool(service_data)
-            if has_service_data and service_data is not prev_info.service_data:
+            if service_data and service_data is not prev_info.service_data:
                 for uuid, sub_value in service_data.items():
                     if (
                         super_value := prev_info.service_data.get(uuid)
@@ -586,14 +585,11 @@ class BaseHaScanner:
                         break
                 else:
                     info.service_data = prev_info.service_data
-            elif not has_service_data:
-                info.service_data = prev_info.service_data
             else:
-                info.service_data = service_data
+                info.service_data = prev_info.service_data
 
-            has_manufacturer_data = bool(manufacturer_data)
             if (
-                has_manufacturer_data
+                manufacturer_data
                 and manufacturer_data is not prev_info.manufacturer_data
             ):
                 for id_, sub_value in manufacturer_data.items():
@@ -607,10 +603,8 @@ class BaseHaScanner:
                         break
                 else:
                     info.manufacturer_data = prev_info.manufacturer_data
-            elif not has_manufacturer_data:
-                info.manufacturer_data = prev_info.manufacturer_data
             else:
-                info.manufacturer_data = manufacturer_data
+                info.manufacturer_data = prev_info.manufacturer_data
 
         info.address = address
         info.rssi = rssi
