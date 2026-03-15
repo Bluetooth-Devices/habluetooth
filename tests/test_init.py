@@ -12,7 +12,12 @@ from habluetooth import (
     HaScanner,
     get_manager,
 )
-from habluetooth.models import ADV_DATA_UNKNOWN, BluetoothServiceInfoBleak
+from habluetooth.models import (
+    ADV_DATA_CHANGED,
+    ADV_DATA_UNCHANGED,
+    ADV_DATA_UNKNOWN,
+    BluetoothServiceInfoBleak,
+)
 
 
 class MockBleakClient:
@@ -420,3 +425,122 @@ async def test_adv_data_unknown_dedup():
     mock_discover.assert_not_called()
 
     cancel()
+
+
+def test_adv_data_changed_set_by_init():
+    """Test that __init__ sets _adv_data_changed to ADV_DATA_UNKNOWN."""
+    device = BLEDevice("AA:BB:CC:DD:EE:FF", "name", {})
+    info = BluetoothServiceInfoBleak(
+        name="name",
+        address="AA:BB:CC:DD:EE:FF",
+        rssi=-88,
+        manufacturer_data={1: b"\x01"},
+        service_data={"svc": b"\x01"},
+        service_uuids=["svc"],
+        source="source1",
+        device=device,
+        advertisement=None,
+        connectable=True,
+        time=1.0,
+        tx_power=-88,
+    )
+    assert info._adv_data_changed == ADV_DATA_UNKNOWN
+
+
+def test_adv_data_changed_set_by_as_connectable():
+    """Test that _as_connectable copies _adv_data_changed from source."""
+    device = BLEDevice("AA:BB:CC:DD:EE:FF", "name", {})
+    info = BluetoothServiceInfoBleak(
+        name="name",
+        address="AA:BB:CC:DD:EE:FF",
+        rssi=-88,
+        manufacturer_data={1: b"\x01"},
+        service_data={"svc": b"\x01"},
+        service_uuids=["svc"],
+        source="source1",
+        device=device,
+        advertisement=None,
+        connectable=False,
+        time=1.0,
+        tx_power=-88,
+    )
+    assert info._adv_data_changed == ADV_DATA_UNKNOWN
+    connectable = info._as_connectable()
+    assert connectable._adv_data_changed == ADV_DATA_UNKNOWN
+
+    info._adv_data_changed = ADV_DATA_UNCHANGED
+    connectable2 = info._as_connectable()
+    assert connectable2._adv_data_changed == ADV_DATA_UNCHANGED
+
+
+@pytest.mark.asyncio
+async def test_adv_data_changed_set_by_advertisement_internal():
+    """Test _async_on_advertisement_internal sets _adv_data_changed correctly."""
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    details = scanner._details | {}
+
+    # First advertisement — new device, should be CHANGED
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        1.0,
+    )
+    info1 = scanner._previous_service_info["AA:BB:CC:DD:EE:FF"]
+    assert info1._adv_data_changed == ADV_DATA_CHANGED
+
+    # Second identical advertisement — should be UNCHANGED
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        ["svc"],
+        {"svc": b"\x01"},
+        {1: b"\x01"},
+        -88,
+        details,
+        2.0,
+    )
+    info2 = scanner._previous_service_info["AA:BB:CC:DD:EE:FF"]
+    assert info2._adv_data_changed == ADV_DATA_UNCHANGED
+
+    # Third advertisement with changed data — should be CHANGED
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "name",
+        ["svc"],
+        {"svc": b"\x02"},
+        {1: b"\x01"},
+        -88,
+        details,
+        3.0,
+    )
+    info3 = scanner._previous_service_info["AA:BB:CC:DD:EE:FF"]
+    assert info3._adv_data_changed == ADV_DATA_CHANGED
+
+
+@pytest.mark.asyncio
+async def test_adv_data_changed_set_by_raw_fast_path():
+    """Test raw fast path sets _adv_data_changed to ADV_DATA_UNCHANGED."""
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+
+    raw = b"\x02\x01\x06\x04\xff\x01\x00\xaa"
+    address = "AA:BB:CC:DD:EE:FF"
+
+    # First raw — slow path, CHANGED
+    scanner._async_on_raw_advertisement(address, -60, raw, {}, 1.0)
+    info1 = scanner._previous_service_info[address]
+    assert info1._adv_data_changed == ADV_DATA_CHANGED
+
+    # Second same raw — fast path, UNCHANGED
+    scanner._async_on_raw_advertisement(address, -50, raw, {}, 2.0)
+    info2 = scanner._previous_service_info[address]
+    assert info2._adv_data_changed == ADV_DATA_UNCHANGED
