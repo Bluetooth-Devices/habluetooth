@@ -1,5 +1,22 @@
 # Changelog
 
+## v5.10.1 (2026-03-15)
+
+### Performance improvements
+
+
+- Skip raw advertisement parsing when data unchanged ([`84e1b33`](https://github.com/Bluetooth-Devices/habluetooth/commit/84e1b33733732dbd788cc243a72dc49aa80df84e))
+
+
+### Testing
+
+
+- Add dedup coverage tests for scanner_adv_received ([`002f40e`](https://github.com/Bluetooth-Devices/habluetooth/commit/002f40e3860173fd846183bf0cf0db67078b0b80))
+
+
+- Add bluez raw, bleak, and mgmt end-to-end advertisement benchmarks ([`f3684f7`](https://github.com/Bluetooth-Devices/habluetooth/commit/f3684f7ed884bb0df5959ebe203c139170d34318))
+
+
 ## v5.10.0 (2026-03-15)
 
 ### Features
