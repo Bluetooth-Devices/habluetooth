@@ -492,6 +492,7 @@ class BaseHaScanner:
             info.time = advertisement_monotonic_time
             info.tx_power = prev_info.tx_power
             info.raw = prev_info.raw
+            info._adv_data_changed = _ADV_DATA_UNCHANGED
             self._previous_service_info[address] = info
             self._manager._scanner_adv_received(info)
             return
