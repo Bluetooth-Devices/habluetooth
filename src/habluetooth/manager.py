@@ -564,11 +564,23 @@ class BluetoothManager:
         Handle a new advertisement from any scanner.
 
         Callbacks from all the scanners arrive here.
+
+        This is the cpdef entry point for external callers.
+        Internal callers should use _scanner_adv_received directly
+        to avoid cpdef virtual dispatch overhead.
+        """
+        self._scanner_adv_received(service_info)
+
+    def _scanner_adv_received(self, service_info: BluetoothServiceInfoBleak) -> None:
+        """
+        Handle a new advertisement from any scanner (internal cdef path).
+
+        Callbacks from all the scanners arrive here.
         """
         # Pre-filter noisy apple devices as they can account for 20-35% of the
         # traffic on a typical network.
         if (
-            not service_info.service_data
+            len(service_info.service_data) == 0
             and len(service_info.manufacturer_data) == 1
             and (apple_data := service_info.manufacturer_data.get(APPLE_MFR_ID))
         ):

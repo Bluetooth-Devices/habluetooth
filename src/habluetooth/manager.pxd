@@ -76,6 +76,8 @@ cdef class BluetoothManager:
         BluetoothServiceInfoBleak new
     )
 
+    cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
+
     @cython.locals(
         old_service_info=BluetoothServiceInfoBleak,
         old_connectable_service_info=BluetoothServiceInfoBleak,
@@ -86,6 +88,6 @@ cdef class BluetoothManager:
         apple_cstr="const unsigned char *",
         bleak_callback=BleakCallback
     )
-    cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
+    cdef void _scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
 
     cpdef _async_describe_source(self, BluetoothServiceInfoBleak service_info)
