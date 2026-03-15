@@ -74,7 +74,7 @@ cdef class BaseHaScanner:
     @cython.locals(info=BluetoothServiceInfoBleak)
     cdef dict _build_discovered_device_timestamps(self)
 
-    @cython.locals(parsed=tuple, prev_info=BluetoothServiceInfoBleak, info=BluetoothServiceInfoBleak)
+    @cython.locals(parsed=tuple, prev_info=BluetoothServiceInfoBleak)
     cpdef void _async_on_raw_advertisement(
         self,
         str address,
