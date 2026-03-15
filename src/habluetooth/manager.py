@@ -692,46 +692,37 @@ class BluetoothManager:
             not (service_info.connectable and old_connectable_service_info is None)
             # Than check if advertisement data is the same
             and old_service_info is not None
-            # If the base scanner already determined data hasn't changed
-            # and the source is the same, we can skip the comparison.
-            and (
+        ):
+            if service_info._adv_data_changed == 0:
+                # Base scanner merge determined data hasn't changed.
+                # Only skip if same source — different source means scanner switch.
+                if old_service_info.source is service_info.source:
+                    return
+            elif service_info._adv_data_changed == -1 and not (
+                # Unknown (Bleak/external path) — do field comparison.
+                # The common case for remote scanners is that its the same
+                # object so the identity check short-circuits.
                 (
-                    not service_info._adv_data_changed
-                    and old_service_info.source is service_info.source
+                    service_info.manufacturer_data
+                    is not old_service_info.manufacturer_data
+                    and service_info.manufacturer_data
+                    != old_service_info.manufacturer_data
                 )
                 or (
-                    # Fallback to field-by-field comparison for paths that
-                    # don't go through base_scanner merge (e.g. Bleak/HaScanner).
-                    # The common case is that its the same object for remote
-                    # scanners so the identity check short-circuits.
-                    not (
-                        (
-                            service_info.manufacturer_data
-                            is not old_service_info.manufacturer_data
-                            and service_info.manufacturer_data
-                            != old_service_info.manufacturer_data
-                        )
-                        or (
-                            service_info.service_data
-                            is not old_service_info.service_data
-                            and service_info.service_data
-                            != old_service_info.service_data
-                        )
-                        or (
-                            service_info.service_uuids
-                            is not old_service_info.service_uuids
-                            and service_info.service_uuids
-                            != old_service_info.service_uuids
-                        )
-                        or (
-                            service_info.name is not old_service_info.name
-                            and service_info.name != old_service_info.name
-                        )
-                    )
+                    service_info.service_data is not old_service_info.service_data
+                    and service_info.service_data != old_service_info.service_data
                 )
-            )
-        ):
-            return
+                or (
+                    service_info.service_uuids is not old_service_info.service_uuids
+                    and service_info.service_uuids != old_service_info.service_uuids
+                )
+                or (
+                    service_info.name is not old_service_info.name
+                    and service_info.name != old_service_info.name
+                )
+            ):
+                return
+            # _adv_data_changed == 1: data changed, continue to dispatch
 
         if not service_info.connectable and old_connectable_service_info is not None:
             # Since we have a connectable path and our BleakClient will

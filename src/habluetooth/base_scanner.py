@@ -619,7 +619,7 @@ class BaseHaScanner:
         info.tx_power = tx_power
         info.raw = raw
         if prev_info is None:
-            info._adv_data_changed = True
+            info._adv_data_changed = 1
         else:
             info._adv_data_changed = (
                 info.manufacturer_data is not prev_info.manufacturer_data
