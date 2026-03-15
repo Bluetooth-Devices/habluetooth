@@ -559,7 +559,7 @@ class BaseHaScanner:
                 info.device.name = local_name
                 info.name = local_name if local_name else address
 
-            has_service_uuids = bool(service_uuids)
+            has_service_uuids = len(service_uuids) != 0
             if (
                 has_service_uuids
                 and service_uuids is not prev_info.service_uuids
@@ -571,7 +571,7 @@ class BaseHaScanner:
             else:
                 info.service_uuids = service_uuids
 
-            has_service_data = bool(service_data)
+            has_service_data = len(service_data) != 0
             if has_service_data and service_data is not prev_info.service_data:
                 for uuid, sub_value in service_data.items():
                     if (
@@ -589,7 +589,7 @@ class BaseHaScanner:
             else:
                 info.service_data = service_data
 
-            has_manufacturer_data = bool(manufacturer_data)
+            has_manufacturer_data = len(manufacturer_data) != 0
             if (
                 has_manufacturer_data
                 and manufacturer_data is not prev_info.manufacturer_data
