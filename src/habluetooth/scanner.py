@@ -278,7 +278,7 @@ class HaScanner(BaseHaScanner):
     ) -> None:
         """Handle raw advertisement data."""
         address_str = bytes_mac_to_str(address)
-        self._async_on_raw_advertisement(
+        self._async_on_raw_advertisement_cdef(
             address_str,
             rssi,
             data,

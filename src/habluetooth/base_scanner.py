@@ -466,6 +466,18 @@ class BaseHaScanner:
         details: dict[str, Any],
         advertisement_monotonic_time: _float,
     ) -> None:
+        self._async_on_raw_advertisement_cdef(
+            address, rssi, raw, details, advertisement_monotonic_time
+        )
+
+    def _async_on_raw_advertisement_cdef(
+        self,
+        address: _str,
+        rssi: _int,
+        raw: _bytes,
+        details: dict[str, Any],
+        advertisement_monotonic_time: _float,
+    ) -> None:
         parsed = parse_advertisement_data_bytes(raw)
         self._async_on_advertisement_internal(
             address,
@@ -481,6 +493,30 @@ class BaseHaScanner:
         )
 
     def _async_on_advertisement(
+        self,
+        address: _str,
+        rssi: _int,
+        local_name: _str | None,
+        service_uuids: list[str],
+        service_data: dict[str, bytes],
+        manufacturer_data: dict[int, bytes],
+        tx_power: _int | None,
+        details: dict[Any, Any],
+        advertisement_monotonic_time: _float,
+    ) -> None:
+        self._async_on_advertisement_cdef(
+            address,
+            rssi,
+            local_name,
+            service_uuids,
+            service_data,
+            manufacturer_data,
+            tx_power,
+            details,
+            advertisement_monotonic_time,
+        )
+
+    def _async_on_advertisement_cdef(
         self,
         address: _str,
         rssi: _int,

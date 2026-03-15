@@ -74,8 +74,17 @@ cdef class BaseHaScanner:
     @cython.locals(info=BluetoothServiceInfoBleak)
     cdef dict _build_discovered_device_timestamps(self)
 
-    @cython.locals(parsed=tuple)
     cpdef void _async_on_raw_advertisement(
+        self,
+        str address,
+        int rssi,
+        bytes raw,
+        dict details,
+        double advertisement_monotonic_time
+    )
+
+    @cython.locals(parsed=tuple)
+    cdef void _async_on_raw_advertisement_cdef(
         self,
         str address,
         int rssi,
@@ -111,6 +120,19 @@ cdef class BaseHaScanner:
     )
 
     cpdef void _async_on_advertisement(
+        self,
+        str address,
+        int rssi,
+        str local_name,
+        list service_uuids,
+        dict service_data,
+        dict manufacturer_data,
+        object tx_power,
+        dict details,
+        double advertisement_monotonic_time
+    )
+
+    cdef void _async_on_advertisement_cdef(
         self,
         str address,
         int rssi,
