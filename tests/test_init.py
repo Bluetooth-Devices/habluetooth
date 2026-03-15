@@ -242,13 +242,14 @@ async def test_adv_data_unchanged_dedup_same_source():
     manager._subclass_discover_info = mock_discover
 
     # Second identical advertisement — _adv_data_changed will be UNCHANGED
-    # and same source, so dedup should skip dispatch
+    # and same source, so dedup should skip dispatch.
+    # Use dynamically constructed strings to avoid CPython interning.
     scanner._async_on_advertisement(
-        "AA:BB:CC:DD:EE:FF",
+        "".join(["AA:BB:CC:DD:EE:FF"]),
         -88,
-        "name",
-        ["service_uuid"],
-        {"service_uuid": b"\x01"},
+        "".join(["name"]),
+        ["".join(["service_uuid"])],
+        {"".join(["service_uuid"]): b"\x01"},
         {1: b"\x01"},
         -88,
         details,

@@ -691,7 +691,8 @@ class BluetoothManager:
         # If the advertisement data is the same as the last time we saw it, we
         # don't need to do anything else unless its connectable and we are missing
         # connectable history for the device so we can make it available again
-        # after unavailable callbacks.
+        # after unavailable callbacks. When the source changes, we still need
+        # to dispatch so callbacks see the new source even if data is unchanged.
         if (
             # Ensure its not a connectable device missing from connectable history
             not (service_info.connectable and old_connectable_service_info is None)
@@ -701,7 +702,10 @@ class BluetoothManager:
             if service_info._adv_data_changed == _ADV_DATA_UNCHANGED:
                 # Base scanner merge determined data hasn't changed.
                 # Only skip if same source — different source means scanner switch.
-                if old_service_info.source is service_info.source:
+                if (
+                    old_service_info.source is service_info.source
+                    or old_service_info.source == service_info.source
+                ):
                     return
             elif service_info._adv_data_changed == _ADV_DATA_UNKNOWN and not (
                 # Unknown (Bleak/external path) — do field comparison.

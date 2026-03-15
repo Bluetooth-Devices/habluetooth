@@ -557,7 +557,7 @@ class BaseHaScanner:
             if prev_name is not None and (
                 prev_name is local_name
                 or not local_name
-                or len(prev_name) > len(local_name)
+                or len(prev_name) >= len(local_name)
             ):
                 info.name = prev_name
             else:
