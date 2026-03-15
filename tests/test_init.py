@@ -1,5 +1,6 @@
-from unittest.mock import ANY
+from unittest.mock import ANY, MagicMock
 
+import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
@@ -216,10 +217,13 @@ def test_create_ha_scanner():
     assert isinstance(scanner, HaScanner)
 
 
-def test_adv_data_unchanged_dedup_same_source():
+@pytest.mark.asyncio
+async def test_adv_data_unchanged_dedup_same_source():
     """Test that _adv_data_changed=UNCHANGED skips dedup when source matches."""
+    manager = get_manager()
     connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
     scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel = manager.async_register_scanner(scanner)
     details = scanner._details | {}
 
     # First advertisement — seeds _all_history
@@ -234,7 +238,11 @@ def test_adv_data_unchanged_dedup_same_source():
         details,
         1.0,
     )
+    mock_discover = MagicMock()
+    manager._subclass_discover_info = mock_discover
+
     # Second identical advertisement — _adv_data_changed will be UNCHANGED
+    # and same source, so dedup should skip dispatch
     scanner._async_on_advertisement(
         "AA:BB:CC:DD:EE:FF",
         -88,
@@ -246,9 +254,14 @@ def test_adv_data_unchanged_dedup_same_source():
         details,
         2.0,
     )
+    # Dedup should have returned early — _subclass_discover_info not called
+    mock_discover.assert_not_called()
+
+    cancel()
 
 
-def test_adv_data_unchanged_different_source():
+@pytest.mark.asyncio
+async def test_adv_data_unchanged_different_source():
     """Test _adv_data_changed=UNCHANGED with different source falls through."""
     manager = get_manager()
     connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
@@ -273,6 +286,9 @@ def test_adv_data_unchanged_different_source():
         details,
         1.0,
     )
+    mock_discover = MagicMock()
+    manager._subclass_discover_info = mock_discover
+
     # Scanner 2 sends same data — _adv_data_changed=UNCHANGED from scanner2's
     # perspective, but _all_history has source1's info. The stale time check
     # will prefer the new source since old is stale (time diff > fallback max).
@@ -288,11 +304,17 @@ def test_adv_data_unchanged_different_source():
         1000.0,
     )
 
+    # Different source with stale old data — should dispatch (source switch)
+    mock_discover.assert_called_once()
+    # _all_history should now have source2's info
+    assert manager._all_history["AA:BB:CC:DD:EE:FF"].source == "source2"
+
     cancel1()
     cancel2()
 
 
-def test_adv_data_unknown_dedup():
+@pytest.mark.asyncio
+async def test_adv_data_unknown_dedup():
     """Test that _adv_data_changed=UNKNOWN falls back to field comparison."""
     manager = get_manager()
     connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
@@ -338,6 +360,14 @@ def test_adv_data_unknown_dedup():
         tx_power=-88,
     )
     info2._adv_data_changed = ADV_DATA_UNKNOWN
+
+    mock_discover = MagicMock()
+    manager._subclass_discover_info = mock_discover
+
     manager.scanner_adv_received(info2)
+
+    # Same data with ADV_DATA_UNKNOWN — field comparison should detect
+    # no change and dedup (return early)
+    mock_discover.assert_not_called()
 
     cancel()

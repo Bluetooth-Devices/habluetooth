@@ -574,7 +574,9 @@ class BaseHaScanner:
             elif not has_service_uuids:
                 info.service_uuids = prev_info.service_uuids
             else:
-                info.service_uuids = service_uuids
+                # Content is the same — reuse prev_info's object to
+                # preserve identity for downstream dedup checks.
+                info.service_uuids = prev_info.service_uuids
 
             has_service_data = bool(service_data)
             if has_service_data and service_data is not prev_info.service_data:
