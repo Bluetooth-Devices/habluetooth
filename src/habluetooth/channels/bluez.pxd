@@ -22,6 +22,7 @@ cdef class BluetoothMGMTProtocol:
     cdef object _on_connection_lost
     cdef object _is_shutting_down
     cdef dict _pending_commands
+    cdef public object _sock
 
     @cython.locals(bytes_data=bytes)
     cdef void _add_to_buffer(self, object data) except *
