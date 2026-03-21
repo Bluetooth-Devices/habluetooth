@@ -903,20 +903,20 @@ async def test_inject_100_bleak_changed_advertisements(
     @benchmark
     def run():
         for adv in advs:
-            info = BluetoothServiceInfoBleak(
-                name=adv.local_name or device.name or device.address,
-                address=device.address,
-                rssi=adv.rssi,
-                manufacturer_data=adv.manufacturer_data,
-                service_data=adv.service_data,
-                service_uuids=adv.service_uuids,
-                source="esp32",
-                device=device,
-                advertisement=adv,
-                connectable=True,
-                time=_now,
-                tx_power=adv.tx_power,
-            )
+            info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
+            info.name = adv.local_name or device.name or device.address
+            info.address = device.address
+            info.rssi = adv.rssi
+            info.manufacturer_data = adv.manufacturer_data
+            info.service_data = adv.service_data
+            info.service_uuids = adv.service_uuids
+            info.source = "esp32"
+            info.device = device
+            info._advertisement = adv
+            info.connectable = True
+            info.time = _now
+            info.tx_power = adv.tx_power
+            info.raw = None
             manager.scanner_adv_received(info)
 
     cancel()
