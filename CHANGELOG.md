@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.10.3 (2026-03-21)
+
+### Bug fixes
+
+
+- Ensure bluez helper is cython compiled ([`8be8853`](https://github.com/Bluetooth-Devices/habluetooth/commit/8be885394247e4b045fe57ebec0b5f852cec255b))
+
+
 ## v5.10.2 (2026-03-15)
 
 ### Bug fixes
