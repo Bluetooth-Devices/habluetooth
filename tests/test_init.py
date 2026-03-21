@@ -427,3 +427,139 @@ async def test_dedup_same_data_via_scanner_adv_received():
     mock_discover.assert_not_called()
 
     cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_clear_advertisement_history():
+    """Test clearing advertisement history allows same data to trigger callbacks."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel = manager.async_register_scanner(scanner)
+
+    address = "AA:BB:CC:DD:EE:FF"
+    device = BLEDevice(address, "name", {})
+    mfr_data = {1: b"\x01"}
+    svc_data = {"service_uuid": b"\x01"}
+    svc_uuids = ["service_uuid"]
+
+    # First advertisement — seeds history
+    info1 = BluetoothServiceInfoBleak(
+        name="name",
+        address=address,
+        rssi=-88,
+        manufacturer_data=mfr_data,
+        service_data=svc_data,
+        service_uuids=svc_uuids,
+        source="source1",
+        device=device,
+        advertisement=None,
+        connectable=True,
+        time=1.0,
+        tx_power=-88,
+    )
+    manager.scanner_adv_received(info1)
+
+    mock_discover = MagicMock()
+    manager._subclass_discover_info = mock_discover
+
+    # Same data again — should be deduped
+    info2 = BluetoothServiceInfoBleak(
+        name="name",
+        address=address,
+        rssi=-88,
+        manufacturer_data=mfr_data,
+        service_data=svc_data,
+        service_uuids=svc_uuids,
+        source="source1",
+        device=device,
+        advertisement=None,
+        connectable=True,
+        time=2.0,
+        tx_power=-88,
+    )
+    manager.scanner_adv_received(info2)
+    mock_discover.assert_not_called()
+
+    # Clear history — next advertisement should be treated as new
+    manager.async_clear_advertisement_history(address)
+
+    info3 = BluetoothServiceInfoBleak(
+        name="name",
+        address=address,
+        rssi=-88,
+        manufacturer_data=mfr_data,
+        service_data=svc_data,
+        service_uuids=svc_uuids,
+        source="source1",
+        device=device,
+        advertisement=None,
+        connectable=True,
+        time=3.0,
+        tx_power=-88,
+    )
+    manager.scanner_adv_received(info3)
+    mock_discover.assert_called_once()
+
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_clear_advertisement_history_clears_scanner_merging():
+    """Test that clearing history resets UUID merging in scanners."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel = manager.async_register_scanner(scanner)
+
+    address = "AA:BB:CC:DD:EE:FF"
+
+    # Seed scanner's _previous_service_info with state A UUID
+    info_a = BluetoothServiceInfoBleak(
+        name="name",
+        address=address,
+        rssi=-88,
+        manufacturer_data={},
+        service_data={},
+        service_uuids=["0000e800-0000-1000-8000-00805f9b34fb"],
+        source="source1",
+        device=BLEDevice(address, "name", {}),
+        advertisement=None,
+        connectable=True,
+        time=1.0,
+        tx_power=-88,
+    )
+    manager.scanner_adv_received(info_a)
+    scanner._previous_service_info[address] = info_a
+
+    # Seed with state B UUID — simulates merged set
+    info_ab = BluetoothServiceInfoBleak(
+        name="name",
+        address=address,
+        rssi=-88,
+        manufacturer_data={},
+        service_data={},
+        service_uuids=[
+            "0000e800-0000-1000-8000-00805f9b34fb",
+            "0000e000-0000-1000-8000-00805f9b34fb",
+        ],
+        source="source1",
+        device=BLEDevice(address, "name", {}),
+        advertisement=None,
+        connectable=True,
+        time=2.0,
+        tx_power=-88,
+    )
+    manager.scanner_adv_received(info_ab)
+    scanner._previous_service_info[address] = info_ab
+
+    # Clear history
+    manager.async_clear_advertisement_history(address)
+
+    # Verify scanner's _previous_service_info is cleared
+    assert address not in scanner._previous_service_info
+    # Verify manager histories are cleared
+    assert address not in manager._all_history
+    assert address not in manager._connectable_history
+
+    cancel()

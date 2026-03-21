@@ -738,6 +738,20 @@ class BluetoothManager:
 
         self._subclass_discover_info(service_info)
 
+    def async_clear_advertisement_history(self, address: str) -> None:
+        """
+        Clear cached advertisement history for a device.
+
+        Causes the next advertisement from this address to be treated as new
+        data, bypassing both the advertisement-merging logic in scanners and
+        the change-detection guard. Intended for devices that encode state in
+        mutually-exclusive service UUIDs.
+        """
+        self._all_history.pop(address, None)
+        self._connectable_history.pop(address, None)
+        for scanner in self._sources.values():
+            scanner._previous_service_info.pop(address, None)
+
     def _discover_service_info(self, service_info: BluetoothServiceInfoBleak) -> None:
         """
         Discover a new service info.
