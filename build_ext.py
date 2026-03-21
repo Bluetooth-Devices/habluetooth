@@ -57,6 +57,7 @@ def build(setup_kwargs: Any) -> None:
                 "ext_modules": cythonize(
                     EXTENSIONS,
                     compiler_directives={"language_level": "3"},  # Python 3
+                    annotate=bool(os.environ.get("CYTHON_ANNOTATE")),
                 ),
                 "cmdclass": {"build_ext": BuildExt},
             }
