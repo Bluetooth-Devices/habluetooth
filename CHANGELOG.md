@@ -1,5 +1,16 @@
 # Changelog
 
+## v5.11.0 (2026-03-21)
+
+### Features
+
+
+- Add async_clear_advertisement_history to bluetoothmanager ([`1fb9e01`](https://github.com/Bluetooth-Devices/habluetooth/commit/1fb9e019dd358c9c352212d89ff0fdfeb7247972))
+
+
+- Add python 3.14 support ([`cd51eb8`](https://github.com/Bluetooth-Devices/habluetooth/commit/cd51eb8c4074ab83697434b1178d4df0eec30a61))
+
+
 ## v5.10.3 (2026-03-21)
 
 ### Bug fixes
