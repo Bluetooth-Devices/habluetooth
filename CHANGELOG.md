@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.11.1 (2026-03-22)
+
+### Bug fixes
+
+
+- Revert "feat: add python 3.14 support" ([`2cc4541`](https://github.com/Bluetooth-Devices/habluetooth/commit/2cc454145415da40001f181805c197c1035ca82a))
+
+
 ## v5.11.0 (2026-03-21)
 
 ### Features
