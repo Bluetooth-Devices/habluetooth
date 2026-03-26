@@ -170,9 +170,7 @@ class HaBleakScannerWrapper(BaseBleakScanner):
         """
         self._advertisement_data_callback = callback
         self._setup_detection_callback()
-        if TYPE_CHECKING:
-            assert self._detection_cancel is not None
-        return self._detection_cancel
+        return self._cancel_callback
 
     def _setup_detection_callback(self) -> None:
         """Set up the detection callback."""
