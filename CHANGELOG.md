@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.11.2 (2026-03-27)
+
+### Bug fixes
+
+
+- Ensure we don't call cleanup twice ([`fbbe17e`](https://github.com/Bluetooth-Devices/habluetooth/commit/fbbe17e13e63e6c914d8e58f07a0d14e3f914474))
+
+
 ## v5.11.1 (2026-03-22)
 
 ### Bug fixes
