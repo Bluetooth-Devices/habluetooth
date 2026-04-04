@@ -642,6 +642,24 @@ async def test_discovered_devices_and_advertisement_data(
 
 
 @pytest.mark.asyncio
+async def test_advertisement_data_iterator(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Ensure advertisement_data async iterator yields devices."""
+    _, _cancel_hci0, _cancel_hci1 = _generate_scanners_with_fake_devices()
+    scanner = bleak.BleakScanner()
+    devices_found: dict[str, tuple[BLEDevice, AdvertisementData]] = {}
+    async for device, adv_data in scanner.advertisement_data():
+        devices_found[device.address] = (device, adv_data)
+        if "00:00:00:00:00:01" in devices_found:
+            break
+    assert "00:00:00:00:00:01" in devices_found
+    assert devices_found["00:00:00:00:00:01"][1] is not None
+
+
+@pytest.mark.asyncio
 async def test_discover(
     two_adapters: None,
     enable_bluetooth: None,
