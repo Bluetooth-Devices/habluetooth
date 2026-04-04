@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.12.0 (2026-04-04)
+
+### Features
+
+
+- Implement find_device_by_filter in hableakscannerwrapper ([`ac2e258`](https://github.com/Bluetooth-Devices/habluetooth/commit/ac2e2584271eff55615420f38fde2f0231f10320))
+
+
 ## v5.11.2 (2026-03-27)
 
 ### Bug fixes
