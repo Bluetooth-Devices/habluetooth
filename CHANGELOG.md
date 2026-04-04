@@ -1,5 +1,16 @@
 # Changelog
 
+## v5.13.0 (2026-04-04)
+
+### Features
+
+
+- Implement async context manager protocol in hableakscannerwrapper ([`c9341d2`](https://github.com/Bluetooth-Devices/habluetooth/commit/c9341d29f8f9335ede23908b450d3ba57a0db20d))
+
+
+- Implement find_device_by_name in hableakscannerwrapper ([`151b71c`](https://github.com/Bluetooth-Devices/habluetooth/commit/151b71c56f62b9952be5a7a4e5899034795169e7))
+
+
 ## v5.12.0 (2026-04-04)
 
 ### Features
