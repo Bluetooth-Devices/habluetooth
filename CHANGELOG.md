@@ -1,5 +1,16 @@
 # Changelog
 
+## v5.14.0 (2026-04-04)
+
+### Features
+
+
+- Implement advertisement_data async iterator in hableakscannerwrapper ([`e6e3727`](https://github.com/Bluetooth-Devices/habluetooth/commit/e6e3727cc774efd6f8ddd1c1140c9ac42bdd6aee))
+
+
+- Implement discovered_devices_and_advertisement_data in hableakscannerwrapper ([`7ecd2d8`](https://github.com/Bluetooth-Devices/habluetooth/commit/7ecd2d8a4ce5397d39b737cd7367217ee4e196d1))
+
+
 ## v5.13.0 (2026-04-04)
 
 ### Features
