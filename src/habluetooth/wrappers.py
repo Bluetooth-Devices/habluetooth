@@ -101,6 +101,17 @@ class HaBleakScannerWrapper(BaseBleakScanner):
         ) or manager.async_ble_device_from_address(device_identifier, False)
 
     @classmethod
+    async def find_device_by_name(
+        cls, name: str, timeout: float = 10.0, **kwargs: Any
+    ) -> BLEDevice | None:
+        """Find a device by name."""
+        return await cls.find_device_by_filter(
+            lambda d, ad: ad.local_name == name,
+            timeout=timeout,
+            **kwargs,
+        )
+
+    @classmethod
     async def find_device_by_filter(
         cls,
         filterfunc: AdvertisementDataFilter,
