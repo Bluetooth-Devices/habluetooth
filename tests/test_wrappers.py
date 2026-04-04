@@ -614,6 +614,18 @@ async def test_find_device_by_name_no_match(
 
 
 @pytest.mark.asyncio
+async def test_async_context_manager(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Ensure HaBleakScannerWrapper supports async context manager protocol."""
+    _, _cancel_hci0, _cancel_hci1 = _generate_scanners_with_fake_devices()
+    async with bleak.BleakScanner() as scanner:
+        assert scanner.discovered_devices
+
+
+@pytest.mark.asyncio
 async def test_discover(
     two_adapters: None,
     enable_bluetooth: None,
