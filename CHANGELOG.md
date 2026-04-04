@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.0.0 (2026-04-04)
+
+### Features
+
+
+- Remove basebleakscanner inheritance and register_detection_callback ([`87b89f1`](https://github.com/Bluetooth-Devices/habluetooth/commit/87b89f158226c69d1ac2561bbd43d730b699c6b9))
+
+
 ## v5.14.0 (2026-04-04)
 
 ### Features
