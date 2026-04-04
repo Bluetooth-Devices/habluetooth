@@ -153,6 +153,15 @@ class HaBleakScannerWrapper(BaseBleakScanner):
     async def start(self, *args: Any, **kwargs: Any) -> None:
         """Start scanning for devices."""
 
+    async def __aenter__(self) -> HaBleakScannerWrapper:
+        """Enter the context manager."""
+        await self.start()
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        """Exit the context manager."""
+        await self.stop()
+
     def _map_filters(self, *args: Any, **kwargs: Any) -> bool:
         """Map the filters."""
         mapped_filters = {}
