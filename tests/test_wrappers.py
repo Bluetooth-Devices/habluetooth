@@ -590,6 +590,30 @@ async def test_find_device_by_filter_no_match(
 
 
 @pytest.mark.asyncio
+async def test_find_device_by_name(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Ensure find_device_by_name finds a device matching the name."""
+    _, _cancel_hci0, _cancel_hci1 = _generate_scanners_with_fake_devices()
+    device = await bleak.BleakScanner.find_device_by_name("any")
+    assert device is not None
+
+
+@pytest.mark.asyncio
+async def test_find_device_by_name_no_match(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Ensure find_device_by_name returns None when no device matches."""
+    _, _cancel_hci0, _cancel_hci1 = _generate_scanners_with_fake_devices()
+    device = await bleak.BleakScanner.find_device_by_name("nonexistent")
+    assert device is None
+
+
+@pytest.mark.asyncio
 async def test_discover(
     two_adapters: None,
     enable_bluetooth: None,
