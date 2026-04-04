@@ -18,7 +18,6 @@ from bleak.backends.scanner import (
     AdvertisementData,
     AdvertisementDataCallback,
     AdvertisementDataFilter,
-    BaseBleakScanner,
 )
 from bleak_retry_connector import (
     ble_device_description,
@@ -65,7 +64,7 @@ class _HaWrappedBleakBackend:
     backend_name: str | None = None
 
 
-class HaBleakScannerWrapper(BaseBleakScanner):
+class HaBleakScannerWrapper:
     """A wrapper that uses the single instance."""
 
     def __init__(
@@ -86,9 +85,9 @@ class HaBleakScannerWrapper(BaseBleakScanner):
             **kwargs,
         }
         self._map_filters(*args, **remapped_kwargs)
-        super().__init__(
-            detection_callback=detection_callback, service_uuids=service_uuids or []
-        )
+        if detection_callback is not None:
+            self._advertisement_data_callback = detection_callback
+            self._setup_detection_callback()
 
     @classmethod
     async def find_device_by_address(
@@ -218,27 +217,12 @@ class HaBleakScannerWrapper(BaseBleakScanner):
         finally:
             cancel()
 
-    def register_detection_callback(
-        self, callback: AdvertisementDataCallback | None
-    ) -> Callable[[], None]:
-        """
-        Register a detection callback.
-
-        The callback is called when a device is discovered or has a property changed.
-
-        This method takes the callback and registers it with the long running scanner.
-        """
-        self._advertisement_data_callback = callback
-        self._setup_detection_callback()
-        return self._cancel_callback
-
     def _setup_detection_callback(self) -> None:
         """Set up the detection callback."""
         if self._advertisement_data_callback is None:
             return
         callback = self._advertisement_data_callback
         self._cancel_callback()
-        super().register_detection_callback(self._advertisement_data_callback)
         manager = get_manager()
 
         if not inspect.iscoroutinefunction(callback):
