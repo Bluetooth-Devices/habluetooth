@@ -626,6 +626,22 @@ async def test_async_context_manager(
 
 
 @pytest.mark.asyncio
+async def test_discovered_devices_and_advertisement_data(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Ensure discovered_devices_and_advertisement_data works."""
+    _, _cancel_hci0, _cancel_hci1 = _generate_scanners_with_fake_devices()
+    scanner = bleak.BleakScanner()
+    result = scanner.discovered_devices_and_advertisement_data
+    assert "00:00:00:00:00:01" in result
+    device, adv_data = result["00:00:00:00:00:01"]
+    assert device.address == "00:00:00:00:00:01"
+    assert adv_data is not None
+
+
+@pytest.mark.asyncio
 async def test_discover(
     two_adapters: None,
     enable_bluetooth: None,

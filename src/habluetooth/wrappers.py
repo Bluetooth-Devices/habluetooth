@@ -193,6 +193,16 @@ class HaBleakScannerWrapper(BaseBleakScanner):
         """Return a list of discovered devices."""
         return list(get_manager().async_discovered_devices(True))
 
+    @property
+    def discovered_devices_and_advertisement_data(
+        self,
+    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
+        """Return a dict of discovered devices and their advertisement data."""
+        return {
+            info.address: (info.device, info.advertisement)
+            for info in get_manager().async_discovered_service_info(True)
+        }
+
     def register_detection_callback(
         self, callback: AdvertisementDataCallback | None
     ) -> Callable[[], None]:
