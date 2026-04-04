@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final, Literal, overload
@@ -202,6 +202,21 @@ class HaBleakScannerWrapper(BaseBleakScanner):
             info.address: (info.device, info.advertisement)
             for info in get_manager().async_discovered_service_info(True)
         }
+
+    async def advertisement_data(
+        self,
+    ) -> AsyncGenerator[tuple[BLEDevice, AdvertisementData], None]:
+        """Yield devices and advertisement data as they are discovered."""
+        queue: asyncio.Queue[tuple[BLEDevice, AdvertisementData]] = asyncio.Queue()
+        cancel = get_manager().async_register_bleak_callback(
+            lambda bd, ad: queue.put_nowait((bd, ad)),
+            self._mapped_filters,
+        )
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            cancel()
 
     def register_detection_callback(
         self, callback: AdvertisementDataCallback | None
