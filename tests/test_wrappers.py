@@ -561,6 +561,35 @@ async def test_find_device_by_address(
 
 
 @pytest.mark.asyncio
+async def test_find_device_by_filter(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Ensure find_device_by_filter finds a device matching the filter."""
+    _, _cancel_hci0, _cancel_hci1 = _generate_scanners_with_fake_devices()
+    device = await bleak.BleakScanner.find_device_by_filter(
+        lambda d, ad: d.address == "00:00:00:00:00:01"
+    )
+    assert device is not None
+    assert device.address == "00:00:00:00:00:01"
+
+
+@pytest.mark.asyncio
+async def test_find_device_by_filter_no_match(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Ensure find_device_by_filter returns None when no device matches."""
+    _, _cancel_hci0, _cancel_hci1 = _generate_scanners_with_fake_devices()
+    device = await bleak.BleakScanner.find_device_by_filter(
+        lambda d, ad: d.address == "DE:AD:BE:EF:00:00"
+    )
+    assert device is None
+
+
+@pytest.mark.asyncio
 async def test_discover(
     two_adapters: None,
     enable_bluetooth: None,

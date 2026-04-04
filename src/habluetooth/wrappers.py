@@ -17,6 +17,7 @@ from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import (
     AdvertisementData,
     AdvertisementDataCallback,
+    AdvertisementDataFilter,
     BaseBleakScanner,
 )
 from bleak_retry_connector import (
@@ -98,6 +99,20 @@ class HaBleakScannerWrapper(BaseBleakScanner):
         return manager.async_ble_device_from_address(
             device_identifier, True
         ) or manager.async_ble_device_from_address(device_identifier, False)
+
+    @classmethod
+    async def find_device_by_filter(
+        cls,
+        filterfunc: AdvertisementDataFilter,
+        timeout: float = 10.0,
+        **kwargs: Any,
+    ) -> BLEDevice | None:
+        """Find a device by filter."""
+        manager = get_manager()
+        for info in manager.async_discovered_service_info(False):
+            if filterfunc(info.device, info.advertisement):
+                return info.device
+        return None
 
     @overload
     @classmethod
