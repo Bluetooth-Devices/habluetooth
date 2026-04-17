@@ -272,6 +272,27 @@ async def test_test_switch_adapters_when_out_of_slots(
 
 
 @pytest.mark.asyncio
+async def test_backend_id_property(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Ensure BleakClient.backend_id is readable before and after connect."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+    client = bleak.BleakClient(ble_device)
+    # Before connect(), backend_id must be readable (regression for #399).
+    assert client.backend_id == ""
+    with patch.object(FakeBleakClient, "is_connected", return_value=True):
+        await client.connect()
+    # After connect(), backend_id reflects the selected backend.
+    assert client.backend_id
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
 async def test_release_slot_on_connect_failure(
     two_adapters: None,
     enable_bluetooth: None,
