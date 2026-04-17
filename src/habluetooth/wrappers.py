@@ -12,6 +12,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Final, Literal, overload
 
 from bleak import BleakClient, BleakError, normalize_uuid_str
+from bleak.backends import BleakBackend
 from bleak.backends.client import BaseBleakClient, get_platform_client_backend_type
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import (
@@ -61,7 +62,7 @@ class _HaWrappedBleakBackend:
     scanner: BaseHaScanner
     client: type[BaseBleakClient]
     source: str | None
-    backend_name: str | None = None
+    backend_name: BleakBackend | str
 
 
 class HaBleakScannerWrapper:
@@ -288,6 +289,10 @@ class HaBleakClientWrapper(BleakClient):
         # Check if this client is being created through establish_connection
         # by checking for the '_is_retry_client' marker in kwargs
         self._is_retry_client = kwargs.pop("_is_retry_client", False)
+        # bleak 2.0+ BleakClient.backend_id reads self._backend_id, but since
+        # we skip super().__init__() it is never set. The real backend is not
+        # chosen until connect(), so seed with "" and update there.
+        self._backend_id: BleakBackend | str = ""
 
     @property
     def is_connected(self) -> bool:
@@ -395,6 +400,7 @@ class HaBleakClientWrapper(BleakClient):
         wrapped_backend = self._async_get_best_available_backend_and_device(manager)
         device = wrapped_backend.device
         scanner = wrapped_backend.scanner
+        self._backend_id = wrapped_backend.backend_name
         self._backend = wrapped_backend.client(
             device,
             disconnected_callback=self._make_disconnected_callback(
