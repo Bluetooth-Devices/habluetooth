@@ -62,7 +62,7 @@ class _HaWrappedBleakBackend:
     scanner: BaseHaScanner
     client: type[BaseBleakClient]
     source: str | None
-    backend_name: str | None = None
+    backend_name: BleakBackend | str
 
 
 class HaBleakScannerWrapper:
@@ -400,8 +400,7 @@ class HaBleakClientWrapper(BleakClient):
         wrapped_backend = self._async_get_best_available_backend_and_device(manager)
         device = wrapped_backend.device
         scanner = wrapped_backend.scanner
-        if wrapped_backend.backend_name is not None:
-            self._backend_id = wrapped_backend.backend_name
+        self._backend_id = wrapped_backend.backend_name
         self._backend = wrapped_backend.client(
             device,
             disconnected_callback=self._make_disconnected_callback(
