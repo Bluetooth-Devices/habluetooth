@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.0.1 (2026-04-17)
+
+### Bug fixes
+
+
+- Initialize _backend_id so hableakclientwrapper.backend_id works ([`8919d40`](https://github.com/Bluetooth-Devices/habluetooth/commit/8919d402c967ddda3850a2a0f86e804a972af076))
+
+
 ## v6.0.0 (2026-04-04)
 
 ### Features
