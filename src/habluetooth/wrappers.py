@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import warnings
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from functools import partial
@@ -202,6 +203,35 @@ class HaBleakScannerWrapper:
             info.address: (info.device, info.advertisement)
             for info in get_manager().async_discovered_service_info(True)
         }
+
+    def register_detection_callback(
+        self, callback: AdvertisementDataCallback | None
+    ) -> Callable[[], None]:
+        """
+        Register a detection callback (deprecated).
+
+        bleak removed this method from ``BleakScanner``; it remains here only
+        so integrations that have not yet migrated keep working. Pass
+        ``detection_callback`` to the constructor instead. This shim will be
+        removed in a future habluetooth release.
+        """
+        warnings.warn(
+            "HaBleakScannerWrapper.register_detection_callback() is deprecated "
+            "and will be removed in a future release; bleak already removed "
+            "this method from BleakScanner. Pass detection_callback to the "
+            "HaBleakScannerWrapper constructor instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        _LOGGER.warning(
+            "HaBleakScannerWrapper.register_detection_callback() is deprecated "
+            "and will be removed in a future release; bleak already removed "
+            "this method from BleakScanner. Pass detection_callback to the "
+            "HaBleakScannerWrapper constructor instead."
+        )
+        self._advertisement_data_callback = callback
+        self._setup_detection_callback()
+        return self._cancel_callback
 
     async def advertisement_data(
         self,

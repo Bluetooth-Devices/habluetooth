@@ -774,6 +774,46 @@ async def test_wrapped_instance_with_filter(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_register_detection_callback_deprecated(
+    register_hci0_scanner: None,
+) -> None:
+    """Test the deprecated register_detection_callback still works and warns."""
+    detected: list[tuple[BLEDevice, AdvertisementData]] = []
+
+    def _device_detected(
+        device: BLEDevice, advertisement_data: AdvertisementData
+    ) -> None:
+        """Handle a detected device."""
+        detected.append((device, advertisement_data))
+
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand")
+    switchbot_adv = generate_advertisement_data(
+        local_name="wohand",
+        service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
+        manufacturer_data={89: b"\xd8.\xad\xcd\r\x85"},
+        service_data={"00000d00-0000-1000-8000-00805f9b34fb": b"H\x10c"},
+    )
+
+    assert _get_manager() is not None
+    scanner = HaBleakScannerWrapper(
+        service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
+    )
+
+    with pytest.warns(DeprecationWarning, match="register_detection_callback"):
+        cancel = scanner.register_detection_callback(_device_detected)
+
+    inject_advertisement(switchbot_device, switchbot_adv)
+    await asyncio.sleep(0)
+    assert len(detected) == 1
+
+    cancel()
+    inject_advertisement(switchbot_device, switchbot_adv)
+    await asyncio.sleep(0)
+    assert len(detected) == 1
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_wrapped_instance_with_service_uuids(
     register_hci0_scanner: None,
 ) -> None:
