@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.1.0 (2026-04-19)
+
+### Features
+
+
+- Restore register_detection_callback as a deprecated shim ([`7fcc147`](https://github.com/Bluetooth-Devices/habluetooth/commit/7fcc147b7e00249c3489c8ce70eac7fd4725372c))
+
+
 ## v6.0.1 (2026-04-17)
 
 ### Bug fixes
