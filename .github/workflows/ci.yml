@@ -92,7 +92,7 @@ jobs:
           REQUIRE_CYTHON=1 poetry install --only=main,dev
         shell: bash
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@d872884a306dd4853acf0f584f4b706cf0cc72a2 # v3
+        uses: CodSpeedHQ/action@c381be0bfd20e844fb45594f6aa182ffcd94545c # v3
         with:
           token: ${{ secrets.CODSPEED_TOKEN }}
           run: poetry run pytest --no-cov -vvvvv --codspeed
@@ -136,7 +136,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         if: steps.release.outputs.released == 'true'
 
       - name: Publish package distributions to GitHub Releases
@@ -240,12 +240,12 @@ jobs:
             echo "CIBW_BUILD=${{ matrix.pyver }}*" >> $GITHUB_ENV
           fi
       - name: Build wheels
-        uses: pypa/cibuildwheel@ee02a1537ce3071a004a6b08c41e72f0fdc42d9a # v3.4.0
+        uses: pypa/cibuildwheel@8d2b08b68458a16aeb24b64e68a09ab1c8e82084 # v3.4.1
         env:
           CIBW_SKIP: cp36-* cp37-* cp38-* cp39-* cp310-* pp* ${{ matrix.musl == 'musllinux' && '*manylinux*' || '*musllinux*' }}
           REQUIRE_CYTHON: 1
 
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.musl }}-${{ matrix.pyver }}-${{ matrix.qemu }}
           path: ./wheelhouse/*.whl
@@ -266,4 +266,4 @@ jobs:
           pattern: wheels-*
           merge-multiple: true
 
-      - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
