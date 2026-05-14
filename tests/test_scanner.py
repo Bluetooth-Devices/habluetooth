@@ -65,8 +65,10 @@ if platform.system() == "Linux":
         ]
     )
 else:
-    # On other platforms, we can use a simple mock
-    scanner.PASSIVE_SCANNER_ARGS = Mock()
+    # On other platforms, use an empty dict — BlueZScannerArgs is a TypedDict
+    # at runtime, so the production code's ``dict(PASSIVE_SCANNER_ARGS)`` copy
+    # needs a real mapping, not a Mock.
+    scanner.PASSIVE_SCANNER_ARGS = {}
 # If the adapter is in a stuck state the following errors are raised:
 NEED_RESET_ERRORS = [
     "org.bluez.Error.Failed",
