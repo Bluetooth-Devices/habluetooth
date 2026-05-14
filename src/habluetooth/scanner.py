@@ -137,7 +137,7 @@ def create_bleak_scanner(
         # Only Linux supports multiple adapters
         bluez_args: BlueZScannerArgs = {}
         if scanning_mode == BluetoothScanningMode.PASSIVE:
-            bluez_args = dict(PASSIVE_SCANNER_ARGS)  # type: ignore[assignment]
+            bluez_args = dict(PASSIVE_SCANNER_ARGS)
         if adapter:
             # bleak 3.0 deprecated the top-level ``adapter`` kwarg in favor of
             # the ``bluez`` kwarg; this form is supported across bleak 1.x-3.x.
