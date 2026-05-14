@@ -51,7 +51,8 @@ def generate_ble_device(
     details: Any | None = None,
     **kwargs: Any,
 ) -> BLEDevice:
-    """Generate a BLEDevice with defaults.
+    """
+    Generate a BLEDevice with defaults.
 
     Extra kwargs (e.g. legacy ``rssi``) are silently dropped — bleak 3.0
     removed those fields from BLEDevice, and passing them now warns.
