@@ -53,7 +53,7 @@ Each "hot" module has a paired `.pxd` declaring its Cython attributes. See
   advertising interval and feeds expiry decisions. Until it has
   `ADVERTISING_TIMES_NEEDED` samples it uses a fallback timeout.
 - **Wrappers** (`wrappers.py`) — `HaBleakClientWrapper` /
-  `HaBleakScannerWrapper` are the *public* Bleak-compatible facade. External
+  `HaBleakScannerWrapper` are the _public_ Bleak-compatible facade. External
   callers (HA integrations) talk to these, not to scanners directly.
 - **Allocations** — for proxy scanners (ESPHome) the manager tracks per-source
   slot allocations via `async_on_allocation_changed`. This state is push-only
@@ -167,7 +167,7 @@ Tests use `pytest-asyncio` (no auto-mode — mark coroutines explicitly) and
   `pyproject.toml`, `src/habluetooth/__init__.py:__version__`,
   `docs/conf.py:release`. **Do not bump versions by hand.**
 - PRs target `main`. CI runs the matrix `{3.11, 3.12, 3.13, 3.14, 3.14t} ×
-  {linux, macos, windows} × {skip_cython, use_cython}` — flaky breakage in
+{linux, macos, windows} × {skip_cython, use_cython}` — flaky breakage in
   one cell usually means a Cython annotation got too aggressive.
 
 ## Gotchas <a id="allocations"></a>
@@ -183,7 +183,7 @@ Tests use `pytest-asyncio` (no auto-mode — mark coroutines explicitly) and
   have a connect attempt in flight right now".
 - **bleak 3.0 deprecations:**
   - `BleakScanner(adapter="hciN")` is gone; use `BleakScanner(bluez={"adapter":
-    "hciN"})`. When also passing `PASSIVE_SCANNER_ARGS` (itself a
+"hciN"})`. When also passing `PASSIVE_SCANNER_ARGS` (itself a
     `BlueZScannerArgs`), merge — don't overwrite.
   - `BLEDevice(..., rssi=-NN)` is gone; bleak 3.0 only accepts
     `(address, name, details)`. RSSI lives on `AdvertisementData` only.
