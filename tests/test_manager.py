@@ -13,6 +13,7 @@ from freezegun import freeze_time
 
 from habluetooth import (
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
+    STUCK_ALLOCATION_THRESHOLD_SECONDS,
     TRACKER_BUFFERING_WOBBLE_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
     BluetoothManager,
@@ -539,6 +540,7 @@ async def test_diagnostics(register_hci0_scanner: None) -> None:
                 "source": "AA:BB:CC:DD:EE:00",
             }
         },
+        "stuck_allocations": [],
         "connectable_history": ANY,
         "scanners": [
             {
@@ -1406,3 +1408,133 @@ async def test_is_operating_degraded_after_permission_error() -> None:
         # Should be in degraded mode
         assert manager._mgmt_ctl is None
         assert manager.is_operating_degraded() is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_stuck_allocation_detection(
+    register_hci0_scanner: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that scanners stuck at zero free slots are detected."""
+    manager = get_manager()
+    source = "AA:BB:CC:DD:EE:00"
+
+    # Fresh zero-free report: not yet stuck.
+    with patch("habluetooth.manager.monotonic_time_coarse", return_value=1000.0):
+        manager.async_on_allocation_changed(
+            Allocations(source, 3, 0, ["AA:BB:CC:DD:EE:01"])
+        )
+        assert manager.async_stuck_allocations() == []
+        assert source in manager._allocations_zero_since
+
+    # Below threshold: still not stuck.
+    just_under = 1000.0 + STUCK_ALLOCATION_THRESHOLD_SECONDS - 1
+    with patch("habluetooth.manager.monotonic_time_coarse", return_value=just_under):
+        assert manager.async_stuck_allocations() == []
+
+    # At or beyond threshold: now stuck and warning fires.
+    past = 1000.0 + STUCK_ALLOCATION_THRESHOLD_SECONDS + 1
+    with patch("habluetooth.manager.monotonic_time_coarse", return_value=past):
+        stuck = manager.async_stuck_allocations()
+        assert len(stuck) == 1
+        assert stuck[0].source == source
+        assert stuck[0].free == 0
+
+        caplog.clear()
+        manager._async_check_stuck_allocations(past)
+        assert "may be stuck and require a reboot" in caplog.text
+        assert source in manager._stuck_allocations_warned
+
+        # Warning only fires once until state changes.
+        caplog.clear()
+        manager._async_check_stuck_allocations(past)
+        assert "may be stuck" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_stuck_allocation_clears_on_recovery(
+    register_hci0_scanner: None,
+) -> None:
+    """When free slots return, stuck state and warned flag clear."""
+    manager = get_manager()
+    source = "AA:BB:CC:DD:EE:00"
+
+    with patch("habluetooth.manager.monotonic_time_coarse", return_value=1000.0):
+        manager.async_on_allocation_changed(Allocations(source, 3, 0, []))
+    manager._stuck_allocations_warned.add(source)
+
+    past = 1000.0 + STUCK_ALLOCATION_THRESHOLD_SECONDS + 1
+    with patch("habluetooth.manager.monotonic_time_coarse", return_value=past):
+        manager.async_on_allocation_changed(Allocations(source, 3, 2, []))
+        assert manager.async_stuck_allocations() == []
+        assert source not in manager._allocations_zero_since
+        assert source not in manager._stuck_allocations_warned
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_stuck_allocation_ignored_when_connecting(
+    register_hci0_scanner: None,
+) -> None:
+    """A scanner with connections in progress is not flagged as stuck."""
+    manager = get_manager()
+    source = "AA:BB:CC:DD:EE:00"
+    scanner = manager.async_scanner_by_source(source)
+    assert scanner is not None
+
+    with patch("habluetooth.manager.monotonic_time_coarse", return_value=1000.0):
+        manager.async_on_allocation_changed(Allocations(source, 3, 0, []))
+
+    # Simulate habluetooth-initiated connect attempt in flight.
+    scanner._connect_in_progress["AA:BB:CC:DD:EE:01"] = 1
+
+    past = 1000.0 + STUCK_ALLOCATION_THRESHOLD_SECONDS + 1
+    with patch("habluetooth.manager.monotonic_time_coarse", return_value=past):
+        assert manager.async_stuck_allocations() == []
+
+
+@pytest.mark.asyncio
+async def test_stuck_allocation_cleared_on_unregister() -> None:
+    """Unregistering a scanner clears its stuck-tracking state."""
+    manager = get_manager()
+    hci_scanner = FakeScanner("AA:BB:CC:DD:EE:42", "hci4")
+    hci_scanner.connectable = True
+    cancel = manager.async_register_scanner(hci_scanner, connection_slots=3)
+
+    with patch("habluetooth.manager.monotonic_time_coarse", return_value=1000.0):
+        manager.async_on_allocation_changed(
+            Allocations("AA:BB:CC:DD:EE:42", 3, 0, [])
+        )
+    manager._stuck_allocations_warned.add("AA:BB:CC:DD:EE:42")
+
+    cancel()
+    assert "AA:BB:CC:DD:EE:42" not in manager._allocations_zero_since
+    assert "AA:BB:CC:DD:EE:42" not in manager._stuck_allocations_warned
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_diagnostics_includes_stuck_allocations(
+    register_hci0_scanner: None,
+) -> None:
+    """Stuck allocations appear in async_diagnostics output."""
+    manager = get_manager()
+    source = "AA:BB:CC:DD:EE:00"
+
+    with patch("habluetooth.manager.monotonic_time_coarse", return_value=1000.0):
+        manager.async_on_allocation_changed(Allocations(source, 3, 0, ["x"]))
+
+    past = 1000.0 + STUCK_ALLOCATION_THRESHOLD_SECONDS + 1
+    with patch("habluetooth.manager.monotonic_time_coarse", return_value=past):
+        diagnostics = await manager.async_diagnostics()
+
+    assert diagnostics["stuck_allocations"] == [
+        {
+            "allocated": ["x"],
+            "free": 0,
+            "slots": 3,
+            "source": source,
+        }
+    ]

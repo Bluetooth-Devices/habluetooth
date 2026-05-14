@@ -62,6 +62,8 @@ cdef class BluetoothManager:
     cdef public object _cancel_allocation_callbacks
     cdef public dict _adapter_sources
     cdef public dict _allocations
+    cdef public dict _allocations_zero_since
+    cdef public set _stuck_allocations_warned
     cdef public dict _scanner_registration_callbacks
     cdef public dict _scanner_mode_change_callbacks
     cdef public object _subclass_discover_info

@@ -54,6 +54,14 @@ SCANNER_WATCHDOG_INTERVAL: Final = timedelta(seconds=30)
 UNAVAILABLE_TRACK_SECONDS: Final = 60 * 5
 
 
+# How long a scanner can report zero free connection slots
+# before we consider its allocation state stuck and log a warning.
+# Set high enough to avoid false positives when proxies legitimately
+# hold all slots for long-lived BLE connections (e.g. door locks polled
+# continuously), but low enough to be actionable.
+STUCK_ALLOCATION_THRESHOLD_SECONDS: Final = 60 * 30
+
+
 FAILED_ADAPTER_MAC = "00:00:00:00:00:00"
 
 
