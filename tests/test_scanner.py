@@ -66,10 +66,10 @@ if platform.system() == "Linux":
         ]
     )
 else:
-    # On other platforms, use an empty dict — BlueZScannerArgs is a TypedDict
-    # at runtime, so the production code's ``dict(PASSIVE_SCANNER_ARGS)`` copy
-    # needs a real mapping, not a Mock.
-    scanner.PASSIVE_SCANNER_ARGS = {}
+    # On other platforms ``bleak.args.bluez`` may not be importable. Use a
+    # non-empty real mapping that mimics the Linux shape so the production
+    # code's ``if bluez_args:`` truthy check still adds the ``bluez`` kwarg.
+    scanner.PASSIVE_SCANNER_ARGS = {"or_patterns": [(0, 0x01, b"\x06")]}
 # If the adapter is in a stuck state the following errors are raised:
 NEED_RESET_ERRORS = [
     "org.bluez.Error.Failed",
