@@ -930,7 +930,6 @@ def test_score_with_no_allocations():
         address="00:11:22:33:44:55",
         name="Test Device",
         details={},
-        rssi=-50,
     )
     advertisement = AdvertisementData(
         local_name="Test Device",
@@ -972,7 +971,6 @@ def test_score_with_all_slots_free():
         address="00:11:22:33:44:55",
         name="Test Device",
         details={},
-        rssi=-50,
     )
     advertisement = AdvertisementData(
         local_name="Test Device",
@@ -1019,7 +1017,6 @@ def test_score_with_one_slot_remaining():
         address="00:11:22:33:44:55",
         name="Test Device",
         details={},
-        rssi=-50,
     )
     advertisement = AdvertisementData(
         local_name="Test Device",
@@ -1068,7 +1065,6 @@ def test_score_with_no_slots_available():
         address="00:11:22:33:44:55",
         name="Test Device",
         details={},
-        rssi=-50,
     )
     advertisement = AdvertisementData(
         local_name="Test Device",
@@ -1117,7 +1113,6 @@ def test_score_comparison_with_different_slot_availability():
         address="00:11:22:33:44:55",
         name="Test Device",
         details={},
-        rssi=-50,
     )
     advertisement = AdvertisementData(
         local_name="Test Device",
@@ -1219,7 +1214,6 @@ def test_score_with_connections_in_progress_and_slots():
         address="00:11:22:33:44:55",
         name="Test Device",
         details={},
-        rssi=-50,
     )
     advertisement = AdvertisementData(
         local_name="Test Device",
