@@ -1504,9 +1504,7 @@ async def test_stuck_allocation_cleared_on_unregister() -> None:
     cancel = manager.async_register_scanner(hci_scanner, connection_slots=3)
 
     with patch("habluetooth.manager.monotonic_time_coarse", return_value=1000.0):
-        manager.async_on_allocation_changed(
-            Allocations("AA:BB:CC:DD:EE:42", 3, 0, [])
-        )
+        manager.async_on_allocation_changed(Allocations("AA:BB:CC:DD:EE:42", 3, 0, []))
     manager._stuck_allocations_warned.add("AA:BB:CC:DD:EE:42")
 
     cancel()

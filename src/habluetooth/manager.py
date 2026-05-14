@@ -260,8 +260,7 @@ class BluetoothManager:
                 for source, allocations in self._allocations.items()
             },
             "stuck_allocations": [
-                asdict(allocations)
-                for allocations in self.async_stuck_allocations()
+                asdict(allocations) for allocations in self.async_stuck_allocations()
             ],
             "scanners": scanner_diagnostics,
             "connectable_history": [
