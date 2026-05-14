@@ -32,6 +32,7 @@ from habluetooth.channels.bluez import (
 from habluetooth.scanner import (
     InvalidMessageError,
     bytes_mac_to_str,
+    create_bleak_scanner,
     make_bluez_details,
 )
 
@@ -121,6 +122,60 @@ def test_make_bluez_details() -> None:
         "path": "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF",
         "props": {"Adapter": "/org/bluez/hci0"},
     }
+
+
+def test_create_bleak_scanner_linux_no_adapter_active() -> None:
+    """Linux + no adapter + active: ``bluez`` kwarg must be absent."""
+    with (
+        patch.object(scanner, "IS_LINUX", True),
+        patch.object(scanner, "IS_MACOS", False),
+        patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner,
+    ):
+        create_bleak_scanner(None, BluetoothScanningMode.ACTIVE, None)
+    kwargs = mock_scanner.call_args.kwargs
+    assert "bluez" not in kwargs
+    assert "adapter" not in kwargs
+
+
+def test_create_bleak_scanner_linux_no_adapter_passive() -> None:
+    """Linux + no adapter + passive: ``bluez`` carries passive args only."""
+    with (
+        patch.object(scanner, "IS_LINUX", True),
+        patch.object(scanner, "IS_MACOS", False),
+        patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner,
+    ):
+        create_bleak_scanner(None, BluetoothScanningMode.PASSIVE, None)
+    bluez = mock_scanner.call_args.kwargs["bluez"]
+    assert "adapter" not in bluez
+    # PASSIVE args are copied in — the production dict must not be mutated.
+    assert bluez == dict(scanner.PASSIVE_SCANNER_ARGS)
+
+
+def test_create_bleak_scanner_linux_adapter_active() -> None:
+    """Linux + adapter + active: ``bluez`` carries adapter only."""
+    with (
+        patch.object(scanner, "IS_LINUX", True),
+        patch.object(scanner, "IS_MACOS", False),
+        patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner,
+    ):
+        create_bleak_scanner(None, BluetoothScanningMode.ACTIVE, "hci2")
+    bluez = mock_scanner.call_args.kwargs["bluez"]
+    assert bluez == {"adapter": "hci2"}
+
+
+def test_create_bleak_scanner_linux_adapter_passive() -> None:
+    """Linux + adapter + passive: ``bluez`` merges adapter and passive args."""
+    with (
+        patch.object(scanner, "IS_LINUX", True),
+        patch.object(scanner, "IS_MACOS", False),
+        patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner,
+    ):
+        create_bleak_scanner(None, BluetoothScanningMode.PASSIVE, "hci1")
+    bluez = mock_scanner.call_args.kwargs["bluez"]
+    assert bluez.get("adapter") == "hci1"
+    # The production code must copy PASSIVE_SCANNER_ARGS — assert the source
+    # was not mutated by the adapter insertion.
+    assert "adapter" not in scanner.PASSIVE_SCANNER_ARGS
 
 
 @pytest.mark.asyncio
