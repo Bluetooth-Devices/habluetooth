@@ -20,6 +20,10 @@ cdef unsigned char APPLE_HOMEKIT_NOTIFY_START_BYTE
 cdef unsigned char APPLE_DEVICE_ID_START_BYTE
 cdef unsigned char APPLE_FINDMY_START_BYTE
 
+cdef int TRANSITION_LAST_ZERO_AT
+cdef int TRANSITION_LAST_RECOVERY_AT
+cdef int TRANSITION_ZERO_REPEAT_COUNT
+
 cdef object APPLE_MFR_ID
 
 @cython.locals(uuids=set)

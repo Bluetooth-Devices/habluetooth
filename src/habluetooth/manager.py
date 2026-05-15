@@ -70,6 +70,12 @@ APPLE_DEVICE_ID_START_BYTE: Final = 0x10  # bluetooth_le_tracker
 APPLE_HOMEKIT_NOTIFY_START_BYTE: Final = 0x11  # homekit_controller
 APPLE_FINDMY_START_BYTE: Final = 0x12  # FindMy network advertisements
 
+# Indices into the per-source allocation-transition list. Declared as
+# cdef int in manager.pxd so Cython inlines them as C constants.
+TRANSITION_LAST_ZERO_AT: Final = 0
+TRANSITION_LAST_RECOVERY_AT: Final = 1
+TRANSITION_ZERO_REPEAT_COUNT: Final = 2
+
 
 _str = str
 _int = int
@@ -295,7 +301,8 @@ class BluetoothManager:
                 "zero_repeat_count": 0,
             }
         now = monotonic_time_coarse()
-        last_zero_at, last_recovery_at, zero_repeat_count = entry
+        last_zero_at = entry[TRANSITION_LAST_ZERO_AT]
+        last_recovery_at = entry[TRANSITION_LAST_RECOVERY_AT]
         return {
             "last_zero_seconds_ago": (
                 None if last_zero_at is None else now - last_zero_at
@@ -303,7 +310,7 @@ class BluetoothManager:
             "last_recovery_seconds_ago": (
                 None if last_recovery_at is None else now - last_recovery_at
             ),
-            "zero_repeat_count": zero_repeat_count,
+            "zero_repeat_count": entry[TRANSITION_ZERO_REPEAT_COUNT],
         }
 
     def _find_adapter_by_address(self, address: str) -> str | None:
@@ -988,14 +995,14 @@ class BluetoothManager:
                 transitions[source] = [monotonic_time_coarse(), None, 0]
             elif previous_free != 0:
                 # Transition into zero — refresh timestamp, reset repeat count.
-                entry[0] = monotonic_time_coarse()
-                entry[2] = 0
+                entry[TRANSITION_LAST_ZERO_AT] = monotonic_time_coarse()
+                entry[TRANSITION_ZERO_REPEAT_COUNT] = 0
             else:
                 # Already at zero — bump repeat count.
-                entry[2] += 1
+                entry[TRANSITION_ZERO_REPEAT_COUNT] += 1
         elif previous_free == 0 and entry is not None:
             # Recovery from zero.
-            entry[1] = monotonic_time_coarse()
+            entry[TRANSITION_LAST_RECOVERY_AT] = monotonic_time_coarse()
         if self._debug:
             scanner = self._sources.get(source)
             _LOGGER.debug(
