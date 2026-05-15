@@ -1329,3 +1329,135 @@ async def test_scanner_without_manager() -> None:
     finally:
         # Restore original manager
         set_manager(original_manager)
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_remote_scanner_restore_discovered_devices() -> None:
+    """Test serialize→restore round-trip on a BaseHaRemoteScanner."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+
+    # First scanner: receives advertisements, then serializes.
+    src_scanner = FakeScanner("esp32", "esp32", connector, True)
+    src_unsetup = src_scanner.async_setup()
+    src_cancel = manager.async_register_scanner(src_scanner)
+
+    address = "44:44:33:11:23:45"
+    device = generate_ble_device(address, "wohand", {})
+    adv = generate_advertisement_data(
+        local_name="wohand",
+        service_uuids=["050a021a-0000-1000-8000-00805f9b34fb"],
+        service_data={"050a021a-0000-1000-8000-00805f9b34fb": b"\n\xff"},
+        manufacturer_data={1: b"\x01"},
+        rssi=-60,
+        tx_power=4,
+    )
+    now = monotonic_time_coarse()
+    src_scanner.inject_advertisement(device, adv, now=now)
+    raw_adv = b"\x12\x21\x1a\x02\n\x05\n\xff\x062k\x03R\x00\x01\x04\t\x00\x04"
+    src_scanner.inject_raw_advertisement(address, -55, raw_adv, now=now + 1.0)
+
+    history = src_scanner.serialize_discovered_devices()
+    assert history.discovered_device_raw[address] == raw_adv
+    assert history.discovered_device_timestamps[address] == now + 1.0
+
+    # Second scanner: fresh instance, restore from serialized blob.
+    dst_scanner = FakeScanner("esp32-replay", "esp32-replay", connector, True)
+    dst_unsetup = dst_scanner.async_setup()
+    dst_cancel = manager.async_register_scanner(dst_scanner)
+
+    assert dst_scanner.discovered_devices == []
+    dst_scanner.restore_discovered_devices(history)
+
+    restored = dst_scanner.discovered_devices_and_advertisement_data
+    assert set(restored) == {address}
+    rest_device, rest_adv = restored[address]
+    assert rest_device.address == address
+    assert rest_device.name == "wohand"
+    assert rest_adv.manufacturer_data == adv.manufacturer_data
+    assert rest_adv.service_uuids == adv.service_uuids
+    # Restored source overrides the previous scanner's source — the device
+    # belongs to the scanner that owns it now.
+    assert dst_scanner._previous_service_info[address].source == "esp32-replay"
+    # Raw advertisement bytes survive the round-trip.
+    assert dst_scanner._previous_service_info[address].raw == raw_adv
+
+    src_cancel()
+    src_unsetup()
+    dst_cancel()
+    dst_unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_remote_scanner_async_diagnostics() -> None:
+    """Test BaseHaRemoteScanner.async_diagnostics shape."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = FakeScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    address = "44:44:33:11:23:45"
+    device = generate_ble_device(address, "wohand", {})
+    adv = generate_advertisement_data(
+        local_name="wohand",
+        service_uuids=[],
+        service_data={},
+        manufacturer_data={1: b"\x01"},
+        rssi=-60,
+    )
+    now = monotonic_time_coarse()
+    scanner.inject_advertisement(device, adv, now=now)
+    raw = b"\x02\x01\x06"
+    scanner.inject_raw_advertisement(address, -55, raw, now=now + 1.0)
+
+    diagnostics = await scanner.async_diagnostics()
+    # Remote scanner adds these three keys on top of the base diagnostics.
+    assert diagnostics["raw_advertisement_data"] == {address: raw}
+    assert diagnostics["discovered_device_timestamps"] == {address: now + 1.0}
+    assert set(diagnostics["time_since_last_device_detection"]) == {address}
+    # Base keys still present.
+    assert diagnostics["source"] == "esp32"
+    assert diagnostics["connectable"] is True
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_set_mode_noop_when_unchanged() -> None:
+    """set_requested_mode and set_current_mode should be no-ops on same value."""
+    manager = get_manager()
+    scanner = FakeScanner(
+        source="modes",
+        adapter="modes",
+        connector=None,
+        connectable=True,
+        requested_mode=BluetoothScanningMode.ACTIVE,
+    )
+    with patch.object(manager, "scanner_mode_changed") as notify:
+        scanner.set_requested_mode(BluetoothScanningMode.ACTIVE)
+        assert scanner.requested_mode == BluetoothScanningMode.ACTIVE
+        notify.assert_not_called()
+
+        scanner.set_requested_mode(BluetoothScanningMode.PASSIVE)
+        assert scanner.requested_mode == BluetoothScanningMode.PASSIVE
+        assert notify.call_count == 1
+
+        scanner.set_current_mode(None)
+        # current_mode was already None at init — still a no-op.
+        assert notify.call_count == 1
+
+        scanner.set_current_mode(BluetoothScanningMode.PASSIVE)
+        assert scanner.current_mode == BluetoothScanningMode.PASSIVE
+        assert notify.call_count == 2
+
+        scanner.set_current_mode(BluetoothScanningMode.PASSIVE)
+        assert notify.call_count == 2
