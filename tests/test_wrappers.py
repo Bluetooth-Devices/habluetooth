@@ -402,7 +402,8 @@ async def test_remote_scanner_connect_failure_skips_local_slot_release(
     enable_bluetooth: None,
     install_bleak_catcher: None,
 ) -> None:
-    """Ensure remote-scanner connect failure clears _backend without slot release.
+    """
+    Ensure remote-scanner connect failure clears _backend without slot release.
 
     Covers the not-taken branch of ``if not wrapped_backend.source:`` in
     ``HaBleakClientWrapper.connect()``. When the chosen backend belongs to a
