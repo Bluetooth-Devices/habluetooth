@@ -490,10 +490,10 @@ class HaBleakClientWrapper(BleakClient):
                 # such as asyncio.CancelledError) so the wrapper does not hold
                 # a partially-initialised backend.
                 self._backend = None
-                # Local adapters need an explicit slot release on failure;
-                # remote scanners manage slot accounting on the proxy side.
-                if not wrapped_backend.source:
-                    manager.async_release_connection_slot(device)
+            # Local adapters need an explicit slot release on failure;
+            # remote scanners manage slot accounting on the proxy side.
+            if not connected and not wrapped_backend.source:
+                manager.async_release_connection_slot(device)
 
         # Load medium connection parameters after successful connection
         if connected:
