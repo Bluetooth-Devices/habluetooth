@@ -51,8 +51,13 @@ def generate_ble_device(
     details: Any | None = None,
     **kwargs: Any,
 ) -> BLEDevice:
-    """Generate a BLEDevice with defaults."""
-    new = kwargs.copy()
+    """
+    Generate a BLEDevice with defaults.
+
+    Extra kwargs (e.g. legacy ``rssi``) are silently dropped — bleak 3.0
+    removed those fields from BLEDevice, and passing them now warns.
+    """
+    new: dict[str, Any] = {}
     if address is not None:
         new["address"] = address
     if name is not None:
@@ -61,6 +66,10 @@ def generate_ble_device(
         new["details"] = details
     for key, value in BLE_DEVICE_DEFAULTS.items():
         new.setdefault(key, value)
+    # Only forward kwargs BLEDevice still accepts in bleak 3.0+.
+    for key in ("address", "name", "details"):
+        if key in kwargs:
+            new[key] = kwargs[key]
     return BLEDevice(**new)
 
 

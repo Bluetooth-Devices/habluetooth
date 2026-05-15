@@ -135,10 +135,15 @@ def create_bleak_scanner(
         scanner_kwargs["detection_callback"] = detection_callback
     if IS_LINUX:
         # Only Linux supports multiple adapters
-        if adapter:
-            scanner_kwargs["adapter"] = adapter
+        bluez_args: BlueZScannerArgs = {}
         if scanning_mode == BluetoothScanningMode.PASSIVE:
-            scanner_kwargs["bluez"] = PASSIVE_SCANNER_ARGS
+            bluez_args = dict(PASSIVE_SCANNER_ARGS)
+        if adapter:
+            # bleak 3.0 deprecated the top-level ``adapter`` kwarg in favor of
+            # the ``bluez`` kwarg; this form is supported across bleak 1.x-3.x.
+            bluez_args["adapter"] = adapter
+        if bluez_args:
+            scanner_kwargs["bluez"] = bluez_args
     elif IS_MACOS:
         # We want mac address on macOS
         scanner_kwargs["cb"] = {"use_bdaddr": True}
