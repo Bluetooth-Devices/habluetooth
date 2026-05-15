@@ -982,29 +982,20 @@ class BluetoothManager:
         previous_free = previous.free if previous is not None else None
         new_free = ha_slot_allocations.free
         transitions = self._allocation_transitions
+        entry = transitions.get(source)
         if new_free == 0:
-            if previous_free != 0:
-                # transition into zero (or first ever update is zero)
-                now = monotonic_time_coarse()
-                entry = transitions.get(source)
-                if entry is None:
-                    transitions[source] = [now, None, 0]
-                else:
-                    entry[0] = now
-                    entry[2] = 0
+            if entry is None:
+                transitions[source] = [monotonic_time_coarse(), None, 0]
+            elif previous_free != 0:
+                # Transition into zero — refresh timestamp, reset repeat count.
+                entry[0] = monotonic_time_coarse()
+                entry[2] = 0
             else:
-                entry = transitions.get(source)
-                if entry is not None:
-                    entry[2] += 1
-                else:
-                    # First ever update arrives as zero while previous_free is
-                    # somehow also zero (e.g. registration default); record it.
-                    transitions[source] = [monotonic_time_coarse(), None, 0]
-        elif previous_free == 0:
-            # recovery from zero
-            entry = transitions.get(source)
-            if entry is not None:
-                entry[1] = monotonic_time_coarse()
+                # Already at zero — bump repeat count.
+                entry[2] += 1
+        elif previous_free == 0 and entry is not None:
+            # Recovery from zero.
+            entry[1] = monotonic_time_coarse()
         if self._debug:
             scanner = self._sources.get(source)
             _LOGGER.debug(
