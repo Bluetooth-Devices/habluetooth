@@ -116,6 +116,7 @@ class BluetoothManager:
         "_adapters",
         "_advertisement_tracker",
         "_all_history",
+        "_allocation_transitions",
         "_allocations",
         "_allocations_callbacks",
         "_bleak_callbacks",
@@ -172,6 +173,12 @@ class BluetoothManager:
         self._adapters: dict[str, AdapterDetails] = {}
         self._adapter_sources: dict[str, str] = {}
         self._allocations: dict[str, HaBluetoothSlotAllocations] = {}
+        # Diagnostics-only sibling tracking of zero/non-zero free-slot
+        # transitions per source. Value is
+        # [last_zero_at, last_recovery_at, zero_repeat_count]. Mutated in
+        # place to keep the hot allocation path allocation-free in the
+        # steady state.
+        self._allocation_transitions: dict[str, list[Any]] = {}
         self._sources: dict[str, BaseHaScanner] = {}
         self._bluetooth_adapters = bluetooth_adapters or get_adapters()
         self.slot_manager = slot_manager or BleakSlotManager()
@@ -251,7 +258,10 @@ class BluetoothManager:
             "adapters": self._adapters,
             "slot_manager": self.slot_manager.diagnostics(),
             "allocations": {
-                source: asdict(allocations)
+                source: {
+                    **asdict(allocations),
+                    "transitions": self._allocation_transition_diagnostic(source),
+                }
                 for source, allocations in self._allocations.items()
             },
             "scanners": scanner_diagnostics,
@@ -263,6 +273,37 @@ class BluetoothManager:
                 service_info.as_dict() for service_info in self._all_history.values()
             ],
             "advertisement_tracker": self._advertisement_tracker.async_diagnostics(),
+        }
+
+    def _allocation_transition_diagnostic(self, source: str) -> dict[str, Any]:
+        """
+        Return diagnostic info about zero/non-zero free-slot transitions.
+
+        Provides ``last_zero_seconds_ago`` / ``last_recovery_seconds_ago``
+        (timing of the last entry into and out of ``free == 0``, ``None``
+        when never observed) and ``zero_repeat_count`` — the number of
+        allocation updates that arrived while already at ``free == 0``
+        since the last entry into zero. Used to investigate proxies that
+        report all slots permanently occupied (see #340) —
+        diagnostics-only, no automated action.
+        """
+        entry = self._allocation_transitions.get(source)
+        if entry is None:
+            return {
+                "last_zero_seconds_ago": None,
+                "last_recovery_seconds_ago": None,
+                "zero_repeat_count": 0,
+            }
+        now = monotonic_time_coarse()
+        last_zero_at, last_recovery_at, zero_repeat_count = entry
+        return {
+            "last_zero_seconds_ago": (
+                None if last_zero_at is None else now - last_zero_at
+            ),
+            "last_recovery_seconds_ago": (
+                None if last_recovery_at is None else now - last_recovery_at
+            ),
+            "zero_repeat_count": zero_repeat_count,
         }
 
     def _find_adapter_by_address(self, address: str) -> str | None:
@@ -846,6 +887,7 @@ class BluetoothManager:
         del self._sources[scanner.source]
         del self._adapter_sources[scanner.adapter]
         self._allocations.pop(scanner.source, None)
+        self._allocation_transitions.pop(scanner.source, None)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
         if (idx := scanner.adapter_idx) is not None:
@@ -935,7 +977,50 @@ class BluetoothManager:
             free=allocations.free,
             allocated=allocations.allocated,
         )
+        previous = self._allocations.get(source)
         self._allocations[source] = ha_slot_allocations
+        previous_free = previous.free if previous is not None else None
+        new_free = ha_slot_allocations.free
+        transitions = self._allocation_transitions
+        if new_free == 0:
+            if previous_free != 0:
+                # transition into zero (or first ever update is zero)
+                now = monotonic_time_coarse()
+                entry = transitions.get(source)
+                if entry is None:
+                    transitions[source] = [now, None, 0]
+                else:
+                    entry[0] = now
+                    entry[2] = 0
+            else:
+                entry = transitions.get(source)
+                if entry is not None:
+                    entry[2] += 1
+                else:
+                    # First ever update arrives as zero while previous_free is
+                    # somehow also zero (e.g. registration default); record it.
+                    transitions[source] = [monotonic_time_coarse(), None, 0]
+        elif previous_free == 0:
+            # recovery from zero
+            entry = transitions.get(source)
+            if entry is not None:
+                entry[1] = monotonic_time_coarse()
+        if self._debug:
+            scanner = self._sources.get(source)
+            _LOGGER.debug(
+                "Allocation change for %s: previous free=%s slots=%s "
+                "allocated=%s -> free=%s slots=%s allocated=%s "
+                "connect_in_progress=%s connect_failures=%s",
+                source,
+                previous_free,
+                previous.slots if previous is not None else None,
+                previous.allocated if previous is not None else None,
+                new_free,
+                ha_slot_allocations.slots,
+                ha_slot_allocations.allocated,
+                dict(scanner._connect_in_progress) if scanner is not None else None,
+                dict(scanner._connect_failures) if scanner is not None else None,
+            )
         for source_key in (source, None):
             if not (
                 allocation_callbacks := self._allocations_callbacks.get(source_key)
