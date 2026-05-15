@@ -43,8 +43,7 @@ async def test_async_reset_adapter_returns_false_for_non_hci_adapter(
 ) -> None:
     """A non-hci adapter (e.g. CoreBluetooth) returns False without recovery."""
     assert (
-        await async_reset_adapter("Core Bluetooth", "AA:BB:CC:DD:EE:FF", False)
-        is False
+        await async_reset_adapter("Core Bluetooth", "AA:BB:CC:DD:EE:FF", False) is False
     )
     mock_recover_adapter.assert_not_called()
 
