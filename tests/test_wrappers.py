@@ -398,6 +398,61 @@ async def test_release_slot_and_clear_backend_on_cancelled(
 
 
 @pytest.mark.asyncio
+async def test_remote_scanner_connect_failure_skips_local_slot_release(
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """
+    Ensure a remote-scanner connect failure clears _backend without releasing
+    a local-adapter slot.
+
+    Covers the not-taken branch of ``if not wrapped_backend.source:`` in
+    ``HaBleakClientWrapper.connect()``. When the chosen backend belongs to a
+    remote (proxy) scanner, ``wrapped_backend.source`` is truthy and
+    ``manager.async_release_connection_slot`` must not run — slot accounting
+    for proxies is owned by the firmware and reported via
+    ``async_on_allocation_changed``.
+    """
+    manager = _get_manager()
+
+    fake_connector = HaBluetoothConnector(
+        client=FakeBleakClientRaisesOnConnect,
+        source="remote_scanner",
+        can_connect=lambda: True,
+    )
+    remote_scanner = FakeScanner(
+        "remote_scanner", "ESPHome Device", fake_connector, True
+    )
+    cancel_remote = manager.async_register_scanner(remote_scanner)
+
+    device = generate_ble_device(
+        "AA:BB:CC:DD:EE:FF", "Test Device", {"source": "remote_scanner"}
+    )
+    adv_data = generate_advertisement_data(local_name="Test Device", rssi=-50)
+    remote_scanner.inject_advertisement(device, adv_data)
+    await asyncio.sleep(0)
+
+    with (
+        patch.object(manager.slot_manager, "release_slot") as release_slot_mock,
+        patch.object(
+            manager.slot_manager, "allocate_slot", return_value=True
+        ) as allocate_slot_mock,
+    ):
+        client = bleak.BleakClient("AA:BB:CC:DD:EE:FF")
+        with pytest.raises(ConnectionError):
+            await client.connect()
+        # Local-adapter slot manager must not be touched on the remote path.
+        assert allocate_slot_mock.call_count == 0
+        assert release_slot_mock.call_count == 0
+        # Backend is cleared on every failure path.
+        assert client._backend is None
+        # _finished_connecting still runs, so the in-progress counter is empty.
+        assert remote_scanner._connect_in_progress == {}
+
+    cancel_remote()
+
+
+@pytest.mark.asyncio
 async def test_switch_adapters_on_failure(
     two_adapters: None,
     enable_bluetooth: None,
