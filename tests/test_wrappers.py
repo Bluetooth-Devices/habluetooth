@@ -128,6 +128,14 @@ class FakeBleakClientRaisesOnConnect(BaseFakeBleakClient):
         raise ConnectionError("Test exception")
 
 
+class FakeBleakClientCancelledOnConnect(BaseFakeBleakClient):
+    """Fake bleak client that raises CancelledError on connect."""
+
+    async def connect(self, *args, **kwargs):
+        """Connect."""
+        raise asyncio.CancelledError
+
+
 def _generate_ble_device_and_adv_data(
     interface: str, mac: str, rssi: int
 ) -> tuple[BLEDevice, AdvertisementData]:
@@ -177,6 +185,16 @@ def mock_platform_client_that_raises_on_connect_fixture():
     with patch(
         "habluetooth.wrappers.get_platform_client_backend_type",
         return_value=FakeBleakClientRaisesOnConnect,
+    ):
+        yield
+
+
+@pytest.fixture(name="mock_platform_client_that_cancels_on_connect")
+def mock_platform_client_that_cancels_on_connect_fixture():
+    """Fixture that mocks the platform client that raises CancelledError."""
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=FakeBleakClientCancelledOnConnect,
     ):
         yield
 
@@ -344,6 +362,36 @@ async def test_release_slot_on_connect_exception(
         assert str(exc_info.value) == "Test exception"
         assert allocate_slot_mock.call_count == 1
         assert release_slot_mock.call_count == 1
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_release_slot_and_clear_backend_on_cancelled(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client_that_cancels_on_connect: None,
+) -> None:
+    """Ensure CancelledError still releases the slot and clears _backend."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    with (
+        patch.object(manager.slot_manager, "release_slot") as release_slot_mock,
+        patch.object(
+            manager.slot_manager, "allocate_slot", return_value=True
+        ) as allocate_slot_mock,
+    ):
+        ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+        client = bleak.BleakClient(ble_device)
+        with pytest.raises(asyncio.CancelledError):
+            await client.connect()
+        assert allocate_slot_mock.call_count == 1
+        assert release_slot_mock.call_count == 1
+        # Regression: CancelledError used to leave _backend set because the
+        # cleanup ran in `except Exception` rather than `finally`.
+        assert client._backend is None
 
     cancel_hci0()
     cancel_hci1()

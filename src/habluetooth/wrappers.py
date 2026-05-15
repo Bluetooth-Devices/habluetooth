@@ -483,16 +483,17 @@ class HaBleakClientWrapper(BleakClient):
             scanner._add_connecting(address)
             await super().connect(**kwargs)
             connected = True
-        except Exception:
-            # Connection failed, ensure we clean up
-            self._backend = None
-            raise
         finally:
             scanner._finished_connecting(address, connected)
-            # If we failed to connect and its a local adapter (no source)
-            # we release the connection slot
-            if not connected and not wrapped_backend.source:
-                manager.async_release_connection_slot(device)
+            if not connected:
+                # Clear backend on any failure path (including BaseException
+                # such as asyncio.CancelledError) so the wrapper does not hold
+                # a partially-initialised backend.
+                self._backend = None
+                # Local adapters need an explicit slot release on failure;
+                # remote scanners manage slot accounting on the proxy side.
+                if not wrapped_backend.source:
+                    manager.async_release_connection_slot(device)
 
         # Load medium connection parameters after successful connection
         if connected:
