@@ -381,7 +381,6 @@ async def test_remote_scanner_expires_non_connectable() -> None:
     assert len(scanner.discovered_devices) == 1
     assert len(scanner.discovered_devices_and_advertisement_data) == 1
     assert len(scanner.discovered_device_timestamps) == 1
-    assert len(scanner._discovered_device_timestamps) == 1
     dev_adv = scanner.get_discovered_device_advertisement_data(switchbot_device.address)
     assert dev_adv is not None
     dev, adv = dev_adv
@@ -413,7 +412,6 @@ async def test_remote_scanner_expires_non_connectable() -> None:
     assert len(scanner.discovered_devices) == 0
     assert len(scanner.discovered_devices_and_advertisement_data) == 0
     assert len(scanner.discovered_device_timestamps) == 0
-    assert len(scanner._discovered_device_timestamps) == 0
     assert (
         scanner.get_discovered_device_advertisement_data(switchbot_device.address)
         is None
@@ -432,11 +430,39 @@ async def test_remote_scanner_expires_non_connectable() -> None:
     assert len(scanner.discovered_devices) == 0
     assert len(scanner.discovered_devices_and_advertisement_data) == 0
     assert len(scanner.discovered_device_timestamps) == 0
-    assert len(scanner._discovered_device_timestamps) == 0
     assert (
         scanner.get_discovered_device_advertisement_data(switchbot_device.address)
         is None
     )
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_remote_scanner_discovered_device_timestamps_deprecated() -> None:
+    """The leading-underscore shim still returns timestamps but warns."""
+    manager = get_manager()
+    switchbot_device = generate_ble_device(
+        "44:44:33:11:23:45", "wohand", {}, rssi=-100
+    )
+    switchbot_device_adv = generate_advertisement_data(
+        local_name="wohand", service_uuids=[], manufacturer_data={1: b"\x01"}, rssi=-100
+    )
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = FakeScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+    scanner.inject_advertisement(switchbot_device, switchbot_device_adv)
+
+    with pytest.warns(FutureWarning, match="_discovered_device_timestamps"):
+        legacy = scanner._discovered_device_timestamps
+
+    assert legacy == scanner.discovered_device_timestamps
+    assert len(legacy) == 1
 
     cancel()
     unsetup()
@@ -908,6 +934,8 @@ def test_base_scanner_with_connector() -> None:
 
 class TestScanner(BaseHaScanner):
     """Test scanner without slots for mocking."""
+
+    __test__ = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
