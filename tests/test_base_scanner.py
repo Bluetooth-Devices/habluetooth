@@ -444,9 +444,7 @@ async def test_remote_scanner_expires_non_connectable() -> None:
 async def test_remote_scanner_discovered_device_timestamps_deprecated() -> None:
     """The leading-underscore shim still returns timestamps but warns."""
     manager = get_manager()
-    switchbot_device = generate_ble_device(
-        "44:44:33:11:23:45", "wohand", {}, rssi=-100
-    )
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand", {}, rssi=-100)
     switchbot_device_adv = generate_advertisement_data(
         local_name="wohand", service_uuids=[], manufacturer_data={1: b"\x01"}, rssi=-100
     )
