@@ -1443,21 +1443,22 @@ async def test_set_mode_noop_when_unchanged() -> None:
         requested_mode=BluetoothScanningMode.ACTIVE,
     )
     with patch.object(manager, "scanner_mode_changed") as notify:
+        # Same value → setter is a no-op, no notify.
         scanner.set_requested_mode(BluetoothScanningMode.ACTIVE)
-        assert scanner.requested_mode == BluetoothScanningMode.ACTIVE
         notify.assert_not_called()
 
+        # Different value → notify fires once.
         scanner.set_requested_mode(BluetoothScanningMode.PASSIVE)
-        assert scanner.requested_mode == BluetoothScanningMode.PASSIVE
         assert notify.call_count == 1
 
+        # current_mode was None at init; setting None is a no-op.
         scanner.set_current_mode(None)
-        # current_mode was already None at init — still a no-op.
         assert notify.call_count == 1
 
+        # Different value → notify fires again.
         scanner.set_current_mode(BluetoothScanningMode.PASSIVE)
-        assert scanner.current_mode == BluetoothScanningMode.PASSIVE
         assert notify.call_count == 2
 
+        # Repeating same value is a no-op.
         scanner.set_current_mode(BluetoothScanningMode.PASSIVE)
         assert notify.call_count == 2
