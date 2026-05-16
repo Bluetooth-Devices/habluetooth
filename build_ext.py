@@ -38,6 +38,8 @@ class BuildExt(build_ext):
 
     def build_extensions(self) -> None:
         """Build extensions."""
+        if self.parallel is None:  # type: ignore[has-type, unused-ignore]
+            self.parallel = os.cpu_count() or 1
         try:
             super().build_extensions()
         except Exception as ex:  # nosec
