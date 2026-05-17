@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -49,8 +52,6 @@ jobs:
           - "skip_cython"
           - "use_cython"
     runs-on: ${{ matrix.os }}
-    env:
-      POETRY_VIRTUALENVS_IN_PROJECT: "true"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
       - name: Install poetry
@@ -68,7 +69,7 @@ jobs:
           path: |
             .venv
             src/habluetooth/**/*.so
-          key: venv-v1-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-py${{ matrix.python-version }}-${{ matrix.extension }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py') }}-${{ hashFiles('src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
+          key: venv-v1-${{ runner.os }}-py${{ matrix.python-version }}-${{ matrix.extension }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
       - name: Install Dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
@@ -88,8 +89,6 @@ jobs:
 
   benchmark:
     runs-on: ubuntu-latest
-    env:
-      POETRY_VIRTUALENVS_IN_PROJECT: "true"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
       - name: Install poetry
@@ -107,7 +106,7 @@ jobs:
           path: |
             .venv
             src/habluetooth/**/*.so
-          key: venv-v1-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-benchmark-py3.14-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py') }}-${{ hashFiles('src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
+          key: venv-v1-${{ runner.os }}-benchmark-py3.14-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
       - name: Install Dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
