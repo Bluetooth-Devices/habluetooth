@@ -1,6 +1,7 @@
 """Tests for the manager."""
 
 import asyncio
+import logging
 import time
 from datetime import timedelta
 from typing import Any
@@ -537,6 +538,11 @@ async def test_diagnostics(register_hci0_scanner: None) -> None:
                 "free": 4,
                 "slots": 5,
                 "source": "AA:BB:CC:DD:EE:00",
+                "transitions": {
+                    "last_zero_seconds_ago": None,
+                    "last_recovery_seconds_ago": None,
+                    "zero_repeat_count": 0,
+                },
             }
         },
         "connectable_history": ANY,
@@ -1408,3 +1414,113 @@ async def test_is_operating_degraded_after_permission_error() -> None:
         # Should be in degraded mode
         assert manager._mgmt_ctl is None
         assert manager.is_operating_degraded() is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_allocation_zero_transition_tracking(
+    register_hci0_scanner: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Track free->0 / 0->non-zero transitions for stuck-allocation diagnostics.
+
+    Diagnostics-only signal for investigating #340: zero/non-zero
+    transitions and the repeat count of stuck-at-zero updates surface in
+    ``async_diagnostics()`` and the DEBUG log, with no warnings or
+    automated behavior triggered.
+    """
+    manager = get_manager()
+    source = "AA:BB:CC:DD:EE:00"
+
+    # Initial registration sets free=5. First user-visible allocation
+    # change goes from 5 -> 4 (no zero involvement).
+    manager.async_on_allocation_changed(
+        Allocations(source, 5, 4, ["44:44:33:11:23:12"])
+    )
+    diag = await manager.async_diagnostics()
+    transitions = diag["allocations"][source]["transitions"]
+    assert transitions == {
+        "last_zero_seconds_ago": None,
+        "last_recovery_seconds_ago": None,
+        "zero_repeat_count": 0,
+    }
+
+    # Transition into zero — record the timestamp.
+    manager.async_on_allocation_changed(
+        Allocations(source, 5, 0, ["a", "b", "c", "d", "e"])
+    )
+    diag = await manager.async_diagnostics()
+    transitions = diag["allocations"][source]["transitions"]
+    assert transitions["last_zero_seconds_ago"] is not None
+    assert transitions["last_zero_seconds_ago"] >= 0
+    assert transitions["last_recovery_seconds_ago"] is None
+    assert transitions["zero_repeat_count"] == 0
+
+    # Two more zero updates in a row — repeat counter increments.
+    manager.async_on_allocation_changed(
+        Allocations(source, 5, 0, ["a", "b", "c", "d", "e"])
+    )
+    manager.async_on_allocation_changed(
+        Allocations(source, 5, 0, ["a", "b", "c", "d", "e"])
+    )
+    diag = await manager.async_diagnostics()
+    assert diag["allocations"][source]["transitions"]["zero_repeat_count"] == 2
+
+    # Recovery — last_recovery_seconds_ago is now set; last_zero stays.
+    manager.async_on_allocation_changed(Allocations(source, 5, 5, []))
+    diag = await manager.async_diagnostics()
+    transitions = diag["allocations"][source]["transitions"]
+    assert transitions["last_zero_seconds_ago"] is not None
+    assert transitions["last_recovery_seconds_ago"] is not None
+
+    # Re-entering zero resets the repeat counter and refreshes
+    # last_zero_seconds_ago.
+    manager.async_on_allocation_changed(
+        Allocations(source, 5, 0, ["a", "b", "c", "d", "e"])
+    )
+    diag = await manager.async_diagnostics()
+    assert diag["allocations"][source]["transitions"]["zero_repeat_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_allocation_change_debug_log(
+    register_hci0_scanner: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Allocation changes emit DEBUG with previous/new state and scanner context."""
+    manager = get_manager()
+    manager._debug = True
+    source = "AA:BB:CC:DD:EE:00"
+
+    with caplog.at_level(logging.DEBUG, logger="habluetooth.manager"):
+        manager.async_on_allocation_changed(
+            Allocations(source, 5, 4, ["44:44:33:11:23:12"])
+        )
+
+    matching = [r for r in caplog.records if "Allocation change for" in r.message]
+    assert matching, "expected an allocation-change debug log line"
+    rendered = matching[-1].getMessage()
+    assert source in rendered
+    assert "free=4" in rendered
+    assert "connect_in_progress=" in rendered
+    assert "connect_failures=" in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_allocation_transitions_cleared_on_unregister() -> None:
+    """Transition tracking is dropped when a scanner unregisters."""
+    manager = get_manager()
+    source = "AA:BB:CC:DD:EE:99"
+    hci99_scanner = FakeScanner(source, "hci99")
+    hci99_scanner.connectable = True
+    cancel = manager.async_register_scanner(hci99_scanner, connection_slots=5)
+    manager.async_on_allocation_changed(Allocations(source, 5, 0, ["a"] * 5))
+    assert source in manager._allocation_transitions
+
+    cancel()
+
+    assert source not in manager._allocation_transitions
+    assert source not in manager._allocations

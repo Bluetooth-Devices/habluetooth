@@ -20,6 +20,10 @@ cdef unsigned char APPLE_HOMEKIT_NOTIFY_START_BYTE
 cdef unsigned char APPLE_DEVICE_ID_START_BYTE
 cdef unsigned char APPLE_FINDMY_START_BYTE
 
+cdef int TRANSITION_LAST_ZERO_AT
+cdef int TRANSITION_LAST_RECOVERY_AT
+cdef int TRANSITION_ZERO_REPEAT_COUNT
+
 cdef object APPLE_MFR_ID
 
 @cython.locals(uuids=set)
@@ -62,6 +66,7 @@ cdef class BluetoothManager:
     cdef public object _cancel_allocation_callbacks
     cdef public dict _adapter_sources
     cdef public dict _allocations
+    cdef public dict _allocation_transitions
     cdef public dict _scanner_registration_callbacks
     cdef public dict _scanner_mode_change_callbacks
     cdef public object _subclass_discover_info
