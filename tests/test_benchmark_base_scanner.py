@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from bleak.backends.scanner import AdvertisementData
@@ -1047,12 +1047,18 @@ async def test_describe_unavailable_scanners_with_20_scanners(
         MockBleakClient, "mock_bleak_client", lambda: False
     )
 
+    class StuckProxyScanner(BaseHaRemoteScanner):
+        """Remote scanner that reports zero free slots."""
+
+        def get_allocations(self) -> Allocations | None:
+            return Allocations(adapter=self.source, slots=3, free=0, allocated=[])
+
     scanners: list[BaseHaRemoteScanner] = []
     cancels: list[Callable[[], None]] = []
     unsetups: list[Callable[[], None]] = []
     for i in range(20):
         source = f"proxy_{i:02d}"
-        scanner = BaseHaRemoteScanner(source, source, connector, True)
+        scanner = StuckProxyScanner(source, source, connector, True)
         unsetups.append(scanner.async_setup())
         cancels.append(manager.async_register_scanner(scanner))
         scanner._async_on_advertisement(
@@ -1068,19 +1074,6 @@ async def test_describe_unavailable_scanners_with_20_scanners(
         )
         scanners.append(scanner)
 
-    allocation_patches = [
-        patch.object(
-            scanner,
-            "get_allocations",
-            return_value=Allocations(
-                adapter=scanner.source, slots=3, free=0, allocated=[]
-            ),
-        )
-        for scanner in scanners
-    ]
-    for p in allocation_patches:
-        p.start()
-
     sorted_devices = manager.async_scanner_devices_by_address(address, True)
 
     wrapper = HaBleakClientWrapper(address)
@@ -1089,8 +1082,6 @@ async def test_describe_unavailable_scanners_with_20_scanners(
     def run():
         wrapper._describe_unavailable_scanners(manager, sorted_devices)
 
-    for p in allocation_patches:
-        p.stop()
     for cancel in cancels:
         cancel()
     for unsetup in unsetups:
