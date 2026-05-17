@@ -964,6 +964,8 @@ async def test_adapter_init_fails_fallback_to_passive(
         )
         assert await scanner.async_diagnostics() == {
             "adapter": "hci0",
+            "connect_failures": {},
+            "connect_in_progress": {},
             "connectable": True,
             "current_mode": BluetoothScanningMode.PASSIVE,
             "discovered_devices_and_advertisement_data": [],
@@ -979,6 +981,8 @@ async def test_adapter_init_fails_fallback_to_passive(
         await scanner.async_stop()
         assert await scanner.async_diagnostics() == {
             "adapter": "hci0",
+            "connect_failures": {},
+            "connect_in_progress": {},
             "connectable": True,
             "current_mode": BluetoothScanningMode.PASSIVE,
             "discovered_devices_and_advertisement_data": [],
