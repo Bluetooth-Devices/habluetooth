@@ -1053,7 +1053,6 @@ async def test_describe_unavailable_scanners_with_20_scanners(
         def get_allocations(self) -> Allocations | None:
             return Allocations(adapter=self.source, slots=3, free=0, allocated=[])
 
-    scanners: list[BaseHaRemoteScanner] = []
     cancels: list[Callable[[], None]] = []
     unsetups: list[Callable[[], None]] = []
     for i in range(20):
@@ -1072,7 +1071,6 @@ async def test_describe_unavailable_scanners_with_20_scanners(
             {"scanner_specific_data": "test"},
             monotonic_time_coarse(),
         )
-        scanners.append(scanner)
 
     sorted_devices = manager.async_scanner_devices_by_address(address, True)
 

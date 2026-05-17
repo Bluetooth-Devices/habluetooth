@@ -1446,9 +1446,14 @@ async def test_passive_scanner_with_active_scanner() -> None:
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
 async def test_no_backend_error_includes_scanner_slot_diagnostics() -> None:
-    """Error message should describe which scanners were tried and their slot state."""
+    """Error message should describe scanner slot state on stuck-proxy path."""
     manager = _get_manager()
-    scanner = FakeScanner("proxy_a", "proxy_a_name", None, True)
+    # Connector present but can_connect=False simulates the stuck-proxy
+    # condition that issue #340 targets — slot bookkeeping says 0 free.
+    connector = HaBluetoothConnector(
+        FakeBleakClient, "proxy_a", lambda: False
+    )
+    scanner = FakeScanner("proxy_a", "proxy_a_name", connector, True)
     cancel = manager.async_register_scanner(scanner)
 
     address = "00:00:00:00:00:42"
@@ -1459,16 +1464,24 @@ async def test_no_backend_error_includes_scanner_slot_diagnostics() -> None:
     scanner.inject_advertisement(device, adv_data)
     await asyncio.sleep(0)
 
-    # FakeScanner has no connector → can_connect() path returns no backend,
-    # so the loop exhausts and the diagnostic branch fires.
-    client = bleak.BleakClient(address)
-    with pytest.raises(BleakError) as exc_info:
-        await client.connect()
+    with patch.object(
+        scanner,
+        "get_allocations",
+        return_value=Allocations(
+            adapter="proxy_a", slots=3, free=0, allocated=[]
+        ),
+    ):
+        client = bleak.BleakClient(address)
+        with pytest.raises(BleakError) as exc_info:
+            await client.connect()
 
     message = str(exc_info.value)
     assert "No backend with an available connection slot" in message
     assert "Tried 1 scanner(s) that heard this address" in message
+    assert "none were usable" in message
     assert "proxy_a_name" in message
+    assert "connector cannot connect" in message
+    assert "slots=0/3 free" in message
     assert "in_progress=" in message
 
     cancel()

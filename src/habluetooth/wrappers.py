@@ -662,8 +662,10 @@ class HaBleakClientWrapper(BleakClient):
         Distinguishes the two operationally distinct failure modes a user
         hits when a connect fails: (a) no scanner has heard the device
         recently — usually range, antenna, or device-side issue; (b)
-        scanners heard it but none have a free slot — typically a stuck
-        proxy or saturated adapter.
+        scanners heard it but none were usable — stuck proxy, saturated
+        adapter, or missing connector. Per-scanner reason is included so
+        the diagnostic does not falsely assert slot exhaustion when the
+        real cause was a missing or busy connector.
         """
         if not sorted_devices:
             connectable_count = sum(
@@ -677,6 +679,15 @@ class HaBleakClientWrapper(BleakClient):
         details: list[str] = []
         for device in sorted_devices:
             scanner = device.scanner
+            ble_device = device.ble_device
+            if not device_source(ble_device):
+                reason = "local slot unavailable"
+            elif not scanner.connector:
+                reason = "no connector"
+            elif not scanner.connector.can_connect():
+                reason = "connector cannot connect"
+            else:
+                reason = "unknown"
             allocations = scanner.get_allocations()
             slot_info = (
                 f"slots={allocations.free}/{allocations.slots} free"
@@ -684,12 +695,12 @@ class HaBleakClientWrapper(BleakClient):
                 else "no slot info"
             )
             details.append(
-                f"{scanner.name} ({slot_info}, "
+                f"{scanner.name} ({reason}, {slot_info}, "
                 f"in_progress={scanner._connections_in_progress()})"
             )
         return (
             f"Tried {len(sorted_devices)} scanner(s) that heard this address, "
-            f"none had a free connection slot: {'; '.join(details)}"
+            f"none were usable: {'; '.join(details)}"
         )
 
     async def disconnect(self) -> None:
