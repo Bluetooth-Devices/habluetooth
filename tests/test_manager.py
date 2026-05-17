@@ -1408,3 +1408,86 @@ async def test_is_operating_degraded_after_permission_error() -> None:
         # Should be in degraded mode
         assert manager._mgmt_ctl is None
         assert manager.is_operating_degraded() is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_async_scanner_count_includes_non_connectable(
+    register_hci0_scanner: None,
+    register_non_connectable_scanner: None,
+) -> None:
+    """Connectable count excludes non-connectable; full count includes both."""
+    manager = get_manager()
+    assert manager.async_scanner_count(connectable=True) == 1
+    assert manager.async_scanner_count(connectable=False) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_async_address_present_non_connectable_history(
+    register_non_connectable_scanner: None,
+) -> None:
+    """async_address_present(connectable=False) reads the all-history map."""
+    manager = get_manager()
+    address = "44:44:33:11:23:99"
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", service_uuids=[])
+    inject_advertisement_with_time_and_source_connectable(
+        device, adv, time.monotonic(), "AA:BB:CC:DD:EE:FF", False
+    )
+    assert manager.async_address_present(address, connectable=False) is True
+    assert manager.async_address_present(address, connectable=True) is False
+    missing = "00:00:00:00:00:00"
+    assert manager.async_address_present(missing, connectable=False) is False
+
+
+@pytest.mark.asyncio
+async def test_async_track_unavailable_connectable_branch() -> None:
+    """connectable=True routes the callback to the connectable callback map."""
+    manager = get_manager()
+
+    def _cb(_info: BluetoothServiceInfoBleak) -> None:
+        return
+
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_track_unavailable(_cb, address, connectable=True)
+    try:
+        assert _cb in manager._connectable_unavailable_callbacks[address]
+        assert address not in manager._unavailable_callbacks
+    finally:
+        cancel()
+    assert address not in manager._connectable_unavailable_callbacks
+
+
+@pytest.mark.asyncio
+async def test_async_current_allocations_unknown_source_returns_empty() -> None:
+    """Querying an unknown source returns [] rather than None."""
+    manager = get_manager()
+    assert manager.async_current_allocations("not-a-real-source") == []
+
+
+@pytest.mark.asyncio
+async def test_async_recover_failed_adapters_skips_when_lock_held() -> None:
+    """If recovery is already in flight, a concurrent call is a no-op."""
+    manager = get_manager()
+    with patch.object(
+        manager, "async_get_bluetooth_adapters", new=AsyncMock()
+    ) as mock_get:
+        await manager._recovery_lock.acquire()
+        try:
+            await manager._async_recover_failed_adapters()
+        finally:
+            manager._recovery_lock.release()
+    mock_get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_get_bluetooth_adapters_cached_false_triggers_refresh() -> None:
+    """cached=False forces a refresh of the underlying adapter source."""
+    manager = get_manager()
+    assert manager._bluetooth_adapters is not None
+    with patch.object(
+        manager._bluetooth_adapters, "refresh", new=AsyncMock()
+    ) as mock_refresh:
+        await manager.async_get_bluetooth_adapters(cached=False)
+    mock_refresh.assert_awaited_once()
