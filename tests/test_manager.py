@@ -542,6 +542,8 @@ async def test_diagnostics(register_hci0_scanner: None) -> None:
         "connectable_history": ANY,
         "scanners": [
             {
+                "connect_failures": {},
+                "connect_in_progress": {},
                 "discovered_devices_and_advertisement_data": [],
                 "connectable": True,
                 "current_mode": None,

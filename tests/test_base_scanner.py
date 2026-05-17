@@ -1419,6 +1419,46 @@ async def test_remote_scanner_async_diagnostics() -> None:
     # Base keys still present.
     assert diagnostics["source"] == "esp32"
     assert diagnostics["connectable"] is True
+    # Connection counters start empty.
+    assert diagnostics["connect_in_progress"] == {}
+    assert diagnostics["connect_failures"] == {}
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_diagnostics_surface_connect_state() -> None:
+    """async_diagnostics should expose connect-in-progress and failure counts."""
+    manager = get_manager()
+    scanner = FakeScanner(source="diag", adapter="diag", connector=None, connectable=True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    addr_a = "AA:BB:CC:DD:EE:01"
+    addr_b = "AA:BB:CC:DD:EE:02"
+
+    # Two attempts in flight for addr_a, one for addr_b.
+    scanner._add_connecting(addr_a)
+    scanner._add_connecting(addr_a)
+    scanner._add_connecting(addr_b)
+
+    # addr_a then succeeds (clears its failures), addr_b fails twice.
+    scanner._finished_connecting(addr_a, connected=True)
+    scanner._finished_connecting(addr_b, connected=False)
+    scanner._add_connecting(addr_b)
+    scanner._finished_connecting(addr_b, connected=False)
+
+    diagnostics = await scanner.async_diagnostics()
+    # addr_a still has one in-flight attempt, addr_b is fully drained.
+    assert diagnostics["connect_in_progress"] == {addr_a: 1}
+    assert diagnostics["connect_failures"] == {addr_b: 2}
+    # Returned dicts must be copies — mutating them doesn't poison scanner state.
+    diagnostics["connect_in_progress"].clear()
+    diagnostics["connect_failures"].clear()
+    assert scanner._connect_in_progress == {addr_a: 1}
+    assert scanner._connect_failures == {addr_b: 2}
 
     cancel()
     unsetup()

@@ -367,6 +367,8 @@ class BaseHaScanner:
             "type": self.__class__.__name__,
             "last_detection": self._last_detection,
             "monotonic_time": monotonic_time_coarse(),
+            "connect_in_progress": dict(self._connect_in_progress),
+            "connect_failures": dict(self._connect_failures),
             "discovered_devices_and_advertisement_data": [
                 {
                     "name": device.name,
