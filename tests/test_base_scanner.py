@@ -1432,7 +1432,9 @@ async def test_remote_scanner_async_diagnostics() -> None:
 async def test_diagnostics_surface_connect_state() -> None:
     """async_diagnostics should expose connect-in-progress and failure counts."""
     manager = get_manager()
-    scanner = FakeScanner(source="diag", adapter="diag", connector=None, connectable=True)
+    scanner = FakeScanner(
+        source="diag", adapter="diag", connector=None, connectable=True
+    )
     unsetup = scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
