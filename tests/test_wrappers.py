@@ -1443,6 +1443,59 @@ async def test_passive_scanner_with_active_scanner() -> None:
     cancel_active()
 
 
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_no_backend_error_includes_scanner_slot_diagnostics() -> None:
+    """Error message should describe which scanners were tried and their slot state."""
+    manager = _get_manager()
+    scanner = FakeScanner("proxy_a", "proxy_a_name", None, True)
+    cancel = manager.async_register_scanner(scanner)
+
+    address = "00:00:00:00:00:42"
+    device = generate_ble_device(address, "Test Device", {"source": "proxy_a"})
+    adv_data = generate_advertisement_data(
+        local_name="Test Device", service_uuids=[], rssi=-50
+    )
+    scanner.inject_advertisement(device, adv_data)
+    await asyncio.sleep(0)
+
+    # FakeScanner has no connector → can_connect() path returns no backend,
+    # so the loop exhausts and the diagnostic branch fires.
+    client = bleak.BleakClient(address)
+    with pytest.raises(BleakError) as exc_info:
+        await client.connect()
+
+    message = str(exc_info.value)
+    assert "No backend with an available connection slot" in message
+    assert "Tried 1 scanner(s) that heard this address" in message
+    assert "proxy_a_name" in message
+    assert "in_progress=" in message
+
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_no_backend_error_when_no_scanner_heard_address() -> None:
+    """Error message should say so when no scanner has detected the address."""
+    manager = _get_manager()
+    # Register a connectable scanner that never injects this address.
+    scanner = FakeScanner("proxy_b", "proxy_b_name", None, True)
+    cancel = manager.async_register_scanner(scanner)
+    await asyncio.sleep(0)
+
+    client = bleak.BleakClient("00:00:00:00:00:43")
+    with pytest.raises(BleakError) as exc_info:
+        await client.connect()
+
+    message = str(exc_info.value)
+    assert "No backend with an available connection slot" in message
+    assert "No connectable scanner has detected this address recently" in message
+    assert "1 connectable scanner(s) registered" in message
+
+    cancel()
+
+
 @pytest.mark.asyncio
 async def test_connection_params_loading_with_bluez_mgmt(
     two_adapters: None,
@@ -1910,7 +1963,10 @@ async def test_connection_path_scoring_no_slots_available(
             scanner2,
             "get_allocations",
             return_value=Allocations(
-                adapter="scanner2", slots=3, free=3, allocated=[]  # All slots free
+                adapter="scanner2",
+                slots=3,
+                free=3,
+                allocated=[],  # All slots free
             ),
         ),
     ):
@@ -2162,48 +2218,48 @@ async def test_thundering_herd_connection_slots() -> None:
 
         # Verify constraints
         # 1. No proxy should exceed its slot limit
-        assert (
-            len(proxy1_connections) <= 3
-        ), f"Proxy1 exceeded slot limit: {len(proxy1_connections)} > 3"
-        assert (
-            len(proxy2_connections) <= 3
-        ), f"Proxy2 exceeded slot limit: {len(proxy2_connections)} > 3"
-        assert (
-            len(proxy3_connections) <= 3
-        ), f"Proxy3 exceeded slot limit: {len(proxy3_connections)} > 3"
+        assert len(proxy1_connections) <= 3, (
+            f"Proxy1 exceeded slot limit: {len(proxy1_connections)} > 3"
+        )
+        assert len(proxy2_connections) <= 3, (
+            f"Proxy2 exceeded slot limit: {len(proxy2_connections)} > 3"
+        )
+        assert len(proxy3_connections) <= 3, (
+            f"Proxy3 exceeded slot limit: {len(proxy3_connections)} > 3"
+        )
 
         # 2. Good signal proxies should be preferred and fill up first
         good_proxy_total = len(proxy1_connections) + len(proxy2_connections)
-        assert (
-            good_proxy_total == 6
-        ), f"Expected exactly 6 connections on good proxies, got {good_proxy_total}"
+        assert good_proxy_total == 6, (
+            f"Expected exactly 6 connections on good proxies, got {good_proxy_total}"
+        )
 
         # 3. All 7 devices should connect (6 to good proxies, 1 to bad proxy)
         total_connected = (
             len(proxy1_connections) + len(proxy2_connections) + len(proxy3_connections)
         )
-        assert (
-            total_connected == 7
-        ), f"Expected all 7 devices to connect, but only {total_connected} did"
+        assert total_connected == 7, (
+            f"Expected all 7 devices to connect, but only {total_connected} did"
+        )
 
         # 4. The 7th device should go to proxy3 since good ones are full
-        assert (
-            len(proxy3_connections) == 1
-        ), f"Expected exactly 1 connection on proxy3, got {len(proxy3_connections)}"
+        assert len(proxy3_connections) == 1, (
+            f"Expected exactly 1 connection on proxy3, got {len(proxy3_connections)}"
+        )
 
         # 5. Verify good distribution across proxy1 and proxy2
         # Both should have roughly equal load (3 connections each)
-        assert (
-            len(proxy1_connections) == 3
-        ), f"Expected proxy1 to have 3 connections, got {len(proxy1_connections)}"
-        assert (
-            len(proxy2_connections) == 3
-        ), f"Expected proxy2 to have 3 connections, got {len(proxy2_connections)}"
+        assert len(proxy1_connections) == 3, (
+            f"Expected proxy1 to have 3 connections, got {len(proxy1_connections)}"
+        )
+        assert len(proxy2_connections) == 3, (
+            f"Expected proxy2 to have 3 connections, got {len(proxy2_connections)}"
+        )
 
         # 6. No connections should fail
-        assert (
-            len(failed_connections) == 0
-        ), f"Expected no failed connections, but {len(failed_connections)} failed"
+        assert len(failed_connections) == 0, (
+            f"Expected no failed connections, but {len(failed_connections)} failed"
+        )
 
         # Clean up
         cancel1()

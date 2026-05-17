@@ -53,6 +53,7 @@ def _get_device_address_type(device: BLEDevice) -> int:
 if TYPE_CHECKING:
     from .base_scanner import BaseHaScanner
     from .manager import BluetoothManager
+    from .scanner_device import BluetoothScannerDevice
 
 
 @dataclass(slots=True)
@@ -644,9 +645,51 @@ class HaBleakClientWrapper(BleakClient):
                     f"Available: {', '.join(scanner_names)}"
                 )
 
+        detail = self._describe_unavailable_scanners(manager, sorted_devices)
         raise BleakError(
             "No backend with an available connection slot that can reach address"
-            f" {address} was found"
+            f" {address} was found. {detail}"
+        )
+
+    def _describe_unavailable_scanners(
+        self,
+        manager: BluetoothManager,
+        sorted_devices: list[BluetoothScannerDevice],
+    ) -> str:
+        """
+        Describe why no scanner could reach the address.
+
+        Distinguishes the two operationally distinct failure modes a user
+        hits when a connect fails: (a) no scanner has heard the device
+        recently — usually range, antenna, or device-side issue; (b)
+        scanners heard it but none have a free slot — typically a stuck
+        proxy or saturated adapter.
+        """
+        connectable_count = sum(
+            1 for s in manager.async_current_scanners() if s.connectable
+        )
+        if not sorted_devices:
+            return (
+                f"No connectable scanner has detected this address recently "
+                f"({connectable_count} connectable scanner(s) registered)."
+            )
+
+        details: list[str] = []
+        for device in sorted_devices:
+            scanner = device.scanner
+            allocations = scanner.get_allocations()
+            slot_info = (
+                f"slots={allocations.free}/{allocations.slots} free"
+                if allocations is not None
+                else "no slot info"
+            )
+            details.append(
+                f"{scanner.name} ({slot_info}, "
+                f"in_progress={scanner._connections_in_progress()})"
+            )
+        return (
+            f"Tried {len(sorted_devices)} scanner(s) that heard this address, "
+            f"none had a free connection slot: {'; '.join(details)}"
         )
 
     async def disconnect(self) -> None:
