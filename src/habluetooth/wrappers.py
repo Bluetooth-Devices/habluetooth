@@ -665,10 +665,10 @@ class HaBleakClientWrapper(BleakClient):
         scanners heard it but none have a free slot — typically a stuck
         proxy or saturated adapter.
         """
-        connectable_count = sum(
-            1 for s in manager.async_current_scanners() if s.connectable
-        )
         if not sorted_devices:
+            connectable_count = sum(
+                1 for s in manager.async_current_scanners() if s.connectable
+            )
             return (
                 f"No connectable scanner has detected this address recently "
                 f"({connectable_count} connectable scanner(s) registered)."
