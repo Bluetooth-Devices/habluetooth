@@ -49,6 +49,8 @@ jobs:
           - "skip_cython"
           - "use_cython"
     runs-on: ${{ matrix.os }}
+    env:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
       - name: Install poetry
@@ -59,7 +61,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "poetry"
           allow-prereleases: true
+      - name: Cache poetry venv
+        id: cache-venv
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            .venv
+            src/habluetooth/**/*.so
+          key: venv-v1-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-py${{ matrix.python-version }}-${{ matrix.extension }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py') }}-${{ hashFiles('src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
       - name: Install Dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
           if [ "${{ matrix.extension }}" = "skip_cython" ]; then
             SKIP_CYTHON=1 poetry install --only=main,dev
@@ -77,6 +88,8 @@ jobs:
 
   benchmark:
     runs-on: ubuntu-latest
+    env:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
       - name: Install poetry
@@ -87,7 +100,16 @@ jobs:
           python-version: "3.14"
           cache: "poetry"
           allow-prereleases: true
+      - name: Cache poetry venv
+        id: cache-venv
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            .venv
+            src/habluetooth/**/*.so
+          key: venv-v1-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-benchmark-py3.14-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py') }}-${{ hashFiles('src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
       - name: Install Dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
           REQUIRE_CYTHON=1 poetry install --only=main,dev
         shell: bash
