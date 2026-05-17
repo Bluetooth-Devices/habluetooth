@@ -1450,9 +1450,7 @@ async def test_no_backend_error_includes_scanner_slot_diagnostics() -> None:
     manager = _get_manager()
     # Connector present but can_connect=False simulates the stuck-proxy
     # condition that issue #340 targets — slot bookkeeping says 0 free.
-    connector = HaBluetoothConnector(
-        FakeBleakClient, "proxy_a", lambda: False
-    )
+    connector = HaBluetoothConnector(FakeBleakClient, "proxy_a", lambda: False)
     scanner = FakeScanner("proxy_a", "proxy_a_name", connector, True)
     cancel = manager.async_register_scanner(scanner)
 
@@ -1467,9 +1465,7 @@ async def test_no_backend_error_includes_scanner_slot_diagnostics() -> None:
     with patch.object(
         scanner,
         "get_allocations",
-        return_value=Allocations(
-            adapter="proxy_a", slots=3, free=0, allocated=[]
-        ),
+        return_value=Allocations(adapter="proxy_a", slots=3, free=0, allocated=[]),
     ):
         client = bleak.BleakClient(address)
         with pytest.raises(BleakError) as exc_info:
