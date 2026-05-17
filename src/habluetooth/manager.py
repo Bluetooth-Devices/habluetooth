@@ -37,6 +37,7 @@ from .const import (
     CALLBACK_TYPE,
     FAILED_ADAPTER_MAC,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
+    STUCK_ALLOCATION_THRESHOLD_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .models import (
@@ -118,6 +119,7 @@ class BluetoothManager:
         "_all_history",
         "_allocations",
         "_allocations_callbacks",
+        "_allocations_zero_since",
         "_bleak_callbacks",
         "_bluetooth_adapters",
         "_cancel_allocation_callbacks",
@@ -138,6 +140,7 @@ class BluetoothManager:
         "_scanner_registration_callbacks",
         "_side_channel_scanners",
         "_sources",
+        "_stuck_allocations_warned",
         "_subclass_discover_info",
         "_unavailable_callbacks",
         "has_advertising_side_channel",
@@ -172,6 +175,8 @@ class BluetoothManager:
         self._adapters: dict[str, AdapterDetails] = {}
         self._adapter_sources: dict[str, str] = {}
         self._allocations: dict[str, HaBluetoothSlotAllocations] = {}
+        self._allocations_zero_since: dict[str, float] = {}
+        self._stuck_allocations_warned: set[str] = set()
         self._sources: dict[str, BaseHaScanner] = {}
         self._bluetooth_adapters = bluetooth_adapters or get_adapters()
         self.slot_manager = slot_manager or BleakSlotManager()
@@ -254,6 +259,9 @@ class BluetoothManager:
                 source: asdict(allocations)
                 for source, allocations in self._allocations.items()
             },
+            "stuck_allocations": [
+                asdict(allocations) for allocations in self.async_stuck_allocations()
+            ],
             "scanners": scanner_diagnostics,
             "connectable_history": [
                 service_info.as_dict()
@@ -494,7 +502,66 @@ class BluetoothManager:
                     except Exception:  # pylint: disable=broad-except
                         _LOGGER.exception("Error in unavailable callback")
 
+        self._async_check_stuck_allocations(monotonic_now)
         self._schedule_unavailable_tracking()
+
+    def _async_check_stuck_allocations(self, monotonic_now: float) -> None:
+        """
+        Warn about scanners stuck reporting zero free connection slots.
+
+        Some Bluetooth proxies can enter a state where they report all
+        connection slots as occupied even though no devices are actually
+        connected. The only known recovery is to reboot the proxy. This
+        check surfaces the symptom as a warning so the operator can act,
+        instead of silently failing every connection attempt.
+        """
+        for source, zero_since in self._allocations_zero_since.items():
+            duration = monotonic_now - zero_since
+            if duration < STUCK_ALLOCATION_THRESHOLD_SECONDS:
+                continue
+            if source in self._stuck_allocations_warned:
+                continue
+            scanner = self._sources.get(source)
+            if scanner is None:
+                continue
+            # If habluetooth itself has connections in progress through this
+            # scanner, the zero-free report is plausible — skip it.
+            if scanner._connect_in_progress:
+                continue
+            self._stuck_allocations_warned.add(source)
+            allocations = self._allocations.get(source)
+            slots = allocations.slots if allocations else 0
+            _LOGGER.warning(
+                "%s (%s): scanner has reported 0/%s free connection slots "
+                "for %.0f minutes with no connection attempts from this "
+                "host; the proxy may be stuck and require a reboot to "
+                "restore BLE connections",
+                scanner.name,
+                source,
+                slots,
+                duration / 60,
+            )
+
+    def async_stuck_allocations(self) -> list[HaBluetoothSlotAllocations]:
+        """
+        Return scanners currently considered stuck at zero free slots.
+
+        A scanner is considered stuck when it has reported zero free
+        connection slots for at least
+        :data:`STUCK_ALLOCATION_THRESHOLD_SECONDS` while this host has no
+        connections in progress through it.
+        """
+        monotonic_now = monotonic_time_coarse()
+        stuck: list[HaBluetoothSlotAllocations] = []
+        for source, zero_since in self._allocations_zero_since.items():
+            if monotonic_now - zero_since < STUCK_ALLOCATION_THRESHOLD_SECONDS:
+                continue
+            scanner = self._sources.get(source)
+            if scanner is None or scanner._connect_in_progress:
+                continue
+            if allocations := self._allocations.get(source):
+                stuck.append(allocations)
+        return stuck
 
     def _address_disappeared(self, address: str) -> None:
         """
@@ -846,6 +913,8 @@ class BluetoothManager:
         del self._sources[scanner.source]
         del self._adapter_sources[scanner.adapter]
         self._allocations.pop(scanner.source, None)
+        self._allocations_zero_since.pop(scanner.source, None)
+        self._stuck_allocations_warned.discard(scanner.source)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
         if (idx := scanner.adapter_idx) is not None:
@@ -936,6 +1005,13 @@ class BluetoothManager:
             allocated=allocations.allocated,
         )
         self._allocations[source] = ha_slot_allocations
+        if allocations.slots > 0 and allocations.free == 0:
+            # Mark when this source first reported zero free slots so
+            # _async_check_stuck_allocations can detect a stuck state.
+            self._allocations_zero_since.setdefault(source, monotonic_time_coarse())
+        else:
+            self._allocations_zero_since.pop(source, None)
+            self._stuck_allocations_warned.discard(source)
         for source_key in (source, None):
             if not (
                 allocation_callbacks := self._allocations_callbacks.get(source_key)
