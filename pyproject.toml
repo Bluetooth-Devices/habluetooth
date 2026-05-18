@@ -36,7 +36,7 @@ script = "build_ext.py"
 [tool.poetry.dependencies]
 python = ">=3.11,<3.15"
 bleak = ">=1.0.1"
-bleak-retry-connector = ">=4.2.0"
+bleak-retry-connector = ">=4.6.0"
 bluetooth-data-tools = ">=1.28.0"
 bluetooth-adapters = ">=2.1.0"
 bluetooth-auto-recovery = ">=1.5.1"
