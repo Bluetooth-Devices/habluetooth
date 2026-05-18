@@ -544,6 +544,9 @@ async def test_diagnostics(register_hci0_scanner: None) -> None:
             {
                 "connect_failures": {},
                 "connect_in_progress": {},
+                "connect_completed_total": 0,
+                "connect_failed_total": 0,
+                "last_connect_completed_time": 0.0,
                 "discovered_devices_and_advertisement_data": [],
                 "connectable": True,
                 "current_mode": None,

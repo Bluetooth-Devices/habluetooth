@@ -1482,11 +1482,51 @@ async def test_diagnostics_surface_connect_state() -> None:
     # addr_a still has one in-flight attempt, addr_b is fully drained.
     assert diagnostics["connect_in_progress"] == {addr_a: 1}
     assert diagnostics["connect_failures"] == {addr_b: 2}
+    # Lifetime counters: one success (addr_a), two failures (addr_b twice).
+    assert diagnostics["connect_completed_total"] == 1
+    assert diagnostics["connect_failed_total"] == 2
+    assert diagnostics["last_connect_completed_time"] > 0.0
     # Returned dicts must be copies — mutating them doesn't poison scanner state.
     diagnostics["connect_in_progress"].clear()
     diagnostics["connect_failures"].clear()
     assert scanner._connect_in_progress == {addr_a: 1}
     assert scanner._connect_failures == {addr_b: 2}
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_lifetime_connect_counters_reset_on_history_clear() -> None:
+    """Lifetime counters should reset whenever connection history is cleared."""
+    manager = get_manager()
+    scanner = FakeScanner(
+        source="counters", adapter="counters", connector=None, connectable=True
+    )
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    addr = "AA:BB:CC:DD:EE:99"
+    # Three successes, one failure → totals reflect lifetime, not per-address state.
+    for _ in range(3):
+        scanner._add_connecting(addr)
+        scanner._finished_connecting(addr, connected=True)
+    scanner._add_connecting(addr)
+    scanner._finished_connecting(addr, connected=False)
+
+    assert scanner._connect_completed_total == 3
+    assert scanner._connect_failed_total == 1
+    assert scanner._last_connect_completed_time > 0.0
+    # Per-address failure count survives because success preceded the last failure.
+    assert scanner._connect_failures == {addr: 1}
+
+    scanner._clear_connection_history()
+    assert scanner._connect_completed_total == 0
+    assert scanner._connect_failed_total == 0
+    assert scanner._last_connect_completed_time == 0.0
+    assert scanner._connect_failures == {}
+    assert scanner._connect_in_progress == {}
 
     cancel()
     unsetup()
