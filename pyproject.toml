@@ -41,7 +41,7 @@ bluetooth-data-tools = ">=1.28.0"
 bluetooth-adapters = ">=2.1.0"
 bluetooth-auto-recovery = ">=1.5.1"
 async-interrupt = ">=1.1.1"
-dbus-fast = { version = ">=2.30.2", markers = "platform_system == 'Linux'" }
+dbus-fast = { version = ">=4.3.0", markers = "platform_system == 'Linux'" }
 btsocket = ">=0.3.0"
 
 [tool.poetry.group.dev.dependencies]
@@ -50,7 +50,7 @@ pytest-cov = ">=3,<8"
 pytest-asyncio = ">=0.23.6,<1.4.0"
 pytest-codspeed = ">=2.2.1,<5.0.0"
 freezegun = "^1.5.5"
-dbus-fast = ">=2.30.2"
+dbus-fast = ">=4.3.0"
 
 [tool.poetry.group.docs]
 optional = true
