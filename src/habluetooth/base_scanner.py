@@ -48,11 +48,14 @@ class BaseHaScanner:
     __slots__ = (
         "_cancel_track",
         "_cancel_watchdog",
+        "_connect_completed_total",
+        "_connect_failed_total",
         "_connect_failures",
         "_connect_in_progress",
         "_connecting",
         "_details",
         "_expire_seconds",
+        "_last_connect_completed_time",
         "_last_detection",
         "_loop",
         "_manager",
@@ -122,6 +125,9 @@ class BaseHaScanner:
         self._cancel_track: asyncio.TimerHandle | None = None
         self._connect_failures: dict[str, int] = {}
         self._connect_in_progress: dict[str, int] = {}
+        self._connect_completed_total: int = 0
+        self._connect_failed_total: int = 0
+        self._last_connect_completed_time: float = 0.0
 
     def _on_start_success(self) -> None:
         """
@@ -136,13 +142,19 @@ class BaseHaScanner:
         """Clear the connection history for a scanner."""
         self._connect_failures.clear()
         self._connect_in_progress.clear()
+        self._connect_completed_total = 0
+        self._connect_failed_total = 0
+        self._last_connect_completed_time = 0.0
 
     def _finished_connecting(self, address: str, connected: bool) -> None:
         """Finished connecting."""
         self._remove_connecting(address)
         if connected:
+            self._connect_completed_total += 1
+            self._last_connect_completed_time = monotonic_time_coarse()
             self._clear_connect_failure(address)
         else:
+            self._connect_failed_total += 1
             self._add_connect_failure(address)
 
     def _increase_count(self, target: dict[str, int], address: str) -> None:
@@ -369,6 +381,9 @@ class BaseHaScanner:
             "monotonic_time": monotonic_time_coarse(),
             "connect_in_progress": dict(self._connect_in_progress),
             "connect_failures": dict(self._connect_failures),
+            "connect_completed_total": self._connect_completed_total,
+            "connect_failed_total": self._connect_failed_total,
+            "last_connect_completed_time": self._last_connect_completed_time,
             "discovered_devices_and_advertisement_data": [
                 {
                     "name": device.name,
