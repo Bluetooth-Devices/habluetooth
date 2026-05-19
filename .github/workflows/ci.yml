@@ -12,6 +12,7 @@ concurrency:
 
 env:
   POETRY_VIRTUALENVS_IN_PROJECT: "true"
+  UV_PYTHON_PREFERENCE: only-managed
 
 jobs:
   lint:
@@ -61,6 +62,7 @@ jobs:
       - name: Install poetry
         run: uv tool install poetry
       - name: Set up Python
+        id: setup-python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -73,7 +75,7 @@ jobs:
           path: |
             .venv
             src/habluetooth/**/*.so
-          key: venv-v2-${{ runner.os }}-py${{ matrix.python-version }}-${{ matrix.extension }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
+          key: venv-v2-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ matrix.extension }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
       - name: Install Dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
@@ -102,6 +104,7 @@ jobs:
       - name: Install poetry
         run: uv tool install poetry
       - name: Setup Python 3.14
+        id: setup-python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v5
         with:
           python-version: "3.14"
@@ -114,7 +117,7 @@ jobs:
           path: |
             .venv
             src/habluetooth/**/*.so
-          key: venv-v2-${{ runner.os }}-benchmark-py3.14-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
+          key: venv-v2-${{ runner.os }}-benchmark-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
       - name: Install Dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
