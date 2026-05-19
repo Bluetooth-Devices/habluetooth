@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from unittest.mock import MagicMock
 
 import pytest
 from bleak.backends.scanner import AdvertisementData
+from bleak_retry_connector import Allocations
 from bluetooth_data_tools import monotonic_time_coarse
 from pytest_codspeed import BenchmarkFixture
 
@@ -14,6 +16,7 @@ from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector, get_manager
 from habluetooth.channels.bluez import BluetoothMGMTProtocol
 from habluetooth.models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from habluetooth.scanner import HaScanner
+from habluetooth.wrappers import HaBleakClientWrapper
 
 from . import (
     MockBleakClient,
@@ -1023,3 +1026,61 @@ async def test_inject_100_bluez_raw_end_to_end_changed(
             protocol.data_received(packet)
 
     cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_describe_unavailable_scanners_with_20_scanners(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """
+    Benchmark the no-backend error diagnostic with 20 scanners.
+
+    All 20 scanners heard the address; this is the stuck-proxy path that
+    fires on every failing connect attempt (issue #340), so its cost
+    matters under repeated invocation.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:99"
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+
+    class StuckProxyScanner(BaseHaRemoteScanner):
+        """Remote scanner that reports zero free slots."""
+
+        def get_allocations(self) -> Allocations | None:
+            return Allocations(adapter=self.source, slots=3, free=0, allocated=[])
+
+    cancels: list[Callable[[], None]] = []
+    unsetups: list[Callable[[], None]] = []
+    for i in range(20):
+        source = f"proxy_{i:02d}"
+        scanner = StuckProxyScanner(source, source, connector, True)
+        unsetups.append(scanner.async_setup())
+        cancels.append(manager.async_register_scanner(scanner))
+        scanner._async_on_advertisement(
+            address,
+            -50 - i,  # rssi
+            "stuck_device",
+            [],
+            {},
+            {1: b"\x01"},
+            None,
+            {"scanner_specific_data": "test"},
+            monotonic_time_coarse(),
+        )
+
+    sorted_devices = manager.async_scanner_devices_by_address(address, True)
+
+    wrapper = HaBleakClientWrapper(address)
+
+    @benchmark
+    def run():
+        wrapper._describe_unavailable_scanners(manager, sorted_devices)
+
+    for cancel in cancels:
+        cancel()
+    for unsetup in unsetups:
+        unsetup()

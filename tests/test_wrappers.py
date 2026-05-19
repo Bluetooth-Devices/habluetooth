@@ -1443,6 +1443,68 @@ async def test_passive_scanner_with_active_scanner() -> None:
     cancel_active()
 
 
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_no_backend_error_includes_scanner_slot_diagnostics() -> None:
+    """Error message should describe scanner slot state on stuck-proxy path."""
+    manager = _get_manager()
+    # Connector present but can_connect=False simulates the stuck-proxy
+    # condition that issue #340 targets — slot bookkeeping says 0 free.
+    connector = HaBluetoothConnector(FakeBleakClient, "proxy_a", lambda: False)
+    scanner = FakeScanner("proxy_a", "proxy_a_name", connector, True)
+    cancel = manager.async_register_scanner(scanner)
+
+    address = "00:00:00:00:00:42"
+    device = generate_ble_device(address, "Test Device", {"source": "proxy_a"})
+    adv_data = generate_advertisement_data(
+        local_name="Test Device", service_uuids=[], rssi=-50
+    )
+    scanner.inject_advertisement(device, adv_data)
+    await asyncio.sleep(0)
+
+    with patch.object(
+        scanner,
+        "get_allocations",
+        return_value=Allocations(adapter="proxy_a", slots=3, free=0, allocated=[]),
+    ):
+        client = bleak.BleakClient(address)
+        with pytest.raises(BleakError) as exc_info:
+            await client.connect()
+
+    message = str(exc_info.value)
+    assert "No backend with an available connection slot" in message
+    assert "Tried 1 scanner(s) that heard this address" in message
+    assert "none were usable" in message
+    assert "proxy_a_name" in message
+    assert "connector cannot connect" in message
+    assert "slots=0/3 free" in message
+    assert "in_progress=" in message
+
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_no_backend_error_when_no_scanner_heard_address() -> None:
+    """Error message should say so when no scanner has detected the address."""
+    manager = _get_manager()
+    # Register a connectable scanner that never injects this address.
+    scanner = FakeScanner("proxy_b", "proxy_b_name", None, True)
+    cancel = manager.async_register_scanner(scanner)
+    await asyncio.sleep(0)
+
+    client = bleak.BleakClient("00:00:00:00:00:43")
+    with pytest.raises(BleakError) as exc_info:
+        await client.connect()
+
+    message = str(exc_info.value)
+    assert "No backend with an available connection slot" in message
+    assert "No connectable scanner has detected this address recently" in message
+    assert "1 connectable scanner(s) registered" in message
+
+    cancel()
+
+
 @pytest.mark.asyncio
 async def test_connection_params_loading_with_bluez_mgmt(
     two_adapters: None,
@@ -1910,7 +1972,10 @@ async def test_connection_path_scoring_no_slots_available(
             scanner2,
             "get_allocations",
             return_value=Allocations(
-                adapter="scanner2", slots=3, free=3, allocated=[]  # All slots free
+                adapter="scanner2",
+                slots=3,
+                free=3,
+                allocated=[],  # All slots free
             ),
         ),
     ):
