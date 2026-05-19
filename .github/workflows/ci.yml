@@ -54,8 +54,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
       - name: Install poetry
-        run: pipx install poetry
+        run: uv tool install poetry
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v5
         with:
@@ -69,7 +73,7 @@ jobs:
           path: |
             .venv
             src/habluetooth/**/*.so
-          key: venv-v1-${{ runner.os }}-py${{ matrix.python-version }}-${{ matrix.extension }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
+          key: venv-v2-${{ runner.os }}-py${{ matrix.python-version }}-${{ matrix.extension }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
       - name: Install Dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
@@ -91,8 +95,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
       - name: Install poetry
-        run: pipx install poetry
+        run: uv tool install poetry
       - name: Setup Python 3.14
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v5
         with:
@@ -106,7 +114,7 @@ jobs:
           path: |
             .venv
             src/habluetooth/**/*.so
-          key: venv-v1-${{ runner.os }}-benchmark-py3.14-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
+          key: venv-v2-${{ runner.os }}-benchmark-py3.14-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
       - name: Install Dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
