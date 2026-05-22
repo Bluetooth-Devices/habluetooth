@@ -1091,6 +1091,7 @@ class BluetoothManager:
             scan_duration=scan_duration,
         )
         self._bleak_callbacks.add(callback_entry)
+        self._auto_scheduler.add_callback(callback_entry)
         # Replay the history since otherwise we miss devices
         # that were already discovered before the callback was registered
         # or we are in passive mode

@@ -640,6 +640,11 @@ class HaScanner(BaseHaScanner):
         if self._active_window_handle is not None:
             self._active_window_handle.cancel()
             self._active_window_handle = None
+        # Clear any in-flight AUTO active-window state. Without this a later
+        # async_start would still see _scan_mode_override == ACTIVE and the
+        # scanner would come back in continuous active mode.
+        self._scan_mode_override = None
+        self._active_window_end = 0.0
         if self._start_future is not None and not self._start_future.done():
             self._start_future.set_exception(_AbortStartError())
         async with self._start_stop_lock:

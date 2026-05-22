@@ -436,6 +436,168 @@ async def test_duration_clamped_to_bounds() -> None:
     assert sched._coalesce_duration([too_small]) == AUTO_WINDOW_MIN_DURATION
     assert sched._coalesce_duration([too_big]) == AUTO_WINDOW_MAX_DURATION
     assert sched._coalesce_duration([in_range]) == 7.5
-    # max() then clamp — the largest wins.
+    # max() then clamp; the largest wins.
     assert sched._coalesce_duration([too_small, in_range]) == 7.5
     assert sched._coalesce_duration([in_range, too_big]) == AUTO_WINDOW_MAX_DURATION
+
+
+@pytest.mark.asyncio
+async def test_on_advertisement_early_returns_with_no_interval_callbacks() -> None:
+    """Hot path is a no-op when no callback declared a scan_interval."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+
+    def _cb(_device: Any, _adv: Any) -> None: ...
+
+    # A regular bleak callback (no scan_interval) should NOT populate _needs.
+    cancel = manager.async_register_bleak_callback(_cb, {})
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        device = generate_ble_device("11:22:33:44:55:66", "x")
+        adv = generate_advertisement_data(local_name="x")
+        scanner._async_on_advertisement(
+            device.address,
+            adv.rssi,
+            device.name or "",
+            adv.service_uuids,
+            adv.service_data,
+            adv.manufacturer_data,
+            adv.tx_power,
+            {},
+            loop.time(),
+        )
+        assert sched._needs == {}
+        assert sched._interval_callbacks == set()
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_busy_scanner_defers_due_callbacks_not_busy_loops() -> None:
+    """If a scanner is mid-window, due callbacks are pushed past the window."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+
+    def _cb(_device: Any, _adv: Any) -> None: ...
+
+    cancel = manager.async_register_bleak_callback(
+        _cb,
+        {},
+        scanning_mode=BluetoothScanningMode.AUTO,
+        scan_interval=60.0,
+        scan_duration=3.0,
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        device = generate_ble_device("11:22:33:44:55:66", "x")
+        adv = generate_advertisement_data(local_name="x")
+        scanner._async_on_advertisement(
+            device.address,
+            adv.rssi,
+            device.name or "",
+            adv.service_uuids,
+            adv.service_data,
+            adv.manufacturer_data,
+            adv.tx_power,
+            {},
+            loop.time(),
+        )
+        callbacks = sched._needs["11:22:33:44:55:66"]
+        bleak_callback = next(iter(callbacks))
+        # Make the callback due and the scanner busy until 5s from now.
+        callbacks[bleak_callback] = loop.time() - 1.0
+        busy_end = loop.time() + 5.0
+        sched._scanner_windows[scanner.source] = busy_end
+        sched._async_tick()
+        await _drain(loop)
+        # No window request fired (scanner busy).
+        assert scanner.active_window_calls == []
+        # The callback's due time was deferred past the busy window.
+        assert callbacks[bleak_callback] >= busy_end
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_failed_request_clears_busy_marker() -> None:
+    """A False return from async_request_active_window frees the scanner immediately."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+
+    def _cb(_device: Any, _adv: Any) -> None: ...
+
+    cancel = manager.async_register_bleak_callback(
+        _cb,
+        {},
+        scanning_mode=BluetoothScanningMode.AUTO,
+        scan_interval=60.0,
+        scan_duration=3.0,
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    scanner._return_value = False
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        device = generate_ble_device("11:22:33:44:55:66", "x")
+        adv = generate_advertisement_data(local_name="x")
+        scanner._async_on_advertisement(
+            device.address,
+            adv.rssi,
+            device.name or "",
+            adv.service_uuids,
+            adv.service_data,
+            adv.manufacturer_data,
+            adv.tx_power,
+            {},
+            loop.time(),
+        )
+        callbacks = sched._needs["11:22:33:44:55:66"]
+        for cb in list(callbacks):
+            callbacks[cb] = loop.time() - 1.0
+        sched._async_tick()
+        await _drain(loop)
+        # Scanner was asked; it returned False; busy marker was cleared.
+        assert scanner.active_window_calls == [3.0]
+        assert scanner.source not in sched._scanner_windows
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_pending_window_tasks() -> None:
+    """Scheduler.stop cancels in-flight active-window tasks."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+
+    blocking = asyncio.Event()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    scanner._block_event = blocking
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] = (
+            loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        )
+        sched._async_tick()
+        await _drain(loop)
+        assert len(sched._pending_tasks) == 1
+        pending = next(iter(sched._pending_tasks))
+        sched.stop()
+        # Yield so the cancelled task can settle.
+        await asyncio.sleep(0)
+        assert pending.cancelled() or pending.done()
+        assert sched._pending_tasks == set()
+        assert sched._scanner_windows == {}
+        assert sched._sweep_in_flight is None
+    finally:
+        # Let the blocked task exit cleanly even after cancellation so the
+        # event loop has no dangling waiter at fixture teardown.
+        blocking.set()
+        register_cancel()
