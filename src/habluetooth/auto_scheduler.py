@@ -432,11 +432,14 @@ class AutoScanScheduler:
 
         Sync to match ``BluetoothManager.async_stop``;
         ``worker.stop()`` calls ``task.cancel()`` without awaiting.
-        Cancellation lands on the next loop iteration and asyncio
-        reaps the task; a mid-``_tick`` scanner call may complete
-        first. Harmless for HA shutdown (scanners are being torn
-        down). Non-teardown callers should run the loop one more
-        iteration to know workers have actually stopped.
+        Cancellation lands on the next loop iteration; a mid-``_tick``
+        scanner call may complete first. Harmless for HA shutdown.
+        Callers doing an in-place restart (``stop()`` then ``start()``
+        on the same scheduler) must ``await asyncio.sleep(0)`` between
+        them so cancelled tasks finish their finally blocks before
+        new workers spawn on the same sources; ``start()`` does not
+        guard against this since HA's setup/teardown flow never
+        does an in-place restart.
         """
         self._running = False
         for worker in self._workers.values():

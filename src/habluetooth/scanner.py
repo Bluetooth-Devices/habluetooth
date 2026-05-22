@@ -105,6 +105,10 @@ SCANNING_MODE_TO_BLEAK = {
     BluetoothScanningMode.PASSIVE: "passive",
     # AUTO starts in passive; the scheduler will request transient ACTIVE
     # windows by calling HaScanner.async_request_active_window.
+    # On macOS, create_bleak_scanner translates AUTO -> ACTIVE before
+    # the dict lookup since CoreBluetooth doesn't support passive;
+    # async_request_active_window is a no-op there because the radio
+    # is already active.
     BluetoothScanningMode.AUTO: "passive",
 }
 
@@ -132,6 +136,11 @@ def create_bleak_scanner(
     adapter: str | None,
 ) -> bleak.BleakScanner:
     """Create a Bleak scanner."""
+    # CoreBluetooth doesn't support passive scanning, so AUTO maps to
+    # ACTIVE on macOS (the radio just stays in active mode and
+    # async_request_active_window is a no-op).
+    if scanning_mode is BluetoothScanningMode.AUTO and IS_MACOS:
+        scanning_mode = BluetoothScanningMode.ACTIVE
     scanner_kwargs: dict[str, Any] = {
         "scanning_mode": SCANNING_MODE_TO_BLEAK[scanning_mode],
     }
@@ -696,13 +705,17 @@ class HaScanner(BaseHaScanner):
         """
         Run an active scan for ``duration`` seconds then restore prior mode.
 
-        No-op on non-AUTO scanners. While a window is already open, a
+        No-op on non-AUTO scanners. On macOS, AUTO already maps to
+        active (CoreBluetooth has no passive mode), so this is a
+        no-op success there too. While a window is already open, a
         longer follow-up extends the timer in place; a shorter (or
         equal) follow-up is a no-op on the timer but still returns
         True. Either way no second stop/restart cycle fires.
         """
         if self.requested_mode is not BluetoothScanningMode.AUTO:
             return False
+        if IS_MACOS:
+            return True
         if TYPE_CHECKING:
             assert self._loop is not None
         if self._active_window_handle is not None:
@@ -718,20 +731,11 @@ class HaScanner(BaseHaScanner):
             # would have cleared current_mode to PASSIVE). Skip the
             # restart, arm a new timer; _async_end_active_window will
             # see the new handle and bail when it acquires the lock.
-            mode_before_restart = self.current_mode
-            if mode_before_restart is BluetoothScanningMode.ACTIVE:
+            if self.current_mode is BluetoothScanningMode.ACTIVE:
                 self._arm_active_window_timer(duration)
                 return True
             try:
-                await self._async_stop_then_start_under_lock()
-            except ScannerStartError:
-                # ACTIVE start failed; try to bring the scanner back up
-                # in its underlying AUTO/passive mode so we don't leave
-                # it stopped.
-                self._scan_mode_override = None
-                with contextlib.suppress(ScannerStartError):
-                    await self._async_stop_then_start_under_lock()
-                return False
+                flipped = await self._async_toggle_active_window_mode()
             except BaseException:
                 # CancelledError, SystemExit, KeyboardInterrupt, an
                 # unexpected BleakError leaking out, etc. — any of
@@ -740,10 +744,13 @@ class HaScanner(BaseHaScanner):
                 # propagation is preserved.
                 self._scan_mode_override = None
                 raise
-            mode_after_restart = self.current_mode
-            if mode_after_restart is not BluetoothScanningMode.ACTIVE:
-                # Linux's 4th-attempt fallback silently drops to PASSIVE.
+            if not flipped:
+                # Toggle failed; try to bring the scanner back up in
+                # its underlying AUTO/passive mode via the full
+                # teardown path so we don't leave it stopped.
                 self._scan_mode_override = None
+                with contextlib.suppress(ScannerStartError):
+                    await self._async_stop_then_start_under_lock()
                 return False
             self._arm_active_window_timer(duration)
         return True
@@ -762,6 +769,10 @@ class HaScanner(BaseHaScanner):
             self._scan_mode_override = None
             if not self.scanning:
                 return
+            if await self._async_toggle_active_window_mode():
+                return
+            # Toggle failed; fall back to a full restart so we don't
+            # leave the scanner stuck in ACTIVE.
             try:
                 await self._async_stop_then_start_under_lock()
             except ScannerStartError as ex:
@@ -772,9 +783,83 @@ class HaScanner(BaseHaScanner):
                 )
 
     async def _async_stop_then_start_under_lock(self) -> None:
-        """Stop and restart the BleakScanner; caller holds _start_stop_lock."""
+        """
+        Stop and restart the BleakScanner; caller holds _start_stop_lock.
+
+        Full teardown path: nulls ``self.scanner`` and constructs a
+        fresh one in ``_async_start``. AUTO active-window flips use
+        ``_async_toggle_active_window_mode`` instead so they reuse
+        the existing BleakScanner instance and skip the new dbus
+        setup + ``restore_discoveries`` cost.
+        """
         await self._async_stop_scanner()
         await self._async_start()
+
+    async def _async_toggle_active_window_mode(self) -> bool:
+        """
+        Toggle the existing BleakScanner between active and passive.
+
+        Reuses the live ``self.scanner`` instance: stops discovery,
+        mutates the backend's private ``_scanning_mode`` to the value
+        derived from ``_scan_mode_override or requested_mode``, then
+        restarts. Bleak's BlueZ backend stores ``_scanning_mode`` as
+        a mutable instance attribute and reads it on every ``start``,
+        so the flip is observable without recreating the scanner.
+
+        Saves two costs per active-window cycle vs a full
+        stop_then_start: a fresh dbus client construction and the
+        ``restore_discoveries`` repopulation that runs on every new
+        instance. Bleak's internal device cache survives the
+        same-instance stop+start so ``BleakClient(address)`` lookups
+        keep working across the flip.
+
+        Linux/BlueZ only. On macOS AUTO maps to permanent active
+        scanning so ``async_request_active_window`` early-returns
+        without ever reaching this method. The watchdog /
+        ``async_stop`` / ``async_start`` paths still go through the
+        full-teardown ``_async_stop_then_start_under_lock`` so this
+        private-attribute access is bounded to the active-window
+        flip path.
+
+        Returns ``False`` if the scanner has been torn down (caller
+        should fall back to the full path); otherwise returns
+        ``True`` after a successful flip.
+        """
+        if self.scanner is None:
+            return False
+        effective_mode = self._scan_mode_override or self.requested_mode
+        if TYPE_CHECKING:
+            assert effective_mode is not None
+        mode_str = SCANNING_MODE_TO_BLEAK[effective_mode]
+        try:
+            async with asyncio.timeout(STOP_TIMEOUT):
+                await self.scanner.stop()
+        except (TimeoutError, BleakError) as ex:
+            _LOGGER.warning(
+                "%s: Error stopping scanner during active-window flip: %s",
+                self.name,
+                ex,
+            )
+            return False
+        # Private bleak attribute, but the only public way to change
+        # mode is to recreate the scanner. The BlueZ backend reads
+        # this on every start; CoreBluetooth (not supported for
+        # AUTO) reads it at construction so this branch never runs
+        # on macOS.
+        self.scanner._backend._scanning_mode = mode_str
+        try:
+            async with asyncio.timeout(START_TIMEOUT):
+                await self.scanner.start()
+        except (TimeoutError, BleakError, ScannerStartError) as ex:
+            _LOGGER.warning(
+                "%s: Error starting scanner during active-window flip: %s",
+                self.name,
+                ex,
+            )
+            return False
+        self.scanning = True
+        self.set_current_mode(effective_mode)
+        return True
 
     async def _async_stop_scanner(self) -> None:
         """Stop bluetooth discovery under the lock."""
