@@ -46,9 +46,3 @@ cdef class AutoScanScheduler:
     cpdef void start(self, object loop)
 
     cpdef void stop(self)
-
-    cpdef bint is_tracking(self, str address)
-
-    cpdef bint mark_due(self, str address)
-
-    cpdef bint mark_sweep_due(self, str source)

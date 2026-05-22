@@ -313,58 +313,6 @@ class AutoScanScheduler:
         if (worker := self._workers.get(source)) is not None:
             worker.wake()
 
-    def is_tracking(self, address: str) -> bool:
-        """Return whether ``address`` currently has any registered tracking."""
-        return address in self._needs
-
-    def mark_due(self, address: str) -> bool:
-        """
-        Force any tracked requests for ``address`` to fire on the next tick.
-
-        Returns True if there were entries to advance, False otherwise. Wakes
-        the worker that currently owns the address so the tick fires now.
-        """
-        entries = self._needs.get(address)
-        if not entries or self._loop is None:
-            return False
-        now = self._loop.time()
-        for request in entries:
-            entries[request] = now
-        history = self._manager._all_history.get(address)
-        if history is not None:
-            self._wake_worker(history.source)
-        return True
-
-    def mark_sweep_due(self, source: str) -> bool:
-        """
-        Force the global rediscovery sweep on ``source`` to be due now.
-
-        Returns True if the source has a worker and the sweep clock was
-        advanced; False otherwise. Used both as a test helper and as a hook
-        for ``BluetoothManager.async_rediscover_address`` style flows that
-        want an immediate sweep on a specific scanner.
-        """
-        worker = self._workers.get(source)
-        if worker is None or self._loop is None:
-            return False
-        worker._sweep_last_completed = (
-            self._loop.time() - _AUTO_REDISCOVERY_INTERVAL - 1.0
-        )
-        worker.wake()
-        return True
-
-    async def async_tick(self, source: str) -> None:
-        """
-        Drive a single processing tick for ``source`` synchronously.
-
-        Useful when a caller wants the scheduler to evaluate pending work
-        immediately instead of waiting for the worker's next sleep to
-        expire (and the primary entry point tests use to advance state
-        without poking the worker's internals).
-        """
-        if (worker := self._workers.get(source)) is not None:
-            await worker._tick()
-
     def _coalesce_duration(self, entries: list[ActiveScanRequest]) -> float:
         """Pick the max requested duration, clamped to the configured range."""
         requested = max(
