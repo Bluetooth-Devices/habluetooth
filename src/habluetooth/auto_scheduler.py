@@ -61,9 +61,15 @@ class ActiveScanRequest:
 class _ScannerWorker:
     """One persistent task per AUTO scanner; sleeps until next due event."""
 
-    def __init__(self, scheduler: AutoScanScheduler, scanner: BaseHaScanner) -> None:
+    def __init__(
+        self,
+        scheduler: AutoScanScheduler,
+        scanner: BaseHaScanner,
+        manager: BluetoothManager,
+    ) -> None:
         self._scheduler = scheduler
         self._scanner = scanner
+        self._manager = manager
         self._wake: asyncio.Event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._window_end: float = 0.0
@@ -92,7 +98,7 @@ class _ScannerWorker:
         next_at = self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
         source = self._scanner.source
         needs = self._scheduler._needs
-        last_service_info = self._scheduler._manager.async_last_service_info
+        last_service_info = self._manager.async_last_service_info
         for address, entries in needs.items():
             if not entries:
                 continue
@@ -136,7 +142,7 @@ class _ScannerWorker:
         """
         source = self._scanner.source
         needs = self._scheduler._needs
-        last_service_info = self._scheduler._manager.async_last_service_info
+        last_service_info = self._manager.async_last_service_info
         due_buckets: list[
             tuple[dict[ActiveScanRequest, float], list[ActiveScanRequest]]
         ] = []
@@ -298,7 +304,7 @@ class AutoScanScheduler:
 
     def _spawn_worker(self, scanner: BaseHaScanner) -> None:
         assert self._loop is not None  # noqa: S101
-        worker = _ScannerWorker(self, scanner)
+        worker = _ScannerWorker(self, scanner, self._manager)
         worker.start(self._loop)
         self._workers[scanner.source] = worker
 

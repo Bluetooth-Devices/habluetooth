@@ -20,6 +20,7 @@ cdef class _ScannerWorker:
 
     cdef public object _scheduler
     cdef public object _scanner
+    cdef public object _manager
     cdef public object _wake
     cdef public object _task
     cdef public double _window_end
