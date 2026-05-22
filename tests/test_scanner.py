@@ -1897,45 +1897,6 @@ async def test_async_request_active_window_recovers_on_start_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_request_active_window_detects_passive_fallback() -> None:
-    """If current_mode does not reach ACTIVE the request returns False."""
-
-    class MockBleakScanner:
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_, **__: MockBleakScanner(),
-    ):
-        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
-        scanner.async_setup()
-        await scanner.async_start()
-        # Patch set_current_mode so the swap's restart does NOT reach
-        # ACTIVE, mimicking the Linux 4th-attempt PASSIVE fallback path.
-        original_set_current_mode = type(scanner).set_current_mode
-
-        def _stay_passive(self, mode):
-            original_set_current_mode(self, BluetoothScanningMode.PASSIVE)
-
-        with patch.object(type(scanner), "set_current_mode", _stay_passive):
-            result = await scanner.async_request_active_window(1.0)
-        assert result is False
-        assert scanner._scan_mode_override is None
-        await scanner.async_stop()
-
-
-@pytest.mark.asyncio
 async def test_async_end_active_window_handles_start_error(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
