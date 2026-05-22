@@ -421,10 +421,7 @@ class AutoScanScheduler:
         for address, requests in self._requests_by_address.items():
             if last_service_info(address, False) is None:
                 continue
-            existing = self._needs.setdefault(address, {})
-            for request in requests:
-                if request not in existing:
-                    existing[request] = now + request.scan_interval
+            self._seed_requests(address, requests, now)
 
     def stop(self) -> None:
         """
@@ -547,14 +544,25 @@ class AutoScanScheduler:
         requests = self._requests_by_address.get(address)
         if requests is None:
             return
-        existing = self._needs.get(address)
-        now = self._loop.time()
+        self._seed_requests(address, requests, self._loop.time())
+        self._wake_worker(service_info.source)
+
+    def _seed_requests(
+        self,
+        address: str,
+        requests: set[ActiveScanRequest],
+        now: float,
+    ) -> None:
+        """
+        Insert any not-yet-tracked requests with next-due = now + interval.
+
+        Shared by ``on_advertisement`` and the ``start()`` replay
+        loop. Leaves existing entries' due times untouched.
+        """
+        existing = self._needs.setdefault(address, {})
         for request in requests:
-            if existing is None:
-                existing = self._needs[address] = {}
             if request not in existing:
                 existing[request] = now + request.scan_interval
-        self._wake_worker(service_info.source)
 
     def _wake_worker(self, source: str) -> None:
         """Wake the worker for ``source`` if one is registered."""

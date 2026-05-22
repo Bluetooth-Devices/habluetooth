@@ -688,6 +688,18 @@ class HaScanner(BaseHaScanner):
         self._scan_mode_override = None
         self._active_window_end = 0.0
 
+    def _arm_active_window_timer_if_extends(self, duration: float) -> None:
+        """
+        Re-arm the timer only if the new duration extends the window.
+
+        Shorter callers no-op so they can't shrink a window another
+        caller is depending on.
+        """
+        if TYPE_CHECKING:
+            assert self._loop is not None
+        if self._loop.time() + duration > self._active_window_end:
+            self._arm_active_window_timer(duration)
+
     def _arm_active_window_timer(self, duration: float) -> None:
         """
         Schedule the end-of-window callback.
@@ -724,22 +736,16 @@ class HaScanner(BaseHaScanner):
         if TYPE_CHECKING:
             assert self._loop is not None
         if self._active_window_handle is not None:
-            if self._loop.time() + duration > self._active_window_end:
-                # _arm_active_window_timer cancels the old handle
-                # internally so we don't need to do it twice here.
-                self._arm_active_window_timer(duration)
+            self._arm_active_window_timer_if_extends(duration)
             return True
         async with self._start_stop_lock:
             self._scan_mode_override = BluetoothScanningMode.ACTIVE
             # If the scanner is still ACTIVE here, the end-of-window task
             # for the previous timer is queued but hasn't run yet (it
             # would have cleared current_mode to PASSIVE). Skip the
-            # restart, re-arm only if our new duration extends past the
-            # current end; a shorter concurrent caller must not shrink
-            # an in-flight window someone else asked for.
+            # restart; same extend-only rule as the lockless fast path.
             if self.current_mode is BluetoothScanningMode.ACTIVE:
-                if self._loop.time() + duration > self._active_window_end:
-                    self._arm_active_window_timer(duration)
+                self._arm_active_window_timer_if_extends(duration)
                 return True
             if IS_LINUX:
                 entered = await self._async_begin_active_window_via_toggle()
@@ -754,9 +760,9 @@ class HaScanner(BaseHaScanner):
         """
         Cheap Linux/BlueZ entry via in-place ``_scanning_mode`` flip.
 
-        Caller holds ``_start_stop_lock`` and has already set the
-        override. On failure clears the override and recovers via a
-        full restart so the scanner isn't left stopped.
+        Caller holds ``_start_stop_lock`` and has set the override.
+        On failure clears the override and recovers via a full
+        restart so the scanner isn't left stopped.
         """
         try:
             flipped = await self._async_toggle_active_window_mode()
@@ -767,10 +773,7 @@ class HaScanner(BaseHaScanner):
             self._scan_mode_override = None
             raise
         if not flipped:
-            self._scan_mode_override = None
-            with contextlib.suppress(ScannerStartError):
-                await self._async_stop_then_start_under_lock()
-            return False
+            return await self._async_abort_active_window()
         return True
 
     async def _async_begin_active_window_via_restart(self) -> bool:
@@ -780,16 +783,12 @@ class HaScanner(BaseHaScanner):
         Caller holds ``_start_stop_lock`` and has set the override so
         the fresh BleakScanner is constructed in ACTIVE. On
         ScannerStartError or the Linux 4th-attempt PASSIVE fallback
-        the override is cleared (so the recovery restart comes back
-        up in AUTO/passive) and False is returned.
+        the override is cleared and False is returned.
         """
         try:
             await self._async_stop_then_start_under_lock()
         except ScannerStartError:
-            self._scan_mode_override = None
-            with contextlib.suppress(ScannerStartError):
-                await self._async_stop_then_start_under_lock()
-            return False
+            return await self._async_abort_active_window()
         except BaseException:
             self._scan_mode_override = None
             raise
@@ -797,6 +796,20 @@ class HaScanner(BaseHaScanner):
             self._scan_mode_override = None
             return False
         return True
+
+    async def _async_abort_active_window(self) -> bool:
+        """
+        Roll back a failed active-window entry.
+
+        Clears the ACTIVE override and runs a best-effort
+        stop+restart so the scanner comes back up in its underlying
+        AUTO/passive mode rather than being left stopped. Returns
+        False so callers can ``return await self._async_abort_...``.
+        """
+        self._scan_mode_override = None
+        with contextlib.suppress(ScannerStartError):
+            await self._async_stop_then_start_under_lock()
+        return False
 
     def _schedule_end_active_window(self) -> None:
         """Spawn the end-of-window restart task."""

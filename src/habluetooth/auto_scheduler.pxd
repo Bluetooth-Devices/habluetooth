@@ -88,12 +88,17 @@ cdef class AutoScanScheduler:
 
     @cython.locals(
         address=str,
-        existing=dict,
         requests=set,
-        request=ActiveScanRequest,
-        now=double,
     )
     cpdef void on_advertisement(self, BluetoothServiceInfoBleak service_info)
+
+    @cython.locals(
+        existing=dict,
+        request=ActiveScanRequest,
+    )
+    cpdef void _seed_requests(
+        self, str address, set requests, double now
+    )
 
     cpdef void start(self, object loop)
 
