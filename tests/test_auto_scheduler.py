@@ -1444,3 +1444,60 @@ async def test_run_loop_waits_then_ticks() -> None:
     finally:
         sched._running = True
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_owner_flip_during_window_does_not_double_fire() -> None:
+    """
+    If ownership flips to a second scanner mid-window, no duplicate fire.
+
+    Worker A starts its window for address X. While A awaits the radio,
+    a new advertisement makes B the owner (B's _all_history.source).
+    B's worker wakes and ticks. Because A advanced X's next-due BEFORE
+    starting the await, B's _collect_due_buckets sees the entry as not
+    yet due and skips it. A finishes alone with one window; B fires
+    none.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=60.0, scan_duration=5.0
+    )
+    gate = asyncio.Event()
+    s_a = _RecordingAutoScanner("AA:00:00:00:00:01", BluetoothScanningMode.AUTO)
+    s_a._block_event = gate
+    s_b = _RecordingAutoScanner("AA:00:00:00:00:02", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(s_a)
+    c_b = manager.async_register_scanner(s_b)
+    try:
+        _inject(s_a, address)
+        entries = sched._needs[address]
+        for req in list(entries):
+            entries[req] = loop.time() - 1.0
+
+        # Worker A starts its tick and blocks inside the scanner call.
+        t_a = asyncio.create_task(sched._workers[s_a.source]._tick())
+        for _ in range(4):
+            await asyncio.sleep(0)
+        assert s_a.active_window_calls == [5.0]
+        # A advanced entries BEFORE the await; verify that.
+        for due in entries.values():
+            assert due > loop.time() + 50.0
+
+        # Ownership flips to B (a fresh advertisement on B).
+        _inject(s_b, address)
+
+        # B's worker ticks. Because the entry is already in the future
+        # it must NOT fire a second window.
+        await sched._workers[s_b.source]._tick()
+        assert s_b.active_window_calls == []
+
+        gate.set()
+        await t_a
+    finally:
+        gate.set()
+        c_a()
+        c_b()
+        cancel()

@@ -252,14 +252,14 @@ class _ScannerWorker:
         """
         Push every advanced request's next-due to now + scan_interval.
 
-        Re-checks membership: ``remove_request`` may have dropped any of
-        them while the window was awaiting, and we must not resurrect a
-        cancelled registration.
+        Called pre-await from ``_tick`` so the window's owner has already
+        claimed the slot before any other worker can wake; no membership
+        check is needed because nothing has yielded since
+        ``_collect_due_buckets`` populated due_buckets.
         """
         for entries, due in due_buckets:
             for request in due:
-                if request in entries:
-                    entries[request] = now + request.scan_interval
+                entries[request] = now + request.scan_interval
 
     async def _tick(self) -> None:
         """
@@ -289,7 +289,19 @@ class _ScannerWorker:
         duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
         if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
             duration = _AUTO_REDISCOVERY_SWEEP_DURATION
-        self._window_end = now + duration
+        window_end = now + duration
+        self._window_end = window_end
+        # Advance per-device next-due times and the sweep clock BEFORE the
+        # await so a concurrent worker that becomes the new owner of any
+        # of these addresses mid-window (e.g. an RSSI flip on a fresh
+        # advertisement) doesn't fire a duplicate window for the same
+        # request. Failure of the scanner call is handled the same way as
+        # success: we still don't retry until scan_interval out (or
+        # AUTO_REDISCOVERY_INTERVAL out for the sweep), which prevents
+        # busy-looping the worker on a stuck scanner.
+        self._advance_due(due_buckets, window_end)
+        if sweep_due:
+            self._sweep_last_completed = window_end
         try:
             await self._scanner.async_request_active_window(duration)
         except Exception:  # pylint: disable=broad-except
@@ -299,11 +311,6 @@ class _ScannerWorker:
                 duration,
             )
         finally:
-            if sweep_due:
-                # Advance on failure too so a stuck scanner doesn't
-                # busy-loop the worker.
-                self._sweep_last_completed = loop.time()
-            self._advance_due(due_buckets, loop.time())
             self._window_end = 0.0
 
 
