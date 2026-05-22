@@ -1,5 +1,25 @@
 # Changelog
 
+## v6.3.0 (2026-05-22)
+
+### Features
+
+
+- Add auto scanning mode with on-demand active windows ([`89c374e`](https://github.com/Bluetooth-Devices/habluetooth/commit/89c374eda9f95f228e3b72d68988e514aa9a97ef))
+
+
+### Testing
+
+
+- Cover scanner.py error-path branches ([`4f870d5`](https://github.com/Bluetooth-Devices/habluetooth/commit/4f870d538e95a0039c0959d04a99a9b8f555096f))
+
+
+- Bump pytest-timeout to 60s for benchmark suite ([`4abde2e`](https://github.com/Bluetooth-Devices/habluetooth/commit/4abde2e6214ea6562002eb6825b7357f7811185c))
+
+
+- Add pytest-timeout with 5s default timeout ([`3d52e76`](https://github.com/Bluetooth-Devices/habluetooth/commit/3d52e76c118eb0a764341299d902dbe099eab235))
+
+
 ## v6.2.1 (2026-05-22)
 
 ### Bug fixes
