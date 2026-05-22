@@ -47,26 +47,23 @@ _LOGGER = logging.getLogger(__name__)
 
 class ActiveScanRequest:
     """
-    A registered need for on-demand active scans on matching devices.
+    A registered need for on-demand active scans on a specific address.
 
-    Created by ``BluetoothManager.async_register_active_scan``. Match is
-    by structured fields (``address``, ``service_uuid``) so the scheduler
-    can index lookups: an advertisement only iterates the requests that
-    match its own address or one of its service UUIDs, not the full set.
-    A request with multiple fields requires all of them to match.
+    Created by ``BluetoothManager.async_register_active_scan``. The scheduler
+    indexes requests by ``address`` so the on_advertisement hot path is an
+    O(1) dict lookup; nothing is iterated when the advertisement's address
+    has no registered request.
     """
 
-    __slots__ = ("address", "scan_duration", "scan_interval", "service_uuid")
+    __slots__ = ("address", "scan_duration", "scan_interval")
 
     def __init__(
         self,
-        address: str | None,
-        service_uuid: str | None,
+        address: str,
         scan_interval: float,
         scan_duration: float | None,
     ) -> None:
         self.address = address
-        self.service_uuid = service_uuid
         self.scan_interval = scan_interval
         self.scan_duration = scan_duration
 
@@ -75,12 +72,11 @@ class AutoScanScheduler:
     """Schedules on-demand active windows across AUTO-mode scanners."""
 
     __slots__ = (
-        "_by_address",
-        "_by_service_uuid",
         "_loop",
         "_manager",
         "_needs",
         "_pending_tasks",
+        "_requests_by_address",
         "_running",
         "_scanner_windows",
         "_sweep_in_flight",
@@ -91,6 +87,8 @@ class AutoScanScheduler:
     def __init__(self, manager: BluetoothManager) -> None:
         """Initialize the scheduler bound to a manager."""
         self._manager = manager
+        # address -> registered requests for that address
+        self._requests_by_address: dict[str, set[ActiveScanRequest]] = {}
         # address -> {request: next_due_loop_time}
         self._needs: dict[str, dict[ActiveScanRequest, float]] = {}
         # source -> loop time when the current window ends (0.0 = idle)
@@ -103,11 +101,6 @@ class AutoScanScheduler:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._pending_tasks: set[asyncio.Task[None]] = set()
-        # Indexed lookup of active-scan requests. Hot-path on_advertisement
-        # only iterates the requests whose declared address or service_uuid
-        # matches the advertisement, instead of every registered request.
-        self._by_address: dict[str, set[ActiveScanRequest]] = {}
-        self._by_service_uuid: dict[str, set[ActiveScanRequest]] = {}
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Bind the scheduler to the event loop and schedule the first tick."""
@@ -157,65 +150,33 @@ class AutoScanScheduler:
             self._sweep_in_flight = None
         self._reschedule()
 
-    def add_matcher(self, request: ActiveScanRequest) -> None:
-        """Register an active-scan request, indexing it by its fields."""
-        if request.address is not None:
-            self._by_address.setdefault(request.address, set()).add(request)
-        if request.service_uuid is not None:
-            self._by_service_uuid.setdefault(request.service_uuid, set()).add(request)
+    def add_request(self, request: ActiveScanRequest) -> None:
+        """Register an active-scan request for its address."""
+        self._requests_by_address.setdefault(request.address, set()).add(request)
 
-    def remove_matcher(self, request: ActiveScanRequest) -> None:
-        """Drop the request from indexes and from any per-address tracking."""
-        if request.address is not None and (
-            bucket := self._by_address.get(request.address)
-        ):
+    def remove_request(self, request: ActiveScanRequest) -> None:
+        """Drop the request from the index and from any pending tracking."""
+        if (bucket := self._requests_by_address.get(request.address)) is not None:
             bucket.discard(request)
             if not bucket:
-                del self._by_address[request.address]
-        if request.service_uuid is not None and (
-            bucket := self._by_service_uuid.get(request.service_uuid)
-        ):
-            bucket.discard(request)
-            if not bucket:
-                del self._by_service_uuid[request.service_uuid]
-        empty_addresses: list[str] = []
-        for address, entries in self._needs.items():
-            if request in entries:
-                del entries[request]
-                if not entries:
-                    empty_addresses.append(address)
-        for address in empty_addresses:
-            del self._needs[address]
+                del self._requests_by_address[request.address]
+        if (entries := self._needs.get(request.address)) is not None:
+            entries.pop(request, None)
+            if not entries:
+                del self._needs[request.address]
         self._reschedule()
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
-        """Hot path. Record a tracking entry for any matched request."""
+        """Hot path. Track requests for the advertisement's address."""
         # Early return when nothing is registered. Common case, cheap.
-        if (not self._by_address and not self._by_service_uuid) or self._loop is None:
+        if not self._requests_by_address or self._loop is None:
             return
         address = service_info.address
-        candidates: set[ActiveScanRequest] | None = None
-        if (by_addr := self._by_address.get(address)) is not None:
-            candidates = by_addr.copy()
-        for uuid in service_info.service_uuids:
-            if (by_uuid := self._by_service_uuid.get(uuid)) is not None:
-                if candidates is None:
-                    candidates = by_uuid.copy()
-                else:
-                    candidates.update(by_uuid)
-        if not candidates:
+        requests = self._requests_by_address.get(address)
+        if requests is None:
             return
         existing = self._needs.get(address)
-        for request in candidates:
-            # Verify all declared fields match; a request indexed under
-            # address may still require service_uuid (or vice versa).
-            if request.address is not None and request.address != address:
-                continue
-            if (
-                request.service_uuid is not None
-                and request.service_uuid not in service_info.service_uuids
-            ):
-                continue
+        for request in requests:
             if existing is None:
                 existing = self._needs[address] = {}
             if request not in existing:

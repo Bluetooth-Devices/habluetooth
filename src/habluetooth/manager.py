@@ -1053,33 +1053,22 @@ class BluetoothManager:
 
     def async_register_active_scan(
         self,
+        address: str,
         scan_interval: float,
-        *,
-        address: str | None = None,
-        service_uuid: str | None = None,
         scan_duration: float | None = None,
     ) -> CALLBACK_TYPE:
         """
-        Declare an on-demand active-scan need for matching advertisements.
+        Declare an on-demand active-scan need for a specific address.
 
-        At least one of ``address`` or ``service_uuid`` must be provided;
-        if both are given the device must match both. The scheduler picks
-        the AUTO-mode scanner currently in range of the matched address
-        and asks it to flip into active for ``scan_duration`` seconds,
-        repeating every ``scan_interval`` seconds while the device is
-        being seen. ACTIVE and PASSIVE scanners ignore the request.
-
-        Returns a cancel callable that removes the registration and any
-        per-(address, request) tracking it accumulated.
+        The scheduler asks the AUTO-mode scanner currently in range of
+        ``address`` to flip active for ``scan_duration`` seconds every
+        ``scan_interval`` seconds while the device is being seen.
+        ACTIVE and PASSIVE scanners ignore the request. Returns a
+        cancel callable.
         """
-        if address is None and service_uuid is None:
-            raise ValueError(
-                "async_register_active_scan requires at least one of "
-                "address or service_uuid to be specified"
-            )
-        request = ActiveScanRequest(address, service_uuid, scan_interval, scan_duration)
-        self._auto_scheduler.add_matcher(request)
-        return partial(self._auto_scheduler.remove_matcher, request)
+        request = ActiveScanRequest(address, scan_interval, scan_duration)
+        self._auto_scheduler.add_request(request)
+        return partial(self._auto_scheduler.remove_request, request)
 
     def async_release_connection_slot(self, device: BLEDevice) -> None:
         """Release a connection slot."""

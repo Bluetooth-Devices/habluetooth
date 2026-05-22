@@ -68,19 +68,9 @@ class _RecordingAutoScanner(BaseHaScanner):
         return ()
 
 
-SERVICE_UUID = "0000fe07-0000-1000-8000-00805f9b34fb"
-
-
-def _inject(
-    scanner: _RecordingAutoScanner,
-    address: str,
-    service_uuids: list[str] | None = None,
-) -> None:
+def _inject(scanner: _RecordingAutoScanner, address: str) -> None:
     """Drive a fake advertisement through the scanner's normal path."""
-    adv = generate_advertisement_data(
-        local_name="x",
-        service_uuids=service_uuids or [],
-    )
+    adv = generate_advertisement_data(local_name="x")
     device = generate_ble_device(address, "x")
     scanner._async_on_advertisement(
         device.address,
@@ -100,20 +90,12 @@ async def _drain() -> None:
 
 
 @pytest.mark.asyncio
-async def test_register_requires_address_or_service_uuid() -> None:
-    """async_register_active_scan rejects empty registrations."""
-    manager = get_manager()
-    with pytest.raises(ValueError, match="address or service_uuid"):
-        manager.async_register_active_scan(scan_interval=60.0)
-
-
-@pytest.mark.asyncio
-async def test_advertisement_by_address_starts_tracking() -> None:
+async def test_advertisement_starts_tracking() -> None:
     """A matching address advertisement creates a per-(address, request) entry."""
     manager = get_manager()
     sched = manager._auto_scheduler
     cancel = manager.async_register_active_scan(
-        scan_interval=120.0, address="11:22:33:44:55:66", scan_duration=3.0
+        "11:22:33:44:55:66", scan_interval=120.0, scan_duration=3.0
     )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
@@ -127,50 +109,18 @@ async def test_advertisement_by_address_starts_tracking() -> None:
 
 
 @pytest.mark.asyncio
-async def test_advertisement_by_service_uuid_starts_tracking() -> None:
-    """A matching service UUID advertisement creates a tracking entry."""
+async def test_advertisement_for_unrelated_address_is_ignored() -> None:
+    """An advertisement for an unregistered address creates no tracking."""
     manager = get_manager()
     sched = manager._auto_scheduler
     cancel = manager.async_register_active_scan(
-        scan_interval=120.0, service_uuid=SERVICE_UUID, scan_duration=3.0
+        "11:22:33:44:55:66", scan_interval=120.0
     )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        _inject(scanner, "11:22:33:44:55:66", service_uuids=[SERVICE_UUID])
-        assert "11:22:33:44:55:66" in sched._needs
-    finally:
-        cancel()
-        register_cancel()
-
-
-@pytest.mark.asyncio
-async def test_address_and_service_uuid_requires_both() -> None:
-    """A request with both fields skips an ad that only matches one."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    cancel = manager.async_register_active_scan(
-        scan_interval=60.0,
-        address="11:22:33:44:55:66",
-        service_uuid=SERVICE_UUID,
-        scan_duration=3.0,
-    )
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        # Address matches, service_uuid does not.
-        _inject(
-            scanner,
-            "11:22:33:44:55:66",
-            service_uuids=["0000eeee-0000-1000-8000-00805f9b34fb"],
-        )
+        _inject(scanner, "AA:AA:AA:AA:AA:AA")
         assert sched._needs == {}
-        # Service uuid matches, address does not.
-        _inject(scanner, "AA:AA:AA:AA:AA:AA", service_uuids=[SERVICE_UUID])
-        assert sched._needs == {}
-        # Both match.
-        _inject(scanner, "11:22:33:44:55:66", service_uuids=[SERVICE_UUID])
-        assert "11:22:33:44:55:66" in sched._needs
     finally:
         cancel()
         register_cancel()
@@ -183,7 +133,7 @@ async def test_tick_requests_active_window_on_auto_scanner() -> None:
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
     cancel = manager.async_register_active_scan(
-        scan_interval=120.0, address="11:22:33:44:55:66", scan_duration=5.0
+        "11:22:33:44:55:66", scan_interval=120.0, scan_duration=5.0
     )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
@@ -203,16 +153,16 @@ async def test_tick_requests_active_window_on_auto_scanner() -> None:
 
 @pytest.mark.asyncio
 async def test_tick_coalesces_overlapping_requests() -> None:
-    """Two requests for the same address coalesce into one window using max duration."""
+    """Two requests for the same address coalesce into one max-duration window."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
     cancel1 = manager.async_register_active_scan(
-        scan_interval=120.0, address=address, scan_duration=3.0
+        address, scan_interval=120.0, scan_duration=3.0
     )
     cancel2 = manager.async_register_active_scan(
-        scan_interval=120.0, address=address, scan_duration=10.0
+        address, scan_interval=120.0, scan_duration=10.0
     )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
@@ -231,6 +181,45 @@ async def test_tick_coalesces_overlapping_requests() -> None:
 
 
 @pytest.mark.asyncio
+async def test_multiple_requests_same_address_track_independent_intervals() -> None:
+    """Two registrations for the same address fire on their own cadences."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel_fast = manager.async_register_active_scan(
+        address, scan_interval=60.0, scan_duration=2.0
+    )
+    cancel_slow = manager.async_register_active_scan(
+        address, scan_interval=300.0, scan_duration=4.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        entries = sched._needs[address]
+        assert len(entries) == 2
+        fast, slow = sorted(entries, key=lambda r: r.scan_interval)
+        entries[fast] = loop.time() - 1.0
+        entries[slow] = loop.time() + 200.0
+        sched._async_tick()
+        await _drain()
+        assert scanner.active_window_calls == [2.0]
+        assert entries[fast] > loop.time()
+        assert entries[slow] > loop.time() + 100
+        sched._scanner_windows.clear()
+        entries[fast] = loop.time() - 1.0
+        entries[slow] = loop.time() - 1.0
+        sched._async_tick()
+        await _drain()
+        assert scanner.active_window_calls == [2.0, 4.0]
+    finally:
+        cancel_fast()
+        cancel_slow()
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_tick_skips_non_auto_scanner() -> None:
     """ACTIVE / PASSIVE scanners are not asked to flip; due times advance."""
     manager = get_manager()
@@ -238,7 +227,7 @@ async def test_tick_skips_non_auto_scanner() -> None:
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
     cancel = manager.async_register_active_scan(
-        scan_interval=120.0, address=address, scan_duration=3.0
+        address, scan_interval=120.0, scan_duration=3.0
     )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.ACTIVE)
     register_cancel = manager.async_register_scanner(scanner)
@@ -312,12 +301,12 @@ async def test_global_sweep_one_scanner_at_a_time() -> None:
 
 
 @pytest.mark.asyncio
-async def test_remove_matcher_clears_tracking() -> None:
+async def test_remove_request_clears_tracking() -> None:
     """Cancelling a registration removes its per-(address, request) entries."""
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:55:66"
-    cancel = manager.async_register_active_scan(scan_interval=60.0, address=address)
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
@@ -325,7 +314,7 @@ async def test_remove_matcher_clears_tracking() -> None:
         assert address in sched._needs
         cancel()
         assert address not in sched._needs
-        assert sched._by_address == {}
+        assert sched._requests_by_address == {}
     finally:
         register_cancel()
 
@@ -338,7 +327,7 @@ async def test_busy_scanner_defers_due_callbacks_not_busy_loops() -> None:
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
     cancel = manager.async_register_active_scan(
-        scan_interval=60.0, address=address, scan_duration=3.0
+        address, scan_interval=60.0, scan_duration=3.0
     )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
@@ -366,7 +355,7 @@ async def test_failed_request_clears_busy_marker() -> None:
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
     cancel = manager.async_register_active_scan(
-        scan_interval=60.0, address=address, scan_duration=3.0
+        address, scan_interval=60.0, scan_duration=3.0
     )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     scanner._return_value = False
@@ -420,11 +409,9 @@ async def test_dispatch_drops_tracking_for_unseen_address() -> None:
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
-    cancel = manager.async_register_active_scan(
-        scan_interval=60.0, address="aa:bb:cc:dd:ee:ff"
-    )
+    cancel = manager.async_register_active_scan("aa:bb:cc:dd:ee:ff", scan_interval=60.0)
     try:
-        request = next(iter(sched._by_address["aa:bb:cc:dd:ee:ff"]))
+        request = next(iter(sched._requests_by_address["aa:bb:cc:dd:ee:ff"]))
         sched._needs["aa:bb:cc:dd:ee:ff"] = {request: loop.time() - 1.0}
         sched._async_tick()
         assert "aa:bb:cc:dd:ee:ff" not in sched._needs
@@ -495,7 +482,7 @@ async def test_duration_clamped_to_bounds() -> None:
     sched = get_manager()._auto_scheduler
 
     def _req(duration: float | None) -> ActiveScanRequest:
-        return ActiveScanRequest("AA", None, 60.0, duration)
+        return ActiveScanRequest("AA", 60.0, duration)
 
     assert sched._coalesce_duration([_req(0.01)]) == AUTO_WINDOW_MIN_DURATION
     assert sched._coalesce_duration([_req(1000.0)]) == AUTO_WINDOW_MAX_DURATION
@@ -508,48 +495,6 @@ async def test_duration_clamped_to_bounds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_multiple_requests_same_address_track_independent_intervals() -> None:
-    """Two registrations for the same address fire on their own cadences."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    loop = asyncio.get_running_loop()
-    address = "11:22:33:44:55:66"
-    cancel_fast = manager.async_register_active_scan(
-        scan_interval=60.0, address=address, scan_duration=2.0
-    )
-    cancel_slow = manager.async_register_active_scan(
-        scan_interval=300.0, address=address, scan_duration=4.0
-    )
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        _inject(scanner, address)
-        entries = sched._needs[address]
-        assert len(entries) == 2
-        fast, slow = sorted(entries, key=lambda r: r.scan_interval)
-        # Only the fast request is due; slow stays pending. Window uses the
-        # fast request's duration alone.
-        entries[fast] = loop.time() - 1.0
-        entries[slow] = loop.time() + 200.0
-        sched._async_tick()
-        await _drain()
-        assert scanner.active_window_calls == [2.0]
-        assert entries[fast] > loop.time()
-        assert entries[slow] > loop.time() + 100  # slow not advanced
-        # Now make both due; window coalesces to max duration.
-        sched._scanner_windows.clear()  # simulate prior window expired
-        entries[fast] = loop.time() - 1.0
-        entries[slow] = loop.time() - 1.0
-        sched._async_tick()
-        await _drain()
-        assert scanner.active_window_calls == [2.0, 4.0]
-    finally:
-        cancel_fast()
-        cancel_slow()
-        register_cancel()
-
-
-@pytest.mark.asyncio
 async def test_on_advertisement_early_returns_with_no_requests() -> None:
     """Hot path is a no-op when no active-scan request is registered."""
     manager = get_manager()
@@ -559,7 +504,6 @@ async def test_on_advertisement_early_returns_with_no_requests() -> None:
     try:
         _inject(scanner, "11:22:33:44:55:66")
         assert sched._needs == {}
-        assert sched._by_address == {}
-        assert sched._by_service_uuid == {}
+        assert sched._requests_by_address == {}
     finally:
         register_cancel()
