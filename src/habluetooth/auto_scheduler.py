@@ -12,10 +12,11 @@ scanners:
   requested cadence. Multiple matching requests for the same address
   coalesce into one window using the max of their durations.
 
-* Global rediscovery sweeps. Every ``AUTO_REDISCOVERY_INTERVAL`` seconds
-  each AUTO-mode scanner gets a ``AUTO_REDISCOVERY_SWEEP_DURATION``
-  active window. Sweeps are staggered across scanners so that at most one
-  scanner is mid-sweep at a time, keeping the radio coverage gap bounded.
+* Global rediscovery sweeps. ``AUTO_INITIAL_SWEEP_DELAY`` after a scanner
+  joins, and every ``AUTO_REDISCOVERY_INTERVAL`` thereafter, each AUTO-mode
+  scanner gets a ``AUTO_REDISCOVERY_SWEEP_DURATION`` active window. Sweeps
+  are staggered across scanners so that at most one scanner is mid-sweep
+  at a time, keeping the radio coverage gap bounded.
 
 The scheduler is a single per-manager instance driven by one
 ``loop.call_at`` handle. ``on_advertisement`` is on the manager's hot
@@ -29,6 +30,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from .const import (
+    AUTO_INITIAL_SWEEP_DELAY,
     AUTO_REDISCOVERY_INTERVAL,
     AUTO_REDISCOVERY_SWEEP_DURATION,
     AUTO_WINDOW_MAX_DURATION,
@@ -106,15 +108,18 @@ class AutoScanScheduler:
         """Bind the scheduler to the event loop and schedule the first tick."""
         self._loop = loop
         self._running = True
-        # Initialize last-sweep so the first sweep is one interval out.
-        # Overwrite any placeholder timestamps left by pre-start add_scanner
-        # calls (which had no loop available); otherwise scanners registered
-        # before async_setup would have last_sweep=0.0 and trigger an
-        # immediate sweep on the first tick.
-        now = loop.time()
+        # Schedule the first sweep for each AUTO scanner AUTO_INITIAL_SWEEP_DELAY
+        # from now, so HA startup isn't crowded by ACTIVE scans on every
+        # adapter at once. We store a fake "last completed" in the past
+        # such that last + AUTO_REDISCOVERY_INTERVAL == now + initial_delay;
+        # this also overwrites any 0.0 placeholders left by pre-start
+        # add_scanner calls.
+        initial_last = (
+            loop.time() + AUTO_INITIAL_SWEEP_DELAY - AUTO_REDISCOVERY_INTERVAL
+        )
         for scanner in self._manager._sources.values():
             if scanner.requested_mode is BluetoothScanningMode.AUTO:
-                self._sweep_last_completed[scanner.source] = now
+                self._sweep_last_completed[scanner.source] = initial_last
         self._reschedule()
 
     def stop(self) -> None:
@@ -138,7 +143,13 @@ class AutoScanScheduler:
         if self._loop is None:
             self._sweep_last_completed.setdefault(scanner.source, 0.0)
             return
-        self._sweep_last_completed.setdefault(scanner.source, self._loop.time())
+        # First sweep AUTO_INITIAL_SWEEP_DELAY after this scanner joins, so
+        # a freshly connected proxy gets a chance to settle before its
+        # active sweep instead of firing immediately.
+        initial_last = (
+            self._loop.time() + AUTO_INITIAL_SWEEP_DELAY - AUTO_REDISCOVERY_INTERVAL
+        )
+        self._sweep_last_completed.setdefault(scanner.source, initial_last)
         self._reschedule()
 
     def remove_scanner(self, scanner: BaseHaScanner) -> None:

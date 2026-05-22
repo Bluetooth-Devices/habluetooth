@@ -57,8 +57,12 @@ UNAVAILABLE_TRACK_SECONDS: Final = 60 * 5
 # AUTO scanning mode: each scanner in AUTO mode receives a periodic
 # active "sweep" so new devices are still discovered. The manager
 # staggers sweeps across scanners so at most one is active at a time.
-AUTO_REDISCOVERY_INTERVAL: Final = 60 * 60 * 4  # 4 hours per scanner
-AUTO_REDISCOVERY_SWEEP_DURATION: Final = 30.0  # seconds per scanner per sweep
+# Each scanner's first sweep fires AUTO_INITIAL_SWEEP_DELAY after it
+# joins the manager so startup isn't crowded by ACTIVE scans on every
+# adapter at once; subsequent sweeps follow AUTO_REDISCOVERY_INTERVAL.
+AUTO_INITIAL_SWEEP_DELAY: Final = 60 * 10  # 10 minutes after registration
+AUTO_REDISCOVERY_INTERVAL: Final = 60 * 60 * 12  # 12 hours per scanner
+AUTO_REDISCOVERY_SWEEP_DURATION: Final = 15.0  # seconds per scanner per sweep
 
 # AUTO scanning mode: bounds on the per-callback `scan_duration` value.
 # Callers requesting an active window for a single device are clamped

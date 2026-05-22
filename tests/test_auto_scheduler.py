@@ -16,6 +16,7 @@ from habluetooth import (
 )
 from habluetooth.auto_scheduler import ActiveScanRequest
 from habluetooth.const import (
+    AUTO_INITIAL_SWEEP_DELAY,
     AUTO_REDISCOVERY_INTERVAL,
     AUTO_REDISCOVERY_SWEEP_DURATION,
     AUTO_WINDOW_MAX_DURATION,
@@ -442,6 +443,37 @@ async def test_dispatch_drops_tracking_for_unseen_address() -> None:
         assert "aa:bb:cc:dd:ee:ff" not in sched._needs
     finally:
         cancel()
+
+
+@pytest.mark.asyncio
+async def test_first_sweep_is_delayed_after_scanner_registers() -> None:
+    """A newly registered AUTO scanner's first sweep is AUTO_INITIAL_SWEEP_DELAY out."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        last = sched._sweep_last_completed["AA:BB:CC:DD:EE:00"]
+        first_sweep_at = last + AUTO_REDISCOVERY_INTERVAL
+        now = loop.time()
+        # First sweep should land roughly AUTO_INITIAL_SWEEP_DELAY from now,
+        # not AUTO_REDISCOVERY_INTERVAL from now.
+        assert (
+            AUTO_INITIAL_SWEEP_DELAY - 1.0
+            <= first_sweep_at - now
+            <= AUTO_INITIAL_SWEEP_DELAY + 1.0
+        )
+        # Force the tick at the scheduled first sweep time and confirm
+        # the sweep would fire.
+        sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] = (
+            now - AUTO_REDISCOVERY_INTERVAL - 1.0
+        )
+        sched._async_tick()
+        await _drain()
+        assert scanner.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
+    finally:
+        register_cancel()
 
 
 @pytest.mark.asyncio
