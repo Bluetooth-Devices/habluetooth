@@ -304,8 +304,20 @@ class AutoScanScheduler:
         self._workers[scanner.source] = worker
 
     def add_request(self, request: ActiveScanRequest) -> None:
-        """Register an active-scan request and wake the owning worker."""
+        """
+        Register an active-scan request and start tracking immediately.
+
+        The first window fires ``scan_interval`` seconds after registration
+        (gated by the per-scanner history check at tick time, so it doesn't
+        fire on a scanner that hasn't seen the device yet). If the entry
+        gets pruned later because the device's history disappears,
+        on_advertisement re-creates it the next time the device is seen.
+        """
         self._requests_by_address.setdefault(request.address, set()).add(request)
+        if self._loop is not None:
+            existing = self._needs.setdefault(request.address, {})
+            if request not in existing:
+                existing[request] = self._loop.time() + request.scan_interval
         history = self._manager.async_last_service_info(request.address, False)
         if history is not None:
             self._wake_worker(history.source)

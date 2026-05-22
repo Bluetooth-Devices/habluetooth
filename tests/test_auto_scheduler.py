@@ -130,8 +130,10 @@ async def test_advertisement_for_unrelated_address_is_ignored() -> None:
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
+        # The registered address has tracking from add_request; the
+        # unrelated advertisement must not create its own entry.
         _inject(scanner, "AA:AA:AA:AA:AA:AA")
-        assert sched._needs == {}
+        assert "AA:AA:AA:AA:AA:AA" not in sched._needs
     finally:
         cancel()
         register_cancel()
@@ -477,19 +479,21 @@ async def test_on_advertisement_early_returns_with_no_requests() -> None:
 
 
 @pytest.mark.asyncio
-async def test_on_advertisement_wakes_owning_worker() -> None:
-    """Adding a tracking entry wakes the worker so it picks the new event up."""
+async def test_on_advertisement_re_bootstraps_pruned_tracking() -> None:
+    """If a tracking entry was pruned, the next ad re-creates it and wakes."""
     manager = get_manager()
     sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
-    cancel = manager.async_register_active_scan(
-        "11:22:33:44:55:66", scan_interval=120.0
-    )
+    cancel = manager.async_register_active_scan(address, scan_interval=120.0)
     try:
         worker = sched._workers[scanner.source]
+        # Simulate the prune-on-no-history step having removed the entry.
+        del sched._needs[address]
         worker._wake.clear()
-        _inject(scanner, "11:22:33:44:55:66")
+        _inject(scanner, address)
+        assert address in sched._needs
         assert worker._wake.is_set()
     finally:
         cancel()
