@@ -558,11 +558,12 @@ class AutoScanScheduler:
         if requests is None:
             return
         existing = self._needs.get(address)
+        now = self._loop.time()
         for request in requests:
             if existing is None:
                 existing = self._needs[address] = {}
             if request not in existing:
-                existing[request] = self._loop.time() + request.scan_interval
+                existing[request] = now + request.scan_interval
         self._wake_worker(service_info.source)
 
     def _wake_worker(self, source: str) -> None:

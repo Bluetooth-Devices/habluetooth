@@ -91,6 +91,7 @@ cdef class AutoScanScheduler:
         existing=dict,
         requests=set,
         request=ActiveScanRequest,
+        now=double,
     )
     cpdef void on_advertisement(self, BluetoothServiceInfoBleak service_info)
 

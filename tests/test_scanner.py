@@ -95,12 +95,16 @@ def disable_stop_discovery():
 @pytest.fixture
 def force_linux_scanner_mode() -> Generator[None, None, None]:
     """
-    Force scanner.IS_MACOS=False for the Linux/BlueZ AUTO flow.
+    Force scanner.IS_LINUX=True / IS_MACOS=False for AUTO-flow tests.
 
-    Lets tests exercise the active-window toggle path regardless of
-    the host running them; macOS would short-circuit AUTO to ACTIVE.
+    Lets the active-window toggle path run on any host: the toggle
+    is gated on IS_LINUX (BlueZ-only private attribute), and AUTO
+    on macOS short-circuits to permanent active.
     """
-    with patch("habluetooth.scanner.IS_MACOS", False):
+    with (
+        patch("habluetooth.scanner.IS_LINUX", True),
+        patch("habluetooth.scanner.IS_MACOS", False),
+    ):
         yield
 
 
@@ -2560,24 +2564,31 @@ async def test_async_end_active_window_handles_start_error(
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         await scanner.async_start()
-        # Open a long active window then drive end-of-window with the
-        # bleak start mocked to fail.
-        await scanner.async_request_active_window(3600.0)
-        assert scanner._active_window_handle is not None
-        # Fail enough start() calls that BOTH the toggle attempt
-        # and every retry in the fallback _async_start cycle
-        # raise, so we exercise the
-        # "Failed to restart scanner after active window" warning.
-        fail_until = starts + 100
-        scanner._active_window_handle.cancel()
-        scanner._active_window_handle = None
-        caplog.clear()
-        with caplog.at_level(logging.WARNING):
-            await scanner._async_end_active_window()
-        assert any(
-            "Failed to restart scanner after active window" in record.message
-            for record in caplog.records
-        )
+        try:
+            # Open a long active window then drive end-of-window
+            # with the bleak start mocked to fail.
+            await scanner.async_request_active_window(3600.0)
+            assert scanner._active_window_handle is not None
+            # Fail enough start() calls that BOTH the toggle attempt
+            # and every retry in the fallback _async_start cycle
+            # raise, so we exercise the "Failed to restart scanner
+            # after active window" warning.
+            fail_until = starts + 100
+            scanner._active_window_handle.cancel()
+            scanner._active_window_handle = None
+            caplog.clear()
+            with caplog.at_level(logging.WARNING):
+                await scanner._async_end_active_window()
+            assert any(
+                "Failed to restart scanner after active window" in record.message
+                for record in caplog.records
+            )
+        finally:
+            # Allow the fallback restart to succeed for teardown,
+            # then stop the scanner so we don't leak the watchdog
+            # timer / background tasks into later tests.
+            fail_until = 0
+            await scanner.async_stop()
 
 
 @pytest.mark.parametrize("exc", [FileNotFoundError("no dbus"), BleakError("nope")])

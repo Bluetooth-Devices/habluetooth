@@ -747,25 +747,65 @@ class HaScanner(BaseHaScanner):
                 if self._loop.time() + duration > self._active_window_end:
                     self._arm_active_window_timer(duration)
                 return True
-            try:
-                flipped = await self._async_toggle_active_window_mode()
-            except BaseException:
-                # CancelledError, SystemExit, KeyboardInterrupt, an
-                # unexpected BleakError leaking out, etc. — any of
-                # those must not leave _scan_mode_override stuck at
-                # ACTIVE for the next start. Clear and re-raise so
-                # propagation is preserved.
-                self._scan_mode_override = None
-                raise
-            if not flipped:
-                # Toggle failed; try to bring the scanner back up in
-                # its underlying AUTO/passive mode via the full
-                # teardown path so we don't leave it stopped.
-                self._scan_mode_override = None
-                with contextlib.suppress(ScannerStartError):
-                    await self._async_stop_then_start_under_lock()
+            if IS_LINUX:
+                entered = await self._async_enter_via_toggle()
+            else:
+                entered = await self._async_enter_via_restart()
+            if not entered:
                 return False
             self._arm_active_window_timer(duration)
+        return True
+
+    async def _async_enter_via_toggle(self) -> bool:
+        """
+        Cheap Linux/BlueZ entry: in-place ``_scanning_mode`` flip.
+
+        Caller holds ``_start_stop_lock`` and has already set
+        ``_scan_mode_override``. On failure clears the override and
+        recovers the scanner via a full restart so we don't leave it
+        stopped.
+        """
+        try:
+            flipped = await self._async_toggle_active_window_mode()
+        except BaseException:
+            # CancelledError, SystemExit, KeyboardInterrupt, an
+            # unexpected BleakError leaking out, etc. — any of those
+            # must not leave _scan_mode_override stuck at ACTIVE for
+            # the next start. Clear and re-raise so propagation is
+            # preserved.
+            self._scan_mode_override = None
+            raise
+        if not flipped:
+            self._scan_mode_override = None
+            with contextlib.suppress(ScannerStartError):
+                await self._async_stop_then_start_under_lock()
+            return False
+        return True
+
+    async def _async_enter_via_restart(self) -> bool:
+        """
+        Non-Linux entry: full stop + recreate + start in ACTIVE mode.
+
+        Caller holds ``_start_stop_lock`` and has already set
+        ``_scan_mode_override`` so the fresh BleakScanner picks up
+        ACTIVE at construction. On a Linux 4th-attempt PASSIVE
+        fallback or ScannerStartError, clears the override and
+        returns False; the override-clear ensures the recovery
+        restart comes back up in AUTO/passive.
+        """
+        try:
+            await self._async_stop_then_start_under_lock()
+        except ScannerStartError:
+            self._scan_mode_override = None
+            with contextlib.suppress(ScannerStartError):
+                await self._async_stop_then_start_under_lock()
+            return False
+        except BaseException:
+            self._scan_mode_override = None
+            raise
+        if self.current_mode is not BluetoothScanningMode.ACTIVE:
+            self._scan_mode_override = None
+            return False
         return True
 
     def _schedule_end_active_window(self) -> None:
@@ -782,10 +822,10 @@ class HaScanner(BaseHaScanner):
             self._scan_mode_override = None
             if not self.scanning:
                 return
-            if await self._async_toggle_active_window_mode():
+            if IS_LINUX and await self._async_toggle_active_window_mode():
                 return
-            # Toggle failed; fall back to a full restart so we don't
-            # leave the scanner stuck in ACTIVE.
+            # Non-Linux backend, or toggle failed; full restart so we
+            # don't leave the scanner stuck in ACTIVE.
             try:
                 await self._async_stop_then_start_under_lock()
             except ScannerStartError as ex:
@@ -826,16 +866,19 @@ class HaScanner(BaseHaScanner):
         same-instance stop+start so ``BleakClient(address)`` lookups
         keep working across the flip.
 
-        Linux/BlueZ only. On macOS AUTO maps to permanent active
-        scanning so ``async_request_active_window`` early-returns
-        without ever reaching this method. The watchdog /
-        ``async_stop`` / ``async_start`` paths still go through the
-        full-teardown ``_async_stop_then_start_under_lock`` so this
+        Linux/BlueZ only — callers must check ``IS_LINUX`` before
+        invoking. On non-BlueZ backends ``_backend._scanning_mode``
+        may not exist, and on macOS AUTO already maps to permanent
+        active scanning so ``async_request_active_window``
+        early-returns. The watchdog / ``async_stop`` /
+        ``async_start`` paths still go through the full-teardown
+        ``_async_stop_then_start_under_lock`` so this
         private-attribute access is bounded to the active-window
         flip path.
 
-        Returns ``False`` if the scanner has been torn down (caller
-        should fall back to the full path); otherwise returns
+        Returns ``False`` if the scanner has been torn down or the
+        stop/start raised (caller should fall back to the full
+        path); otherwise returns
         ``True`` after a successful flip.
         """
         if self.scanner is None:
