@@ -431,18 +431,14 @@ class AutoScanScheduler:
         Cancel all worker tasks (fire-and-forget).
 
         Sync to match ``BluetoothManager.async_stop``;
-        ``worker.stop()`` calls ``task.cancel()`` without awaiting.
-        Cancellation lands on the next loop iteration; a mid-``_tick``
-        scanner call may complete first. Harmless for HA shutdown.
-        Also nulls ``_loop`` so post-stop ``add_request`` /
-        ``on_advertisement`` fall back to the record-only path
-        instead of seeding ``_needs`` with timestamps from the
-        cancelled loop. Callers doing an in-place restart
-        (``stop()`` then ``start(new_loop)``) must
+        ``worker.stop()`` cancels without awaiting. Nulls ``_loop``
+        too so post-stop ``add_request`` / ``on_advertisement`` fall
+        back to the record-only path instead of seeding ``_needs``
+        with timestamps from the cancelled loop. In-place restart
+        (``stop()`` then ``start(new_loop)``) needs an
         ``await asyncio.sleep(0)`` between them so cancelled tasks
-        finish their finally blocks before new workers spawn on the
-        same sources; ``start()`` does not guard against this since
-        HA's setup/teardown flow never does an in-place restart.
+        finish before new workers spawn on the same sources; HA's
+        flow never does this.
         """
         self._running = False
         for worker in self._workers.values():
@@ -501,19 +497,13 @@ class AutoScanScheduler:
         """
         Register an active-scan request and start tracking.
 
-        First window fires ``scan_interval`` after registration on
-        the current owner if history exists; otherwise
-        ``on_advertisement`` bootstraps tracking on first sight (the
-        first window then fires ``scan_interval`` after that ad).
-
-        ``ActiveScanRequest`` compares by identity: each public
-        ``async_register_active_scan`` call adds an independent
-        cadence (two 60s registrations on the same address yield two
-        independent 60s cadences). Re-adding the same object is a
-        no-op; cancellation is per-registration.
-
-        Pre-``start()`` calls record the request only; no seed, no
-        wake (``start()`` replays them).
+        First window fires ``scan_interval`` after registration if
+        history exists; otherwise ``on_advertisement`` bootstraps on
+        first sight. ``ActiveScanRequest`` compares by identity so
+        each public ``async_register_active_scan`` call adds an
+        independent cadence; cancellation is per-registration.
+        Pre-``start()`` calls just record the request (``start()``
+        replays them).
         """
         self._requests_by_address.setdefault(request.address, set()).add(request)
         if self._loop is None:
