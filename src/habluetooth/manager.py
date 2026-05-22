@@ -570,6 +570,57 @@ class BluetoothManager:
         """
         return self._mgmt_ctl
 
+    def _handle_name_cache_miss(
+        self,
+        service_info: BluetoothServiceInfoBleak,
+        cached_name: str | None,
+    ) -> None:
+        """
+        Handle the cold path when cached_name is not service_info.name.
+
+        Called from _scanner_adv_received only when the cached name and
+        the incoming name are different str objects (steady-state
+        identity match is filtered out at the call site). Walks through
+        three cases:
+
+        1. The incoming ad has no real name (empty or the MAC fallback
+           set by base_scanner): patch service_info from the cache if we
+           have one; this is the path that lets passive scanners inherit
+           a name learned by an active scanner.
+        2. No cached name yet: store the incoming name directly if it is
+           real; no patch needed since the cache now matches.
+        3. Cached and incoming are both real but differ: apply the
+           prefix rule via _update_name_cache and patch service_info
+           with whatever the cache settled on.
+        """
+        if not service_info.name or service_info.name is service_info.address:
+            if cached_name is not None:
+                service_info.name = cached_name
+                service_info.device.name = cached_name
+            return
+        if cached_name is None:
+            self._name_cache[service_info.address] = service_info.name
+            return
+        if cached_name == service_info.name:
+            return
+        self._update_name_cache(service_info.address, service_info.name)
+        cached_name = self._name_cache[service_info.address]
+        if cached_name is not service_info.name and cached_name != service_info.name:
+            service_info.name = cached_name
+            service_info.device.name = cached_name
+
+    def seed_name_cache(self, address: str, name: str) -> None:
+        """
+        Apply the prefix rule to the cross-scanner name cache.
+
+        Python-visible entry point intended for cold paths such as
+        BaseHaScanner.restore_discovered_devices (called once per scanner
+        at startup). The hot per-advertisement path does not use this
+        method; it inlines the steady-state checks and calls the internal
+        cdef _update_name_cache directly.
+        """
+        self._update_name_cache(address, name)
+
     def _update_name_cache(self, address: str, name: str) -> None:
         """
         Update the cross-scanner name cache for an address.
@@ -658,21 +709,17 @@ class BluetoothManager:
             }:
                 return
 
-        # Cross-scanner name cache. Update before the fast-path comparison
-        # below so that a rename (cached name differs from the new one) is
-        # not masked by the change-detection guard, and so the patched name
-        # is what reaches _all_history / _connectable_history / bleak
-        # callbacks. The cache update is a near-no-op (single dict.get +
-        # identity check) when the same name is broadcast repeatedly.
-        self._update_name_cache(service_info.address, service_info.name)
+        # Cross-scanner name cache. Only the steady-state identity check
+        # is inlined here because this code runs on every advertisement
+        # after the Apple pre-filter; the rest is handled in a cdef
+        # helper to keep this method readable. The hot path is a single
+        # dict.get plus a pointer compare; the function call to the
+        # helper only fires when the cached name and the incoming name
+        # are different str objects, which excludes the dominant case of
+        # the same scanner re-broadcasting the same name.
         cached_name = self._name_cache.get(service_info.address)
-        if (
-            cached_name is not None
-            and cached_name is not service_info.name
-            and cached_name != service_info.name
-        ):
-            service_info.name = cached_name
-            service_info.device.name = cached_name
+        if cached_name is not service_info.name:
+            self._handle_name_cache_miss(service_info, cached_name)
 
         if service_info.connectable:
             old_connectable_service_info = self._connectable_history.get(

@@ -49,7 +49,7 @@ def test_name_cache_empty_to_name() -> None:
     """First non-empty name observed is stored."""
     manager = get_manager()
     address = "AA:BB:CC:DD:EE:01"
-    manager._update_name_cache(address, "Onv")
+    manager.seed_name_cache(address, "Onv")
     assert manager._name_cache[address] == "Onv"
 
 
@@ -57,8 +57,8 @@ def test_name_cache_extension_replaces_truncation() -> None:
     """A new name that extends the cached short name replaces it."""
     manager = get_manager()
     address = "AA:BB:CC:DD:EE:02"
-    manager._update_name_cache(address, "Onv")
-    manager._update_name_cache(address, "Onvis XXX")
+    manager.seed_name_cache(address, "Onv")
+    manager.seed_name_cache(address, "Onvis XXX")
     assert manager._name_cache[address] == "Onvis XXX"
 
 
@@ -66,8 +66,8 @@ def test_name_cache_truncation_keeps_cached() -> None:
     """A new name that is a truncation of the cached complete name is rejected."""
     manager = get_manager()
     address = "AA:BB:CC:DD:EE:03"
-    manager._update_name_cache(address, "Onvis XXX")
-    manager._update_name_cache(address, "Onv")
+    manager.seed_name_cache(address, "Onvis XXX")
+    manager.seed_name_cache(address, "Onv")
     assert manager._name_cache[address] == "Onvis XXX"
 
 
@@ -75,8 +75,8 @@ def test_name_cache_rename_replaces() -> None:
     """A completely different name (not prefix-related) replaces the cached name."""
     manager = get_manager()
     address = "AA:BB:CC:DD:EE:04"
-    manager._update_name_cache(address, "Onv")
-    manager._update_name_cache(address, "Donkey")
+    manager.seed_name_cache(address, "Onv")
+    manager.seed_name_cache(address, "Donkey")
     assert manager._name_cache[address] == "Donkey"
 
 
@@ -84,9 +84,9 @@ def test_name_cache_same_name_noop() -> None:
     """Re-broadcasting the same name does not allocate a new cache entry."""
     manager = get_manager()
     address = "AA:BB:CC:DD:EE:05"
-    manager._update_name_cache(address, "Onv")
+    manager.seed_name_cache(address, "Onv")
     cached_first = manager._name_cache[address]
-    manager._update_name_cache(address, "Onv")
+    manager.seed_name_cache(address, "Onv")
     # Same string compares equal; identity may or may not match depending on
     # interning but the value must be unchanged.
     assert manager._name_cache[address] == cached_first
@@ -96,8 +96,8 @@ def test_name_cache_empty_name_noop() -> None:
     """An empty name never overwrites the cached value."""
     manager = get_manager()
     address = "AA:BB:CC:DD:EE:06"
-    manager._update_name_cache(address, "Onv")
-    manager._update_name_cache(address, "")
+    manager.seed_name_cache(address, "Onv")
+    manager.seed_name_cache(address, "")
     assert manager._name_cache[address] == "Onv"
 
 
@@ -109,7 +109,7 @@ def test_name_cache_address_fallback_not_stored() -> None:
     """
     manager = get_manager()
     address = "AA:BB:CC:DD:EE:07"
-    manager._update_name_cache(address, address)
+    manager.seed_name_cache(address, address)
     assert address not in manager._name_cache
 
 
@@ -117,8 +117,8 @@ def test_name_cache_address_fallback_does_not_overwrite() -> None:
     """The address-fallback no-op must not replace an existing cached name."""
     manager = get_manager()
     address = "AA:BB:CC:DD:EE:08"
-    manager._update_name_cache(address, "Onv")
-    manager._update_name_cache(address, address)
+    manager.seed_name_cache(address, "Onv")
+    manager.seed_name_cache(address, address)
     assert manager._name_cache[address] == "Onv"
 
 
@@ -126,8 +126,8 @@ def test_name_cache_case_folded_extension() -> None:
     """The extension rule is case-folded: 'onv' is a prefix of 'ONVIS XXX'."""
     manager = get_manager()
     address = "AA:BB:CC:DD:EE:09"
-    manager._update_name_cache(address, "onv")
-    manager._update_name_cache(address, "ONVIS XXX")
+    manager.seed_name_cache(address, "onv")
+    manager.seed_name_cache(address, "ONVIS XXX")
     assert manager._name_cache[address] == "ONVIS XXX"
 
 
@@ -135,8 +135,8 @@ def test_name_cache_case_folded_truncation_keeps_cached() -> None:
     """Case-folded truncation: 'ONV' is a truncation of 'Onvis XXX'."""
     manager = get_manager()
     address = "AA:BB:CC:DD:EE:0A"
-    manager._update_name_cache(address, "Onvis XXX")
-    manager._update_name_cache(address, "ONV")
+    manager.seed_name_cache(address, "Onvis XXX")
+    manager.seed_name_cache(address, "ONV")
     assert manager._name_cache[address] == "Onvis XXX"
 
 

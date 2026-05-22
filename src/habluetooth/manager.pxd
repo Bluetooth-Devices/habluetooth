@@ -84,7 +84,13 @@ cdef class BluetoothManager:
         cached_len=Py_ssize_t,
         name_len=Py_ssize_t,
     )
-    cpdef void _update_name_cache(self, str address, str name)
+    cdef void _update_name_cache(self, str address, str name)
+
+    cdef void _handle_name_cache_miss(
+        self,
+        BluetoothServiceInfoBleak service_info,
+        str cached_name,
+    )
 
     cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
 

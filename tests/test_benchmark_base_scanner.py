@@ -1046,13 +1046,13 @@ def test_update_name_cache_steady_state_identity(benchmark: BenchmarkFixture) ->
     manager = get_manager()
     address = "44:44:33:11:23:60"
     name = "Onvis XXX"
-    manager._update_name_cache(address, name)
+    manager.seed_name_cache(address, name)
     assert manager._name_cache[address] is name
 
     @benchmark
     def run():
         for _ in range(1000):
-            manager._update_name_cache(address, name)
+            manager.seed_name_cache(address, name)
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
@@ -1061,7 +1061,7 @@ def test_update_name_cache_steady_state_equality(benchmark: BenchmarkFixture) ->
     manager = get_manager()
     address = "44:44:33:11:23:61"
     cached = b"Onvis XXX".decode()
-    manager._update_name_cache(address, cached)
+    manager.seed_name_cache(address, cached)
     # Force a different object with the same value via a separate bytes.decode.
     incoming = b"Onvis XXX".decode()
     assert incoming is not cached
@@ -1070,7 +1070,7 @@ def test_update_name_cache_steady_state_equality(benchmark: BenchmarkFixture) ->
     @benchmark
     def run():
         for _ in range(1000):
-            manager._update_name_cache(address, incoming)
+            manager.seed_name_cache(address, incoming)
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
@@ -1082,7 +1082,7 @@ def test_update_name_cache_address_fallback(benchmark: BenchmarkFixture) -> None
     @benchmark
     def run():
         for _ in range(1000):
-            manager._update_name_cache(address, address)
+            manager.seed_name_cache(address, address)
 
     assert address not in manager._name_cache
 
@@ -1098,7 +1098,7 @@ def test_update_name_cache_cold_first_name(benchmark: BenchmarkFixture) -> None:
     def run():
         for _ in range(1000):
             manager._name_cache.pop(address, None)
-            manager._update_name_cache(address, name)
+            manager.seed_name_cache(address, name)
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
@@ -1113,14 +1113,14 @@ def test_update_name_cache_prefix_rule_paths(benchmark: BenchmarkFixture) -> Non
     short = "Onv"
     long = "Onvis XXX"
     other = "Donkey XX"  # same length as long, not a prefix-extension
-    manager._update_name_cache(address, long)  # seed
+    manager.seed_name_cache(address, long)  # seed
 
     @benchmark
     def run():
         for _ in range(1000):
             # rename: same length, different -> replace
-            manager._update_name_cache(address, other)
+            manager.seed_name_cache(address, other)
             # extension: name is longer than cached -> replace
-            manager._update_name_cache(address, long)
+            manager.seed_name_cache(address, long)
             # truncation: name shorter than cached, prefix match -> keep
-            manager._update_name_cache(address, short)
+            manager.seed_name_cache(address, short)
