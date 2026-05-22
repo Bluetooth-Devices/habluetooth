@@ -1077,15 +1077,17 @@ class BluetoothManager:
         """
         Declare an on-demand active-scan need for a specific address.
 
-        ``scan_interval`` and ``scan_duration`` default to
-        DEFAULT_ACTIVE_SCAN_INTERVAL (300s, 5 minutes) and
-        DEFAULT_ACTIVE_SCAN_DURATION (10s) when not provided; those
-        defaults work for the typical sensor case. Integrations that
-        genuinely need faster updates can pass a smaller
-        ``scan_interval`` explicitly. The scheduler asks the AUTO-mode
-        scanner currently in range of ``address`` to flip active for
-        ``scan_duration`` seconds every ``scan_interval`` seconds
-        (measured between window starts, not between successive
+        ``address`` is normalized to upper-case so it matches the
+        case BlueZ / bleak use for advertisement source addresses;
+        callers don't have to think about case. ``scan_interval`` and
+        ``scan_duration`` default to DEFAULT_ACTIVE_SCAN_INTERVAL
+        (300s, 5 minutes) and DEFAULT_ACTIVE_SCAN_DURATION (10s) when
+        not provided; those defaults work for the typical sensor
+        case. Integrations that genuinely need faster updates can pass
+        a smaller ``scan_interval`` explicitly. The scheduler asks the
+        AUTO-mode scanner currently in range of ``address`` to flip
+        active for ``scan_duration`` seconds every ``scan_interval``
+        seconds (measured between window starts, not between successive
         windows) while the device is being seen. ACTIVE and PASSIVE
         scanners ignore the request. Returns a cancel callable.
         """
@@ -1097,7 +1099,7 @@ class BluetoothManager:
             raise ValueError(f"scan_interval must be >= {MIN_ACTIVE_SCAN_INTERVAL}s")
         if scan_duration < MIN_ACTIVE_SCAN_DURATION:
             raise ValueError(f"scan_duration must be >= {MIN_ACTIVE_SCAN_DURATION}s")
-        request = ActiveScanRequest(address, scan_interval, scan_duration)
+        request = ActiveScanRequest(address.upper(), scan_interval, scan_duration)
         self._auto_scheduler.add_request(request)
         return partial(self._auto_scheduler.remove_request, request)
 

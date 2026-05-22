@@ -463,13 +463,16 @@ class AutoScanScheduler:
         """
         Register an active-scan request and start tracking immediately.
 
-        If ``start()`` has already run, the first window fires
-        ``scan_interval`` seconds after registration (gated by the
-        per-scanner history check at tick time, so it doesn't fire on
-        a scanner that hasn't seen the device yet). If the entry gets
-        pruned later because the device's history disappears,
-        on_advertisement re-creates it the next time the device is
-        seen.
+        If a previous advertisement for ``request.address`` is in
+        ``_all_history`` when this runs, the first window fires
+        ``scan_interval`` seconds after registration on the current
+        owner. If the device hasn't been seen yet, no ``_needs`` entry
+        is seeded (a speculative seed would just be pruned on the
+        next tick because ``_collect_due_buckets`` drops addresses
+        with no ``last_service_info``); ``on_advertisement`` creates
+        the entry and wakes the owner's worker the first time the
+        device is seen, so the first window fires ``scan_interval``
+        after that advertisement instead.
 
         ``ActiveScanRequest`` is compared by identity, so each public
         call to ``BluetoothManager.async_register_active_scan`` creates
@@ -482,25 +485,24 @@ class AutoScanScheduler:
         request, not other registrations against the same address.
 
         Pre-``start()`` registrations (no event loop yet) record the
-        request only — no ``_needs`` entry is seeded. The first window
-        for such a request fires ``scan_interval`` after the next
-        advertisement for ``address`` arrives, not after
-        ``start()``. This only matters if an integration registers
-        before ``BluetoothManager.async_setup``; HA's flow always sets
-        up the manager first.
+        request only — no ``_needs`` entry is seeded, no wake fires.
         """
         self._requests_by_address.setdefault(request.address, set()).add(request)
-        added = False
-        if self._loop is not None:
-            existing = self._needs.setdefault(request.address, {})
-            if request not in existing:
-                existing[request] = self._loop.time() + request.scan_interval
-                added = True
-        if not added:
+        if self._loop is None:
             return
         history = self._manager.async_last_service_info(request.address, False)
-        if history is not None:
-            self._wake_worker(history.source)
+        if history is None:
+            # No history yet; seeding _needs would just be pruned on
+            # the next tick because _collect_due_buckets drops
+            # addresses with no last_service_info. on_advertisement
+            # will create the entry the first time the device is seen
+            # and wake the owner's worker.
+            return
+        existing = self._needs.setdefault(request.address, {})
+        if request in existing:
+            return
+        existing[request] = self._loop.time() + request.scan_interval
+        self._wake_worker(history.source)
 
     def remove_request(self, request: ActiveScanRequest) -> None:
         """Drop the request from the index and from any pending tracking."""

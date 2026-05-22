@@ -464,14 +464,14 @@ async def test_dispatch_drops_tracking_for_unseen_address() -> None:
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
-    cancel = manager.async_register_active_scan("aa:bb:cc:dd:ee:ff", scan_interval=60.0)
+    cancel = manager.async_register_active_scan("AA:BB:CC:DD:EE:FF", scan_interval=60.0)
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        request = next(iter(sched._requests_by_address["aa:bb:cc:dd:ee:ff"]))
-        sched._needs["aa:bb:cc:dd:ee:ff"] = {request: loop.time() - 1.0}
+        request = next(iter(sched._requests_by_address["AA:BB:CC:DD:EE:FF"]))
+        sched._needs["AA:BB:CC:DD:EE:FF"] = {request: loop.time() - 1.0}
         await _run_worker_tick(sched, scanner.source)
-        assert "aa:bb:cc:dd:ee:ff" not in sched._needs
+        assert "AA:BB:CC:DD:EE:FF" not in sched._needs
     finally:
         cancel()
         register_cancel()
@@ -589,8 +589,10 @@ async def test_on_advertisement_re_bootstraps_pruned_tracking() -> None:
     cancel = manager.async_register_active_scan(address, scan_interval=120.0)
     try:
         worker = sched._workers[scanner.source]
-        # Simulate the prune-on-no-history step having removed the entry.
-        del sched._needs[address]
+        # No advertisement has been seen yet, so add_request skipped
+        # the _needs seed (the prune-on-no-history path). Simulate the
+        # "pruned" state by ensuring it's not there.
+        sched._needs.pop(address, None)
         worker._wake.clear()
         _inject(scanner, address)
         assert address in sched._needs
@@ -638,6 +640,63 @@ async def test_register_active_scan_applies_defaults() -> None:
         assert request.scan_duration == DEFAULT_ACTIVE_SCAN_DURATION
     finally:
         cancel()
+
+
+@pytest.mark.asyncio
+async def test_register_active_scan_normalizes_address_case() -> None:
+    """
+    Lowercase addresses get normalized to the upper-case form.
+
+    Matches the upper-case form BlueZ / bleak use for advertisement
+    source addresses so on_advertisement's dict lookup finds the
+    request regardless of caller case.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    upper = "AA:BB:CC:DD:EE:55"
+    cancel = manager.async_register_active_scan(upper.lower(), scan_interval=60.0)
+    try:
+        # Stored under the upper-case form, regardless of caller's case.
+        assert upper in sched._requests_by_address
+        assert upper.lower() not in sched._requests_by_address
+        request = next(iter(sched._requests_by_address[upper]))
+        assert request.address == upper
+    finally:
+        cancel()
+
+
+@pytest.mark.asyncio
+async def test_add_request_without_history_skips_seed() -> None:
+    """
+    add_request skips _needs when no last_service_info exists yet.
+
+    on_advertisement bootstraps tracking instead. The previous
+    behavior seeded unconditionally and let the next worker tick
+    prune the orphan entry; skipping the seed avoids that churn.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "AA:BB:CC:DD:EE:56"
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    try:
+        # Sanity: history doesn't exist for this address yet.
+        assert manager.async_last_service_info(address, False) is None
+        # _needs was not seeded -> no entry to prune later.
+        assert address not in sched._needs
+        # But the request IS recorded for on_advertisement to pick up.
+        assert address in sched._requests_by_address
+        # First advertisement bootstraps tracking and wakes the
+        # owner's worker.
+        worker = sched._workers[scanner.source]
+        worker._wake.clear()
+        _inject(scanner, address)
+        assert address in sched._needs
+        assert worker._wake.is_set()
+    finally:
+        cancel()
+        register_cancel()
 
 
 @pytest.mark.asyncio
@@ -778,19 +837,19 @@ async def test_next_event_at_ignores_empty_or_foreign_entries() -> None:
     try:
         worker = sched._workers[scanner.source]
         # Empty entries: hits the "if not entries: continue" branch.
-        sched._needs["aa:bb:cc:dd:ee:01"] = {}
+        sched._needs["AA:BB:CC:DD:EE:01"] = {}
         # No history at all: hits "if history is None or history.source != source".
         cancel = manager.async_register_active_scan(
-            "aa:bb:cc:dd:ee:02", scan_interval=60.0
+            "AA:BB:CC:DD:EE:02", scan_interval=60.0
         )
-        request = next(iter(sched._requests_by_address["aa:bb:cc:dd:ee:02"]))
-        sched._needs["aa:bb:cc:dd:ee:02"] = {request: loop.time() - 1.0}
+        request = next(iter(sched._requests_by_address["AA:BB:CC:DD:EE:02"]))
+        sched._needs["AA:BB:CC:DD:EE:02"] = {request: loop.time() - 1.0}
         next_at = worker._next_event_at(loop.time())
         # With no contributing per-device entries the next event reverts
         # to the sweep cadence (well into the future via initial delay).
         assert next_at == worker._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
         cancel()
-        del sched._needs["aa:bb:cc:dd:ee:01"]
+        del sched._needs["AA:BB:CC:DD:EE:01"]
     finally:
         register_cancel()
 
@@ -803,10 +862,10 @@ async def test_dispatch_per_device_skips_empty_entries() -> None:
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        sched._needs["aa:bb:cc:dd:ee:ff"] = {}
+        sched._needs["AA:BB:CC:DD:EE:FF"] = {}
         await sched._workers[scanner.source]._tick()
         assert scanner.active_window_calls == []
-        del sched._needs["aa:bb:cc:dd:ee:ff"]
+        del sched._needs["AA:BB:CC:DD:EE:FF"]
     finally:
         register_cancel()
 
