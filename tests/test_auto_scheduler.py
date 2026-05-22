@@ -768,35 +768,62 @@ async def test_repeated_window_failures_log_only_first_traceback(
 
 @pytest.mark.asyncio
 async def test_start_replays_pre_start_requests_when_history_exists() -> None:
-    """add_request before start() seeds _needs at start() if history exists."""
+    """
+    add_request before start() seeds _needs at start() if history exists.
+
+    Also covers the no-history skip path and the
+    already-in-existing-entries no-op so the replay loop's branches
+    are all exercised.
+    """
     manager = get_manager()
     sched = manager._auto_scheduler
-    address = "11:22:33:44:55:80"
-    # Get history in place first.
+    address_with_history = "11:22:33:44:55:80"
+    address_no_history = "11:22:33:44:55:81"
+    # Get history in place for one address only.
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:21", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
-    _inject(scanner, address)
+    _inject(scanner, address_with_history)
     try:
-        # Simulate pre-start() state: clear _loop and _running so
-        # add_request takes its no-loop path and start() re-runs.
         saved_loop = sched._loop
         assert saved_loop is not None
         sched._loop = None
         sched._running = False
         try:
-            cancel = manager.async_register_active_scan(
-                address, scan_interval=60.0, scan_duration=5.0
+            # Register TWO requests on the with-history address so
+            # we can pre-populate _needs with one of them and prove
+            # start() (a) leaves the pre-existing entry alone and
+            # (b) inserts a fresh entry for the other.
+            cancel_with_a = manager.async_register_active_scan(
+                address_with_history, scan_interval=60.0, scan_duration=5.0
+            )
+            cancel_with_b = manager.async_register_active_scan(
+                address_with_history, scan_interval=120.0, scan_duration=5.0
+            )
+            cancel_without = manager.async_register_active_scan(
+                address_no_history, scan_interval=60.0, scan_duration=5.0
             )
             try:
-                assert address not in sched._needs
-                # start() should now seed _needs from
-                # _requests_by_address because history exists.
+                assert address_with_history not in sched._needs
+                requests = list(sched._requests_by_address[address_with_history])
+                pre_existing, to_be_inserted = requests
+                # Pre-populate _needs with one request only.
+                sched._needs[address_with_history] = {pre_existing: 1234.5}
                 sched.start(saved_loop)
-                assert address in sched._needs
-                request = next(iter(sched._requests_by_address[address]))
-                assert request in sched._needs[address]
+                seeded = sched._needs[address_with_history]
+                # The pre-existing entry was left alone (covers the
+                # `request not in existing` False branch).
+                assert seeded[pre_existing] == 1234.5
+                # The other request got freshly inserted (covers the
+                # insert line in the replay loop).
+                assert to_be_inserted in seeded
+                assert seeded[to_be_inserted] > 1234.5
+                # No-history address: skipped by the
+                # `last_service_info(...) is None` branch.
+                assert address_no_history not in sched._needs
             finally:
-                cancel()
+                cancel_with_a()
+                cancel_with_b()
+                cancel_without()
         finally:
             sched._loop = saved_loop
             sched._running = True
