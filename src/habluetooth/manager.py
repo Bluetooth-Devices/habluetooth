@@ -1069,12 +1069,11 @@ class BluetoothManager:
         Declare an on-demand active-scan need for a specific address.
 
         ``scan_interval`` and ``scan_duration`` default to
-        DEFAULT_ACTIVE_SCAN_INTERVAL (180s, 3 minutes) and
+        DEFAULT_ACTIVE_SCAN_INTERVAL (300s, 5 minutes) and
         DEFAULT_ACTIVE_SCAN_DURATION (10s) when not provided; those
-        defaults work for the typical sensor case where a callback just
-        wants the device's scan response on a steady cadence without
-        burning radio time on more frequent flips than the sensor data
-        actually changes. The scheduler
+        defaults work for the typical sensor case. Integrations that
+        genuinely need faster updates can pass a smaller
+        ``scan_interval`` explicitly. The scheduler
         asks the AUTO-mode scanner currently in range of ``address`` to
         flip active for ``scan_duration`` seconds every
         ``scan_interval`` seconds while the device is being seen.
