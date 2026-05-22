@@ -6,6 +6,15 @@ defaults to PASSIVE; the manager flips it to ACTIVE for ``duration``
 seconds on demand when an integration has asked for active scans on a
 specific device address.
 
+Per-device active windows fire on **exactly one** scanner at a time:
+whichever scanner the manager currently considers the device's owner
+(``manager.async_last_service_info(address).source``). If three other
+AUTO scanners can also see the device, they stay PASSIVE for that
+window. Ownership can flip across scanners over time as RSSI changes;
+the next-due window then fires on the new owner. Sweeps are different
+and run on every AUTO scanner independently, since their job is to
+find devices not yet in history.
+
 
 Flow
 ====

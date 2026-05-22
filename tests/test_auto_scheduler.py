@@ -1350,3 +1350,97 @@ async def test_three_inkbirds_window_unchanged_after_removal() -> None:
         for cancel in cancels:
             cancel()
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_only_owning_scanner_fires_among_four() -> None:
+    """
+    Of four AUTO scanners, only the one owning the device's history fires.
+
+    The device is injected from one specific scanner so the manager's
+    _all_history points at that source. Every worker's _tick runs;
+    only the owner produces an active window. The other three scanners
+    stay PASSIVE.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=60.0, scan_duration=5.0
+    )
+    scanners = [
+        _RecordingAutoScanner(f"AA:00:00:00:00:0{n}", BluetoothScanningMode.AUTO)
+        for n in range(4)
+    ]
+    register_cancels = [manager.async_register_scanner(s) for s in scanners]
+    try:
+        owner = scanners[2]
+        _inject(owner, address)
+        entries = sched._needs[address]
+        for req in list(entries):
+            entries[req] = loop.time() - 1.0
+        for scanner in scanners:
+            await sched._workers[scanner.source]._tick()
+        # Only the owning scanner flipped to ACTIVE for the requested 5s.
+        assert [s.active_window_calls for s in scanners] == [[], [], [5.0], []]
+    finally:
+        for c in register_cancels:
+            c()
+        cancel()
+
+
+@pytest.mark.asyncio
+async def test_add_request_before_start_does_not_seed_needs() -> None:
+    """If add_request runs before start() the entry is deferred to advertisement."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "BB:00:00:00:00:00"
+    original_loop = sched._loop
+    sched._loop = None
+    try:
+        sched.add_request(ActiveScanRequest(address, 60.0, None))
+        assert address in sched._requests_by_address
+        assert address not in sched._needs
+    finally:
+        sched._loop = original_loop
+        sched._requests_by_address.pop(address, None)
+
+
+@pytest.mark.asyncio
+async def test_add_request_idempotent_keeps_existing_due() -> None:
+    """Re-adding the same request preserves its existing next-due time."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "BC:00:00:00:00:00"
+    request = ActiveScanRequest(address, 60.0, None)
+    sched.add_request(request)
+    sched._needs[address][request] = 1234.5
+    sched.add_request(request)
+    assert sched._needs[address][request] == 1234.5
+    sched.remove_request(request)
+
+
+@pytest.mark.asyncio
+async def test_run_loop_waits_then_ticks() -> None:
+    """The _run loop's wait_for + _tick path is exercised end-to-end."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        await _replace_worker_task(worker)
+        # Sweep ~1ms in the future so _run's wait_for times out quickly
+        # and _tick runs once before we shut it down.
+        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL + 0.001
+        task = loop.create_task(worker._run())
+        await asyncio.sleep(0.05)
+        assert scanner.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
+        sched._running = False
+        worker._wake.set()
+        await asyncio.wait_for(task, timeout=1.0)
+    finally:
+        sched._running = True
+        register_cancel()
