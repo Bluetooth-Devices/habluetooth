@@ -895,16 +895,18 @@ async def test_on_advertisement_no_match_no_wake() -> None:
 
 
 @pytest.mark.asyncio
-async def test_on_advertisement_existing_entry_no_extra_wake() -> None:
-    """A second ad for a tracked address with multiple requests skips all."""
+async def test_on_advertisement_wakes_on_every_ad_for_tracked_address() -> None:
+    """
+    Every ad on a tracked address wakes the source's worker.
+
+    The wake is what makes ownership-flip detection work: when this
+    scanner becomes the new owner mid-sleep, the wake forces the
+    worker to re-evaluate _next_event_at and pick up the entry that
+    is now owned by it.
+    """
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:55:66"
-    # Two registrations for the same address so the for-loop in
-    # on_advertisement iterates twice; both requests must be present
-    # in _needs after the first inject, so the second inject takes
-    # the request-in-existing branch on every iteration and added
-    # stays False.
     cancel1 = manager.async_register_active_scan(address, scan_interval=60.0)
     cancel2 = manager.async_register_active_scan(address, scan_interval=120.0)
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
@@ -914,7 +916,10 @@ async def test_on_advertisement_existing_entry_no_extra_wake() -> None:
         _inject(scanner, address)
         worker._wake.clear()
         _inject(scanner, address)
-        assert not worker._wake.is_set()
+        # Second inject still wakes; the wake is unconditional now so
+        # ownership flips on an existing entry are seen by the new
+        # owner.
+        assert worker._wake.is_set()
     finally:
         cancel1()
         cancel2()
@@ -923,22 +928,17 @@ async def test_on_advertisement_existing_entry_no_extra_wake() -> None:
 
 @pytest.mark.asyncio
 async def test_on_advertisement_with_all_requests_already_tracked() -> None:
-    """Direct exercise of the existing-entries skip path inside the for-loop."""
+    """on_advertisement still wakes when every request is already in _needs."""
     manager = get_manager()
     sched = manager._auto_scheduler
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     address = "11:22:33:44:55:66"
-    # Build two requests in the registry directly so we know exactly
-    # what's in _requests_by_address; pre-populate _needs with both so
-    # on_advertisement's for-loop iterates twice and skips both.
     req_a = ActiveScanRequest(address, 60.0, None)
     req_b = ActiveScanRequest(address, 120.0, None)
     sched._requests_by_address[address] = {req_a, req_b}
     sched._needs[address] = {req_a: 0.0, req_b: 0.0}
     try:
-        # Drive on_advertisement directly; both requests are present so
-        # added stays False and the wake path is skipped.
         si = BluetoothServiceInfoBleak(
             name="x",
             address=address,
@@ -957,7 +957,9 @@ async def test_on_advertisement_with_all_requests_already_tracked() -> None:
         worker = sched._workers[scanner.source]
         worker._wake.clear()
         sched.on_advertisement(si)
-        assert not worker._wake.is_set()
+        # Wake fires unconditionally so ownership-flip detection still
+        # triggers when every request was already in _needs.
+        assert worker._wake.is_set()
         # Sanity: the entries we put in are untouched.
         assert sched._needs[address] == {req_a: 0.0, req_b: 0.0}
     finally:
@@ -1531,6 +1533,120 @@ async def test_owner_flip_during_window_does_not_double_fire() -> None:
         await t_a
     finally:
         gate.set()
+        c_a()
+        c_b()
+        cancel()
+
+
+def _inject_with_rssi(scanner: _RecordingAutoScanner, address: str, rssi: int) -> None:
+    """Drive an advertisement through the scanner with a specific RSSI."""
+    adv = generate_advertisement_data(local_name="x", rssi=rssi)
+    device = generate_ble_device(address, "x")
+    scanner._async_on_advertisement(
+        device.address,
+        adv.rssi,
+        device.name or "",
+        adv.service_uuids,
+        adv.service_data,
+        adv.manufacturer_data,
+        adv.tx_power,
+        {},
+        asyncio.get_running_loop().time(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_device_migration_between_scanners_fires_on_new_owner() -> None:
+    """
+    Migrating from scanner A to B fires the next window on B, not on A.
+
+    Sequence: register active_scan. A sees the device first and becomes
+    owner. A's worker fires the first window. The device then comes
+    through B with a much stronger RSSI so the manager's
+    ADV_RSSI_SWITCH_THRESHOLD flips ownership. Make the entry due
+    again and tick both workers: B fires the new window, A skips.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:99"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=60.0, scan_duration=5.0
+    )
+    s_a = _RecordingAutoScanner("AA:00:00:00:00:01", BluetoothScanningMode.AUTO)
+    s_b = _RecordingAutoScanner("AA:00:00:00:00:02", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(s_a)
+    c_b = manager.async_register_scanner(s_b)
+    try:
+        # A sees the device first; A becomes owner.
+        _inject_with_rssi(s_a, address, rssi=-80)
+        info_a = manager.async_last_service_info(address, False)
+        assert info_a is not None
+        assert info_a.source == s_a.source
+
+        # Make the existing tracking entry due and fire the first
+        # window on A.
+        entries = sched._needs[address]
+        for req in list(entries):
+            entries[req] = loop.time() - 1.0
+        await sched._workers[s_a.source]._tick()
+        assert s_a.active_window_calls == [5.0]
+        assert s_b.active_window_calls == []
+
+        # Device migrates to B with much stronger signal (delta beats
+        # ADV_RSSI_SWITCH_THRESHOLD). The manager flips
+        # _all_history.source to B.
+        _inject_with_rssi(s_b, address, rssi=-30)
+        info_b = manager.async_last_service_info(address, False)
+        assert info_b is not None
+        assert info_b.source == s_b.source
+
+        # Force the entry due again and run both workers. B (the new
+        # owner) fires; A skips because history.source is no longer
+        # A's source.
+        for req in list(entries):
+            entries[req] = loop.time() - 1.0
+        await sched._workers[s_a.source]._tick()
+        await sched._workers[s_b.source]._tick()
+        assert s_a.active_window_calls == [5.0]
+        assert s_b.active_window_calls == [5.0]
+    finally:
+        c_a()
+        c_b()
+        cancel()
+
+
+@pytest.mark.asyncio
+async def test_device_migration_wakes_new_owner_worker() -> None:
+    """
+    A fresh advertisement on the new owner wakes its worker.
+
+    Without this wake, a worker that became the owner mid-sleep would
+    sit until its previously-computed _next_event_at (sweep cadence)
+    even though there's a tracked address whose due time is much
+    sooner. The wake is on_advertisement's job and must fire even when
+    the _needs entry already exists (i.e. the ad doesn't add a new
+    request, it just notifies us this scanner now sees the device).
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:AA"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    s_a = _RecordingAutoScanner("AA:00:00:00:00:01", BluetoothScanningMode.AUTO)
+    s_b = _RecordingAutoScanner("AA:00:00:00:00:02", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(s_a)
+    c_b = manager.async_register_scanner(s_b)
+    try:
+        # A sees the device first.
+        _inject_with_rssi(s_a, address, rssi=-80)
+        worker_b = sched._workers[s_b.source]
+        worker_b._wake.clear()
+        # B sees the device with stronger RSSI and becomes the new
+        # owner. B's worker must be woken so it re-evaluates
+        # _next_event_at and picks up the existing entry.
+        _inject_with_rssi(s_b, address, rssi=-30)
+        assert worker_b._wake.is_set()
+    finally:
         c_a()
         c_b()
         cancel()

@@ -432,7 +432,19 @@ class AutoScanScheduler:
                 del self._needs[request.address]
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
-        """Hot path. Track requests for the advertisement's address."""
+        """
+        Hot path. Track requests for the advertisement's address.
+
+        Always wakes the worker for ``service_info.source`` when the
+        address has registered active-scan requests. The wake covers
+        two cases: (1) bootstrap, when an entry is created in _needs
+        because the previous owner was pruned; (2) ownership flip,
+        when this scanner becomes the device's new owner and its
+        worker needs to re-evaluate _next_event_at to include the
+        (already-tracked) entry. A single wake() is one Event.set
+        call; cheap enough to do per accepted advertisement on a
+        tracked address.
+        """
         if not self._requests_by_address or self._loop is None:
             return
         address = service_info.address
@@ -440,15 +452,12 @@ class AutoScanScheduler:
         if requests is None:
             return
         existing = self._needs.get(address)
-        added = False
         for request in requests:
             if existing is None:
                 existing = self._needs[address] = {}
             if request not in existing:
                 existing[request] = self._loop.time() + request.scan_interval
-                added = True
-        if added:
-            self._wake_worker(service_info.source)
+        self._wake_worker(service_info.source)
 
     def _wake_worker(self, source: str) -> None:
         """Wake the worker for ``source`` if one is registered."""

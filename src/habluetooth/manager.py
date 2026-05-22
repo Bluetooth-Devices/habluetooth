@@ -821,6 +821,18 @@ class BluetoothManager:
 
         self._all_history[service_info.address] = service_info
 
+        # Hand the advertisement to the auto-scan scheduler right after
+        # _all_history is updated. Ownership-flip detection (a different
+        # scanner taking over a device's source) needs to fire even when
+        # the advertisement payload is identical to the previous one;
+        # the data-comparison short-circuit below would otherwise hide
+        # that flip from the scheduler. Local-typed assignment so
+        # cython.locals casts to AutoScanScheduler and the call is a
+        # direct vtable dispatch even though _auto_scheduler is stored
+        # untyped on BluetoothManager.
+        auto_scheduler = self._auto_scheduler
+        auto_scheduler.on_advertisement(service_info)
+
         # Track advertisement intervals to determine when we need to
         # switch adapters or mark a device as unavailable
         if (
@@ -891,11 +903,6 @@ class BluetoothManager:
                     bleak_callback, service_info.device, advertisement_data
                 )
 
-        # Local-typed assignment so cython.locals casts to AutoScanScheduler
-        # and the call below is a direct vtable dispatch even though
-        # _auto_scheduler is stored untyped on BluetoothManager.
-        auto_scheduler = self._auto_scheduler
-        auto_scheduler.on_advertisement(service_info)
         self._subclass_discover_info(service_info)
 
     def async_clear_advertisement_history(self, address: str) -> None:
