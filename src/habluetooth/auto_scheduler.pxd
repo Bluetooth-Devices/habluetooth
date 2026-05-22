@@ -1,11 +1,15 @@
 import cython
 
 from .base_scanner cimport BaseHaScanner
-from .manager cimport BleakCallback
 from .models cimport BluetoothServiceInfoBleak
 
 
-cdef bint _matches(BleakCallback callback, BluetoothServiceInfoBleak service_info)
+cdef class ActiveScanRequest:
+
+    cdef public object address
+    cdef public object service_uuid
+    cdef public double scan_interval
+    cdef public object scan_duration
 
 
 cdef class AutoScanScheduler:
@@ -19,11 +23,12 @@ cdef class AutoScanScheduler:
     cdef public object _loop
     cdef public bint _running
     cdef public set _pending_tasks
-    cdef public set _interval_callbacks
+    cdef public dict _by_address
+    cdef public dict _by_service_uuid
 
-    cpdef void add_callback(self, BleakCallback callback)
+    cpdef void add_matcher(self, ActiveScanRequest request)
 
-    cpdef void remove_callback(self, BleakCallback callback)
+    cpdef void remove_matcher(self, ActiveScanRequest request)
 
     cpdef void add_scanner(self, BaseHaScanner scanner)
 
@@ -32,8 +37,11 @@ cdef class AutoScanScheduler:
     @cython.locals(
         address=str,
         existing=dict,
-        callback=BleakCallback,
-        interval=object,
+        candidates=set,
+        by_addr=set,
+        by_uuid=set,
+        request=ActiveScanRequest,
+        uuid=str,
     )
     cpdef void on_advertisement(self, BluetoothServiceInfoBleak service_info)
 

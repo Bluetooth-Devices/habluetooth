@@ -1,7 +1,7 @@
 import cython
 
 from .advertisement_tracker cimport AdvertisementTracker
-from .auto_scheduler cimport AutoScanScheduler
+from .auto_scheduler cimport ActiveScanRequest, AutoScanScheduler
 from .base_scanner cimport BaseHaScanner
 from .models cimport BluetoothServiceInfoBleak
 
@@ -34,9 +34,6 @@ cdef class BleakCallback:
 
     cdef public object callback
     cdef public dict filters
-    cdef public object scanning_mode
-    cdef public object scan_interval
-    cdef public object scan_duration
 
 
 cdef class BluetoothManager:

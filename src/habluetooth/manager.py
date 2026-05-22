@@ -6,7 +6,6 @@ import asyncio
 import itertools
 import logging
 import platform
-import warnings
 from collections.abc import Callable, Iterable
 from dataclasses import asdict
 from functools import partial
@@ -32,7 +31,7 @@ from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
     AdvertisementTracker,
 )
-from .auto_scheduler import AutoScanScheduler
+from .auto_scheduler import ActiveScanRequest, AutoScanScheduler
 from .channels.bluez import CONNECTION_ERRORS, MGMTBluetoothCtl
 from .const import (
     ADV_RSSI_SWITCH_THRESHOLD,
@@ -42,7 +41,6 @@ from .const import (
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .models import (
-    BluetoothScanningMode,
     BluetoothServiceInfoBleak,
     HaBluetoothSlotAllocations,
     HaScannerModeChange,
@@ -100,28 +98,14 @@ def _dispatch_bleak_callback(
 class BleakCallback:
     """Bleak callback."""
 
-    __slots__ = (
-        "callback",
-        "filters",
-        "scan_duration",
-        "scan_interval",
-        "scanning_mode",
-    )
+    __slots__ = ("callback", "filters")
 
     def __init__(
-        self,
-        callback: AdvertisementDataCallback,
-        filters: dict[str, set[str]],
-        scanning_mode: BluetoothScanningMode | None = None,
-        scan_interval: float | None = None,
-        scan_duration: float | None = None,
+        self, callback: AdvertisementDataCallback, filters: dict[str, set[str]]
     ) -> None:
         """Init bleak callback."""
         self.callback = callback
         self.filters = filters
-        self.scanning_mode = scanning_mode
-        self.scan_interval = scan_interval
-        self.scan_duration = scan_duration
 
 
 class BluetoothManager:
@@ -1052,46 +1036,11 @@ class BluetoothManager:
         )
 
     def async_register_bleak_callback(
-        self,
-        callback: AdvertisementDataCallback,
-        filters: dict[str, set[str]],
-        *,
-        scanning_mode: BluetoothScanningMode | None = None,
-        scan_interval: float | None = None,
-        scan_duration: float | None = None,
+        self, callback: AdvertisementDataCallback, filters: dict[str, set[str]]
     ) -> CALLBACK_TYPE:
-        """
-        Register a callback.
-
-        ``scanning_mode`` declares whether the caller needs active scanning
-        for matched devices. ``scan_interval`` (seconds between active
-        sweeps) and ``scan_duration`` (length of each sweep, seconds) tell
-        the auto-mode scheduler how often and how long to flip an AUTO-mode
-        scanner into active for the matched devices.
-
-        Registering an ACTIVE callback without ``scan_interval`` is
-        deprecated: integrations should declare their actual cadence so
-        coordinated scanners can stay passive most of the time.
-        """
-        if scanning_mode is BluetoothScanningMode.ACTIVE and scan_interval is None:
-            warnings.warn(
-                f"Bleak callback {getattr(callback, '__qualname__', callback)!r} "
-                "registered with ACTIVE scanning mode but no scan_interval; "
-                "this forces continuous active scanning. Pass "
-                "scan_interval=<seconds> and scan_duration=<seconds> so "
-                "AUTO-mode scanners can schedule windowed active scans.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        callback_entry = BleakCallback(
-            callback,
-            filters,
-            scanning_mode=scanning_mode,
-            scan_interval=scan_interval,
-            scan_duration=scan_duration,
-        )
+        """Register a callback."""
+        callback_entry = BleakCallback(callback, filters)
         self._bleak_callbacks.add(callback_entry)
-        self._auto_scheduler.add_callback(callback_entry)
         # Replay the history since otherwise we miss devices
         # that were already discovered before the callback was registered
         # or we are in passive mode
@@ -1100,12 +1049,37 @@ class BluetoothManager:
                 callback_entry, history.device, history.advertisement
             )
 
-        return partial(self._async_remove_bleak_callback, callback_entry)
+        return partial(self._bleak_callbacks.remove, callback_entry)
 
-    def _async_remove_bleak_callback(self, callback_entry: BleakCallback) -> None:
-        """Unregister a bleak callback and drop any scheduler tracking."""
-        self._bleak_callbacks.discard(callback_entry)
-        self._auto_scheduler.remove_callback(callback_entry)
+    def async_register_active_scan(
+        self,
+        scan_interval: float,
+        *,
+        address: str | None = None,
+        service_uuid: str | None = None,
+        scan_duration: float | None = None,
+    ) -> CALLBACK_TYPE:
+        """
+        Declare an on-demand active-scan need for matching advertisements.
+
+        At least one of ``address`` or ``service_uuid`` must be provided;
+        if both are given the device must match both. The scheduler picks
+        the AUTO-mode scanner currently in range of the matched address
+        and asks it to flip into active for ``scan_duration`` seconds,
+        repeating every ``scan_interval`` seconds while the device is
+        being seen. ACTIVE and PASSIVE scanners ignore the request.
+
+        Returns a cancel callable that removes the registration and any
+        per-(address, request) tracking it accumulated.
+        """
+        if address is None and service_uuid is None:
+            raise ValueError(
+                "async_register_active_scan requires at least one of "
+                "address or service_uuid to be specified"
+            )
+        request = ActiveScanRequest(address, service_uuid, scan_interval, scan_duration)
+        self._auto_scheduler.add_matcher(request)
+        return partial(self._auto_scheduler.remove_matcher, request)
 
     def async_release_connection_slot(self, device: BLEDevice) -> None:
         """Release a connection slot."""
