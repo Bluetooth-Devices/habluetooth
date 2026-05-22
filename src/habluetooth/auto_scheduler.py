@@ -471,10 +471,15 @@ class AutoScanScheduler:
         on_advertisement re-creates it the next time the device is
         seen.
 
-        Only wakes the owner's worker when this call actually inserted
-        a fresh entry into ``_needs``; re-registering an identical
-        request (e.g., from an HA config-entry reload) is a no-op on
-        the schedule so the wake would just churn ``_next_event_at``.
+        ``ActiveScanRequest`` is compared by identity, so each public
+        call to ``BluetoothManager.async_register_active_scan`` creates
+        a new request that contributes its own cadence to the same
+        address (two callers asking for windows every 60s on the same
+        device get two independent 60s cadences, not one). Adding the
+        *same* request object twice is idempotent and no-ops the
+        wake. Cancellation is per-registration — the callable returned
+        from ``async_register_active_scan`` only removes that specific
+        request, not other registrations against the same address.
 
         Pre-``start()`` registrations (no event loop yet) record the
         request only — no ``_needs`` entry is seeded. The first window

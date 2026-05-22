@@ -1776,6 +1776,53 @@ async def test_async_request_active_window_restarts_scanner_in_active_mode() -> 
 
 
 @pytest.mark.asyncio
+async def test_active_window_restart_does_not_log_fallback_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    A successful active-window restart on an AUTO scanner must not warn.
+
+    Regression: the start-success log compared current_mode against
+    requested_mode. For an AUTO scanner mid-active-window,
+    requested_mode is AUTO but current_mode is ACTIVE (because the
+    restart was triggered by the scheduler with
+    _scan_mode_override=ACTIVE), so the previous code logged a
+    spurious "fell back to passive" warning on every active-window
+    restart. The check now uses effective_mode (the mode we tried to
+    start in) so it only triggers on a real fallback.
+    """
+
+    class MockBleakScanner:
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: MockBleakScanner(),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            assert await scanner.async_request_active_window(10.0) is True
+        assert not any(
+            "fall-back to passive" in record.message for record in caplog.records
+        )
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_arm_active_window_timer_cancels_existing_handle() -> None:
     """
     _arm_active_window_timer cancels any prior handle before arming.

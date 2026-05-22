@@ -140,7 +140,17 @@ def create_bleak_scanner(
     if IS_LINUX:
         # Only Linux supports multiple adapters
         bluez_args: BlueZScannerArgs = {}
-        if scanning_mode == BluetoothScanningMode.PASSIVE:
+        # PASSIVE and AUTO both start the scanner in passive mode on
+        # Linux; bleak's passive scanner needs at least one or_pattern
+        # matcher or it won't start, so AUTO has to set PASSIVE_SCANNER_ARGS
+        # too. (AUTO gets flipped to active on demand by the scheduler
+        # via async_request_active_window, which restarts with
+        # scan_mode_override=ACTIVE so this branch is skipped for those
+        # restarts.)
+        if scanning_mode in (
+            BluetoothScanningMode.PASSIVE,
+            BluetoothScanningMode.AUTO,
+        ):
             bluez_args = dict(PASSIVE_SCANNER_ARGS)
         if adapter:
             # bleak 3.0 deprecated the top-level ``adapter`` kwarg in favor of
@@ -474,7 +484,7 @@ class HaScanner(BaseHaScanner):
         finally:
             self._start_future = None
 
-        self._log_start_success(attempt)
+        self._log_start_success(attempt, effective_mode)
         self._on_start_success()
         return True
 
@@ -486,8 +496,15 @@ class HaScanner(BaseHaScanner):
             START_ATTEMPTS,
         )
 
-    def _log_start_success(self, attempt: int) -> None:
-        if self.current_mode is not self.requested_mode:
+    def _log_start_success(
+        self, attempt: int, effective_mode: BluetoothScanningMode | None
+    ) -> None:
+        # Compare against the mode we *tried* to start in (effective_mode)
+        # rather than requested_mode: an AUTO scanner mid-active-window
+        # has requested_mode=AUTO but effective_mode=ACTIVE, and we
+        # don't want to warn "fell back to passive" when the active
+        # restart actually succeeded.
+        if self.current_mode is not effective_mode:
             _LOGGER.warning(
                 "%s: Successful fall-back to passive scanning mode "
                 "after active scanning failed (%s/%s)",
