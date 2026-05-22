@@ -683,6 +683,13 @@ class HaScanner(BaseHaScanner):
         except ScannerStartError:
             self._scan_mode_override = None
             return False
+        if self.current_mode is not BluetoothScanningMode.ACTIVE:
+            # _async_start_attempt silently falls back to PASSIVE on Linux
+            # when ACTIVE fails on the final retry. Treat that as a failed
+            # window: the scanner is back up but not actually active, so
+            # the scheduler must not believe the window engaged.
+            self._scan_mode_override = None
+            return False
         self._active_window_end = new_end
         self._active_window_handle = self._loop.call_later(
             duration, self._schedule_end_active_window

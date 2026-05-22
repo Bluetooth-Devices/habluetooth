@@ -5,12 +5,12 @@ Coordinates two distinct kinds of active scanning windows on AUTO-mode
 scanners:
 
 * Per-device windows. Callers (Home Assistant's bluetooth integration is
-  the primary one) register an ``ActiveScanRequest`` matching an address
-  and / or service UUID with a ``scan_interval`` and ``scan_duration``.
-  When a matching advertisement arrives the scheduler asks the scanner
-  currently seeing the device to flip active for the requested duration,
-  repeating on the requested cadence. Multiple matching requests for the
-  same address coalesce into one window using the max of their durations.
+  the primary one) register an ``ActiveScanRequest`` for a specific
+  address with a ``scan_interval`` and ``scan_duration``. When a matching
+  advertisement arrives the scheduler asks the scanner currently seeing
+  the device to flip active for the requested duration, repeating on the
+  requested cadence. Multiple matching requests for the same address
+  coalesce into one window using the max of their durations.
 
 * Global rediscovery sweeps. Every ``AUTO_REDISCOVERY_INTERVAL`` seconds
   each AUTO-mode scanner gets a ``AUTO_REDISCOVERY_SWEEP_DURATION``
