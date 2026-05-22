@@ -65,6 +65,14 @@ AUTO_REDISCOVERY_SWEEP_DURATION: Final = 15.0
 AUTO_WINDOW_MIN_DURATION: Final = 1.0
 AUTO_WINDOW_MAX_DURATION: Final = 30.0
 
+# Defaults used by async_register_active_scan when the caller does
+# not specify a cadence. One 10s active window every 3 minutes per
+# device is enough for the typical temperature/humidity/battery
+# sensor case without burning the proxy's radio or the sensor's
+# battery on more frequent flips than its data actually changes.
+DEFAULT_ACTIVE_SCAN_INTERVAL: Final = 180.0
+DEFAULT_ACTIVE_SCAN_DURATION: Final = 10.0
+
 
 FAILED_ADAPTER_MAC = "00:00:00:00:00:00"
 

@@ -508,10 +508,30 @@ async def test_register_active_scan_validates_inputs() -> None:
         manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=0)
     with pytest.raises(ValueError, match="scan_interval must be > 0"):
         manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=-1)
-    with pytest.raises(ValueError, match="scan_duration must be None or >= 0"):
+    with pytest.raises(ValueError, match="scan_duration must be >= 0"):
         manager.async_register_active_scan(
             "AA:BB:CC:DD:EE:00", scan_interval=60.0, scan_duration=-0.5
         )
+
+
+@pytest.mark.asyncio
+async def test_register_active_scan_applies_defaults() -> None:
+    """Omitting scan_interval/scan_duration uses the configured defaults."""
+    from habluetooth.const import (
+        DEFAULT_ACTIVE_SCAN_DURATION,
+        DEFAULT_ACTIVE_SCAN_INTERVAL,
+    )
+
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "AA:BB:CC:DD:EE:42"
+    cancel = manager.async_register_active_scan(address)
+    try:
+        request = next(iter(sched._requests_by_address[address]))
+        assert request.scan_interval == DEFAULT_ACTIVE_SCAN_INTERVAL
+        assert request.scan_duration == DEFAULT_ACTIVE_SCAN_DURATION
+    finally:
+        cancel()
 
 
 @pytest.mark.asyncio
@@ -1081,12 +1101,19 @@ async def test_coalesce_clamps_oversize_request() -> None:
 
 @pytest.mark.asyncio
 async def test_coalesce_none_duration_uses_min() -> None:
-    """An unspecified scan_duration falls back to the configured minimum."""
+    """
+    An explicit None scan_duration on a request falls back to the minimum.
+
+    Goes around async_register_active_scan (which defaults scan_duration
+    to DEFAULT_ACTIVE_SCAN_DURATION) to exercise the None branch of
+    _coalesce_duration directly with a hand-built ActiveScanRequest.
+    """
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
-    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    request = ActiveScanRequest(address, 60.0, None)
+    sched._requests_by_address.setdefault(address, set()).add(request)
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
@@ -1097,7 +1124,7 @@ async def test_coalesce_none_duration_uses_min() -> None:
         await sched._workers[scanner.source]._tick()
         assert scanner.active_window_calls == [AUTO_WINDOW_MIN_DURATION]
     finally:
-        cancel()
+        sched.remove_request(request)
         register_cancel()
 
 

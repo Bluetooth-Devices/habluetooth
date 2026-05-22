@@ -35,6 +35,8 @@ from .auto_scheduler import ActiveScanRequest, AutoScanScheduler
 from .const import (
     ADV_RSSI_SWITCH_THRESHOLD,
     CALLBACK_TYPE,
+    DEFAULT_ACTIVE_SCAN_DURATION,
+    DEFAULT_ACTIVE_SCAN_INTERVAL,
     FAILED_ADAPTER_MAC,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     UNAVAILABLE_TRACK_SECONDS,
@@ -1060,22 +1062,33 @@ class BluetoothManager:
     def async_register_active_scan(
         self,
         address: str,
-        scan_interval: float,
+        scan_interval: float | None = None,
         scan_duration: float | None = None,
     ) -> CALLBACK_TYPE:
         """
         Declare an on-demand active-scan need for a specific address.
 
-        The scheduler asks the AUTO-mode scanner currently in range of
-        ``address`` to flip active for ``scan_duration`` seconds every
+        ``scan_interval`` and ``scan_duration`` default to
+        DEFAULT_ACTIVE_SCAN_INTERVAL (180s, 3 minutes) and
+        DEFAULT_ACTIVE_SCAN_DURATION (10s) when not provided; those
+        defaults work for the typical sensor case where a callback just
+        wants the device's scan response on a steady cadence without
+        burning radio time on more frequent flips than the sensor data
+        actually changes. The scheduler
+        asks the AUTO-mode scanner currently in range of ``address`` to
+        flip active for ``scan_duration`` seconds every
         ``scan_interval`` seconds while the device is being seen.
         ACTIVE and PASSIVE scanners ignore the request. Returns a
         cancel callable.
         """
+        if scan_interval is None:
+            scan_interval = DEFAULT_ACTIVE_SCAN_INTERVAL
+        if scan_duration is None:
+            scan_duration = DEFAULT_ACTIVE_SCAN_DURATION
         if scan_interval <= 0:
             raise ValueError("scan_interval must be > 0")
-        if scan_duration is not None and scan_duration < 0:
-            raise ValueError("scan_duration must be None or >= 0")
+        if scan_duration < 0:
+            raise ValueError("scan_duration must be >= 0")
         request = ActiveScanRequest(address, scan_interval, scan_duration)
         self._auto_scheduler.add_request(request)
         return partial(self._auto_scheduler.remove_request, request)
