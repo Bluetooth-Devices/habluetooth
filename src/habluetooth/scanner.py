@@ -743,6 +743,14 @@ class HaScanner(BaseHaScanner):
                 with contextlib.suppress(ScannerStartError):
                     await self._async_stop_then_start_under_lock()
                 return False
+            except BaseException:
+                # Any other failure (CancelledError, unexpected BleakError
+                # leaking out, etc.) must not poison the next start with
+                # a stale ACTIVE override sitting on _scan_mode_override.
+                # Clear it and re-raise so cancellation / unexpected
+                # errors still propagate to the caller / task runner.
+                self._scan_mode_override = None
+                raise
             mode_after_restart = self.current_mode
             if mode_after_restart is not BluetoothScanningMode.ACTIVE:
                 # Linux's 4th-attempt fallback silently drops to PASSIVE.

@@ -1102,9 +1102,13 @@ class BluetoothManager:
         if scan_duration is None:
             scan_duration = DEFAULT_ACTIVE_SCAN_DURATION
         if scan_interval < MIN_ACTIVE_SCAN_INTERVAL:
-            raise ValueError(f"scan_interval must be >= {MIN_ACTIVE_SCAN_INTERVAL}s")
+            raise ValueError(
+                f"scan_interval must be >= {MIN_ACTIVE_SCAN_INTERVAL:.0f}s"
+            )
         if scan_duration < MIN_ACTIVE_SCAN_DURATION:
-            raise ValueError(f"scan_duration must be >= {MIN_ACTIVE_SCAN_DURATION}s")
+            raise ValueError(
+                f"scan_duration must be >= {MIN_ACTIVE_SCAN_DURATION:.0f}s"
+            )
         request = ActiveScanRequest(address.upper(), scan_interval, scan_duration)
         self._auto_scheduler.add_request(request)
         return partial(self._auto_scheduler.remove_request, request)

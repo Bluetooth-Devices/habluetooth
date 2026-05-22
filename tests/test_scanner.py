@@ -2136,6 +2136,57 @@ async def test_async_request_active_window_recovers_on_start_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_request_active_window_clears_override_on_unexpected_error() -> (
+    None
+):
+    """
+    An unexpected exception from the restart clears _scan_mode_override.
+
+    Regression: only ScannerStartError was caught explicitly, so any
+    other exception propagating from _async_stop_then_start_under_lock
+    would leave _scan_mode_override = ACTIVE. The next
+    _async_start_attempt would then see effective_mode = ACTIVE
+    instead of AUTO, poisoning subsequent starts.
+    """
+    start_count = 0
+
+    class MockBleakScanner:
+        async def start(self):
+            nonlocal start_count
+            start_count += 1
+            # First start (initial async_start) succeeds; second start
+            # (the ACTIVE restart from async_request_active_window)
+            # raises a non-ScannerStartError so we exercise the
+            # broad-except cleanup path.
+            if start_count > 1:
+                raise RuntimeError("simulated unexpected error")
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_, **__: MockBleakScanner(),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+        with pytest.raises(RuntimeError, match="simulated unexpected error"):
+            await scanner.async_request_active_window(1.0)
+        # The override must be cleared even though the exception
+        # wasn't a ScannerStartError.
+        assert scanner._scan_mode_override is None
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_base_scanner_default_active_window_is_noop(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
