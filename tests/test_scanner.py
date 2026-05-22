@@ -1344,7 +1344,7 @@ async def test_mgmt_permission_error_fallback() -> None:
 
     # Mock MGMTBluetoothCtl setup to raise PermissionError
     with (
-        patch("habluetooth.manager.MGMTBluetoothCtl") as mock_mgmt_cls,
+        patch("habluetooth.channels.bluez.MGMTBluetoothCtl") as mock_mgmt_cls,
         patch("habluetooth.manager.IS_LINUX", True),
     ):
         mock_mgmt = Mock()
