@@ -748,15 +748,15 @@ class HaScanner(BaseHaScanner):
                     self._arm_active_window_timer(duration)
                 return True
             if IS_LINUX:
-                entered = await self._async_enter_via_toggle()
+                entered = await self._async_begin_active_window_via_toggle()
             else:
-                entered = await self._async_enter_via_restart()
+                entered = await self._async_begin_active_window_via_restart()
             if not entered:
                 return False
             self._arm_active_window_timer(duration)
         return True
 
-    async def _async_enter_via_toggle(self) -> bool:
+    async def _async_begin_active_window_via_toggle(self) -> bool:
         """
         Cheap Linux/BlueZ entry: in-place ``_scanning_mode`` flip.
 
@@ -782,7 +782,7 @@ class HaScanner(BaseHaScanner):
             return False
         return True
 
-    async def _async_enter_via_restart(self) -> bool:
+    async def _async_begin_active_window_via_restart(self) -> bool:
         """
         Non-Linux entry: full stop + recreate + start in ACTIVE mode.
 
