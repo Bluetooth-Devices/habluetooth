@@ -101,11 +101,11 @@ class _ScannerWorker:
         next_at = self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
         source = self._scanner.source
         needs = self._scheduler._needs
-        all_history = self._scheduler._manager._all_history
+        last_service_info = self._scheduler._manager.async_last_service_info
         for address, entries in needs.items():
             if not entries:
                 continue
-            history = all_history.get(address)
+            history = last_service_info(address, False)
             if history is None or history.source != source:
                 continue
             earliest = min(entries.values())
@@ -148,12 +148,12 @@ class _ScannerWorker:
             return
         source = self._scanner.source
         needs = self._scheduler._needs
-        all_history = self._scheduler._manager._all_history
+        last_service_info = self._scheduler._manager.async_last_service_info
         for address in list(needs):
             entries = needs.get(address)
             if not entries:
                 continue
-            history = all_history.get(address)
+            history = last_service_info(address, False)
             if history is None:
                 del needs[address]
                 continue
@@ -240,7 +240,7 @@ class AutoScanScheduler:
         self._loop = loop
         self._running = True
         self._sweep_lock = asyncio.Lock()
-        for scanner in self._manager._sources.values():
+        for scanner in self._manager.async_current_scanners():
             if scanner.requested_mode is BluetoothScanningMode.AUTO:
                 self._spawn_worker(scanner)
 
@@ -274,7 +274,7 @@ class AutoScanScheduler:
     def add_request(self, request: ActiveScanRequest) -> None:
         """Register an active-scan request and wake the owning worker."""
         self._requests_by_address.setdefault(request.address, set()).add(request)
-        history = self._manager._all_history.get(request.address)
+        history = self._manager.async_last_service_info(request.address, False)
         if history is not None:
             self._wake_worker(history.source)
 
