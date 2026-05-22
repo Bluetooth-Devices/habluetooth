@@ -153,6 +153,16 @@ class ActiveScanRequest:
 class _ScannerWorker:
     """One persistent task per AUTO scanner; sleeps until next due event."""
 
+    __slots__ = (
+        "_manager",
+        "_scanner",
+        "_scheduler",
+        "_sweep_last_completed",
+        "_task",
+        "_wake",
+        "_window_end",
+    )
+
     def __init__(
         self,
         scheduler: AutoScanScheduler,
@@ -428,10 +438,17 @@ class AutoScanScheduler:
         worker = _ScannerWorker(self, scanner, self._manager)
         # Stagger first sweeps so concurrently-registered scanners don't
         # all flip ACTIVE in the same second. Each new worker's first
-        # sweep is one sweep duration later than the previous one's; the
-        # offset compounds so a tenth scanner registered in the same
-        # batch fires its first sweep ~150s after the first one's.
-        offset = len(self._workers) * _AUTO_REDISCOVERY_SWEEP_DURATION
+        # sweep is one sweep duration later than the previous one's,
+        # wrapped into the initial-sweep window so the Nth scanner's
+        # first sweep is bounded to AUTO_INITIAL_SWEEP_DELAY + delay
+        # rather than growing linearly with worker count. Past
+        # AUTO_INITIAL_SWEEP_DELAY / SWEEP_DURATION scanners the offsets
+        # start to repeat, which is fine: BLE radios don't interfere
+        # when multiple are active so collisions are harmless and the
+        # natural advertisement jitter spreads them out over time.
+        offset = (
+            len(self._workers) * _AUTO_REDISCOVERY_SWEEP_DURATION
+        ) % _AUTO_INITIAL_SWEEP_DELAY
         worker.start(self._loop, offset)
         self._workers[scanner.source] = worker
 

@@ -653,11 +653,21 @@ class HaScanner(BaseHaScanner):
         self._scan_mode_override = None
         self._active_window_end = 0.0
 
-    def _arm_active_window_timer(self, duration: float, new_end: float) -> None:
-        """Schedule the end-of-window callback."""
+    def _arm_active_window_timer(self, duration: float) -> None:
+        """
+        Schedule the end-of-window callback.
+
+        Computes ``_active_window_end`` from ``loop.time()`` at the
+        moment of arming so it matches the actual fire time of the
+        underlying ``call_later``. Earlier versions accepted an
+        externally-computed ``new_end`` snapshot, which drifted out of
+        sync with the real timer fire time across the stop/restart
+        cycle and let a *shorter* follow-up request masquerade as an
+        extension.
+        """
         if TYPE_CHECKING:
             assert self._loop is not None
-        self._active_window_end = new_end
+        self._active_window_end = self._loop.time() + duration
         self._active_window_handle = self._loop.call_later(
             duration, self._schedule_end_active_window
         )
@@ -673,11 +683,10 @@ class HaScanner(BaseHaScanner):
             return False
         if TYPE_CHECKING:
             assert self._loop is not None
-        new_end = self._loop.time() + duration
         if self._active_window_handle is not None:
-            if new_end > self._active_window_end:
+            if self._loop.time() + duration > self._active_window_end:
                 self._active_window_handle.cancel()
-                self._arm_active_window_timer(duration, new_end)
+                self._arm_active_window_timer(duration)
             return True
         async with self._start_stop_lock:
             self._scan_mode_override = BluetoothScanningMode.ACTIVE
@@ -688,7 +697,7 @@ class HaScanner(BaseHaScanner):
             # see the new handle and bail when it acquires the lock.
             mode_before_restart = self.current_mode
             if mode_before_restart is BluetoothScanningMode.ACTIVE:
-                self._arm_active_window_timer(duration, new_end)
+                self._arm_active_window_timer(duration)
                 return True
             try:
                 await self._async_stop_then_start_under_lock()
@@ -705,7 +714,7 @@ class HaScanner(BaseHaScanner):
                 # Linux's 4th-attempt fallback silently drops to PASSIVE.
                 self._scan_mode_override = None
                 return False
-            self._arm_active_window_timer(duration, new_end)
+            self._arm_active_window_timer(duration)
         return True
 
     def _schedule_end_active_window(self) -> None:
