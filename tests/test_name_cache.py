@@ -306,6 +306,47 @@ async def test_second_scanner_same_name_different_object_noop() -> None:
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_local_passive_scanner_advertisement_rebuilt_with_cached_name() -> None:
+    """
+    Local passive scanner's AdvertisementData is rebuilt with the cached name.
+
+    HaScanner.on_advertisement (scanner.py) pre-sets service_info._advertisement
+    to bleak's AdvertisementData, so without invalidation the patched
+    service_info.name would not propagate to advertisement.local_name for
+    bleak callbacks. Mimics that producer shape via inject_advertisement_with_source
+    (which also pre-sets _advertisement) and verifies the dispatch path
+    rebuilds the AdvertisementData with the patched name.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:58"
+
+    # Seed the cache from an active scanner.
+    active_device = generate_ble_device(address, "Onvis XXX", {}, rssi=-60)
+    active_adv = generate_advertisement_data(local_name="Onvis XXX", rssi=-60)
+    inject_advertisement_with_source(active_device, active_adv, "active-source")
+    assert manager._name_cache[address] == "Onvis XXX"
+
+    # Local passive scanner sees the same device without a name; its
+    # AdvertisementData has local_name = None and is pre-built on
+    # service_info._advertisement (matches HaScanner.on_advertisement).
+    passive_device = generate_ble_device(address, None, {}, rssi=-30)
+    passive_adv = generate_advertisement_data(
+        local_name=None,
+        manufacturer_data={123: b"\xde\xad"},
+        rssi=-30,
+    )
+    inject_advertisement_with_source(passive_device, passive_adv, "passive-source")
+
+    patched = manager._all_history[address]
+    assert patched.name == "Onvis XXX"
+    assert patched.device.name == "Onvis XXX"
+    # _advertisement was invalidated on patch, so the lazy rebuild picks
+    # up the canonical name; bleak callbacks now see it.
+    assert patched.advertisement.local_name == "Onvis XXX"
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_truncation_from_second_scanner_patched_back() -> None:
     """
     Scanner reporting a truncated name has its service_info patched back.

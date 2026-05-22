@@ -593,10 +593,26 @@ class BluetoothManager:
            prefix rule via _update_name_cache and patch service_info
            with whatever the cache settled on.
         """
-        if not service_info.name or service_info.name is service_info.address:
+        # When we patch service_info.name and service_info.device.name,
+        # we also clear service_info._advertisement so the lazy rebuild
+        # in BluetoothServiceInfoBleak._advertisement_internal picks up
+        # the canonical name and propagates it to bleak callbacks via
+        # advertisement.local_name. Remote scanners arrive with
+        # _advertisement = None (see base_scanner.py:657), but
+        # HaScanner.on_advertisement (scanner.py:331) pre-sets it to
+        # bleak's AdvertisementData, so without this invalidation a
+        # local passive scanner whose dispatched view we patch would
+        # still hand bleak callbacks an AdvertisementData with the
+        # original (missing) local_name.
+        if (
+            not service_info.name
+            or service_info.name is service_info.address
+            or service_info.name == service_info.address
+        ):
             if cached_name is not None:
                 service_info.name = cached_name
                 service_info.device.name = cached_name
+                service_info._advertisement = None
             return
         if cached_name is None:
             self._name_cache[service_info.address] = service_info.name
@@ -608,6 +624,7 @@ class BluetoothManager:
         if cached_name is not service_info.name and cached_name != service_info.name:
             service_info.name = cached_name
             service_info.device.name = cached_name
+            service_info._advertisement = None
 
     def seed_name_cache(self, address: str, name: str) -> None:
         """
