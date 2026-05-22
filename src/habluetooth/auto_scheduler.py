@@ -444,12 +444,21 @@ class AutoScanScheduler:
         fire on a scanner that hasn't seen the device yet). If the entry
         gets pruned later because the device's history disappears,
         on_advertisement re-creates it the next time the device is seen.
+
+        Only wakes the owner's worker when this call actually inserted
+        a fresh entry into ``_needs``; re-registering an identical
+        request (e.g., from an HA config-entry reload) is a no-op on
+        the schedule so the wake would just churn ``_next_event_at``.
         """
         self._requests_by_address.setdefault(request.address, set()).add(request)
+        added = False
         if self._loop is not None:
             existing = self._needs.setdefault(request.address, {})
             if request not in existing:
                 existing[request] = self._loop.time() + request.scan_interval
+                added = True
+        if not added:
+            return
         history = self._manager.async_last_service_info(request.address, False)
         if history is not None:
             self._wake_worker(history.source)

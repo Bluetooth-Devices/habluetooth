@@ -1438,16 +1438,33 @@ async def test_add_request_before_start_does_not_seed_needs() -> None:
 
 @pytest.mark.asyncio
 async def test_add_request_idempotent_keeps_existing_due() -> None:
-    """Re-adding the same request preserves its existing next-due time."""
+    """
+    Re-adding the same request preserves its existing next-due time.
+
+    Also verifies the wake is gated on "actually inserted a new entry":
+    a re-register (e.g. an HA config-entry reload) is a no-op on the
+    schedule, so the worker should not be woken.
+    """
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "BC:00:00:00:00:00"
-    request = ActiveScanRequest(address, 60.0, None)
-    sched.add_request(request)
-    sched._needs[address][request] = 1234.5
-    sched.add_request(request)
-    assert sched._needs[address][request] == 1234.5
-    sched.remove_request(request)
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:42", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        request = ActiveScanRequest(address, 60.0, None)
+        sched.add_request(request)
+        # Inject so add_request can see history on the second call.
+        _inject(scanner, address)
+        sched._needs[address][request] = 1234.5
+        worker = sched._workers[scanner.source]
+        worker._wake.clear()
+        sched.add_request(request)
+        assert sched._needs[address][request] == 1234.5
+        # No new entry → no wake.
+        assert not worker._wake.is_set()
+        sched.remove_request(request)
+    finally:
+        register_cancel()
 
 
 @pytest.mark.asyncio

@@ -62,6 +62,10 @@ cdef class AutoScanScheduler:
     cdef public object _loop
     cdef public bint _running
 
+    @cython.locals(
+        existing=dict,
+        added=bint,
+    )
     cpdef void add_request(self, ActiveScanRequest request)
 
     cpdef void remove_request(self, ActiveScanRequest request)
