@@ -112,10 +112,9 @@ class AutoScanScheduler:
         # before async_setup would have last_sweep=0.0 and trigger an
         # immediate sweep on the first tick.
         now = loop.time()
-        for source in self._manager._sources:
-            scanner = self._manager._sources[source]
+        for scanner in self._manager._sources.values():
             if scanner.requested_mode is BluetoothScanningMode.AUTO:
-                self._sweep_last_completed[source] = now
+                self._sweep_last_completed[scanner.source] = now
         self._reschedule()
 
     def stop(self) -> None:
@@ -232,10 +231,10 @@ class AutoScanScheduler:
         self._reschedule()
 
     def _dispatch_per_device(self, now: float) -> None:
-        """Fire windows for any (address, callback) whose due time has passed."""
-        for address, callbacks in list(self._needs.items()):
-            due_callbacks = [cb for cb, due in callbacks.items() if due <= now]
-            if not due_callbacks:
+        """Fire windows for any (address, request) whose due time has passed."""
+        for address, entries in list(self._needs.items()):
+            due = [r for r, t in entries.items() if t <= now]
+            if not due:
                 continue
             history = self._manager._all_history.get(address)
             if history is None:
@@ -245,33 +244,24 @@ class AutoScanScheduler:
                 continue
             source = history.source
             if (busy_end := self._scanner_windows.get(source)) is not None:
-                # Scanner busy. Defer all due callbacks to just after the
-                # window ends; without this the next event time stays in
-                # the past and the tick re-fires every 50ms until the
+                # Scanner busy. Defer due entries past the window end so
+                # _next_event_time doesn't stay in the past, which would
+                # otherwise busy-loop the tick every 50ms until the
                 # window drains.
-                deferred_due = busy_end + 0.05
-                for cb in due_callbacks:
-                    if callbacks[cb] < deferred_due:
-                        callbacks[cb] = deferred_due
+                deferred = busy_end + 0.05
+                for request in due:
+                    if entries[request] < deferred:
+                        entries[request] = deferred
                 continue
             scanner = self._manager._sources.get(source)
-            if scanner is None or scanner.requested_mode is not (
+            if scanner is not None and scanner.requested_mode is (
                 BluetoothScanningMode.AUTO
             ):
-                # Not an AUTO scanner: it's already fixed-mode, so don't
-                # bother requesting. Advance the next-due times so we
-                # don't busy-loop on the same advertisement.
-                for cb in due_callbacks:
-                    interval = cb.scan_interval
-                    if interval is not None:
-                        callbacks[cb] = now + interval
-                continue
-            duration = self._coalesce_duration(due_callbacks)
-            self._request_window(scanner, duration)
-            for cb in due_callbacks:
-                interval = cb.scan_interval
-                if interval is not None:
-                    callbacks[cb] = now + interval
+                self._request_window(scanner, self._coalesce_duration(due))
+            # Whether we fired or skipped (non-AUTO scanner), advance each
+            # due entry to its next cadence so we don't re-fire next tick.
+            for request in due:
+                entries[request] = now + request.scan_interval
 
     def _dispatch_global_sweep(self, now: float) -> None:
         """Run a rediscovery sweep on the next eligible scanner, if any."""
