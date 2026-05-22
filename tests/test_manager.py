@@ -1396,7 +1396,7 @@ async def test_is_operating_degraded_after_permission_error() -> None:
 
     with (
         patch("habluetooth.manager.IS_LINUX", True),
-        patch("habluetooth.channels.bluez.MGMTBluetoothCtl") as mock_mgmt_class,
+        patch("habluetooth.manager.MGMTBluetoothCtl") as mock_mgmt_class,
     ):
         # Make setup fail with permission error
         mock_mgmt_instance = Mock()

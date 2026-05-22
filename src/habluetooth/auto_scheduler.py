@@ -366,11 +366,11 @@ class _ScannerWorker:
         try:
             await self._scanner.async_request_active_window(duration)
         except Exception as ex:  # pylint: disable=broad-except
-            # First failure per worker gets a full traceback; subsequent
-            # ones get a one-liner so a persistently broken scanner
-            # doesn't spam scan_interval-cadenced stack traces. The
-            # _failed_window flag resets when start() spawns a new
-            # worker for the source.
+            # First failure per recovery-cycle gets a full traceback;
+            # subsequent failures get a one-liner so a persistently
+            # broken scanner doesn't spam scan_interval-cadenced stack
+            # traces. The flag clears on the next successful call so a
+            # later failure-after-recovery captures a stack again.
             if self._failed_window:
                 _LOGGER.warning(
                     "%s: error running active window of %.1fs: %s",
@@ -385,6 +385,8 @@ class _ScannerWorker:
                     self._scanner.name,
                     duration,
                 )
+        else:
+            self._failed_window = False
         finally:
             self._window_end = 0.0
 

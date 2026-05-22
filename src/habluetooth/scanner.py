@@ -689,6 +689,12 @@ class HaScanner(BaseHaScanner):
         contention is hypothetical, but the public method name reads
         as if external callers may use it and nothing else in the
         lock-side path defends against the race.
+
+        ``self._loop`` is assigned in ``async_setup`` and this method
+        is only reachable via ``async_request_active_window`` /
+        ``_async_start_attempt``, both of which run after setup. The
+        ``TYPE_CHECKING`` assert below is a mypy narrowing hint only;
+        it has no runtime effect.
         """
         if TYPE_CHECKING:
             assert self._loop is not None

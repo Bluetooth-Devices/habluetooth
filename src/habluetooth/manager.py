@@ -32,6 +32,7 @@ from .advertisement_tracker import (
     AdvertisementTracker,
 )
 from .auto_scheduler import ActiveScanRequest, AutoScanScheduler
+from .channels.bluez import CONNECTION_ERRORS, MGMTBluetoothCtl
 from .const import (
     ADV_RSSI_SWITCH_THRESHOLD,
     CALLBACK_TYPE,
@@ -59,7 +60,6 @@ if TYPE_CHECKING:
     from bleak.backends.scanner import AdvertisementData
 
     from .base_scanner import BaseHaScanner
-    from .channels.bluez import MGMTBluetoothCtl
     from .scanner import HaScanner
 
 
@@ -362,9 +362,7 @@ class BluetoothManager:
 
     async def async_setup(self) -> None:
         """Set up the bluetooth manager."""
-        # Lazy-imported to break a Cython init cycle through channels.bluez.
         from .central_manager import CentralBluetoothManager
-        from .channels.bluez import CONNECTION_ERRORS, MGMTBluetoothCtl
 
         if CentralBluetoothManager.manager is None:
             CentralBluetoothManager.manager = self
