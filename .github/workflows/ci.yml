@@ -94,18 +94,25 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   benchmark:
+    # Keep actions/setup-python here so codspeed history stays comparable;
+    # astral's managed Python ships PGO/LTO/BOLT/mimalloc which would shift
+    # the baseline.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
-      - name: Set up uv and Python 3.14
-        id: python
-        uses: ./.github/actions/setup-uv-python
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          uv-version: ${{ env.UV_VERSION }}
-          python-version: "3.14"
+          enable-cache: true
       - name: Install poetry
         run: uv tool install poetry
-        shell: bash
+      - name: Setup Python 3.14
+        id: setup-python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v5
+        with:
+          python-version: "3.14"
+          cache: "poetry"
+          allow-prereleases: true
       - name: Cache poetry venv
         id: cache-venv
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -113,11 +120,10 @@ jobs:
           path: |
             .venv
             src/habluetooth/**/*.so
-          key: venv-v3-${{ runner.os }}-benchmark-py${{ steps.python.outputs.python-version }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
+          key: venv-v2-${{ runner.os }}-benchmark-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
       - name: Install Dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
-          poetry env use "$(uv python find 3.14)"
           REQUIRE_CYTHON=1 poetry install --only=main,dev
         shell: bash
       - name: Run benchmarks
