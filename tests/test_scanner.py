@@ -2158,3 +2158,76 @@ async def test_async_end_active_window_handles_start_error(
             "Failed to restart scanner after active window" in record.message
             for record in caplog.records
         )
+
+
+@pytest.mark.parametrize("exc", [FileNotFoundError("no dbus"), BleakError("nope")])
+def test_create_bleak_scanner_wraps_init_error(exc: Exception) -> None:
+    """``create_bleak_scanner`` wraps FileNotFoundError/BleakError as RuntimeError."""
+    with (
+        patch.object(scanner, "IS_LINUX", True),
+        patch.object(scanner, "IS_MACOS", False),
+        patch(
+            "habluetooth.scanner.OriginalBleakScanner",
+            side_effect=exc,
+        ),
+        pytest.raises(RuntimeError, match="Failed to initialize Bluetooth"),
+    ):
+        create_bleak_scanner(None, BluetoothScanningMode.ACTIVE, "hci0")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(NOT_POSIX)
+@pytest.mark.parametrize("exc", [TimeoutError("slow"), BleakError("nope")])
+async def test_async_stop_scanner_logs_when_scanner_stop_raises(
+    caplog: pytest.LogCaptureFixture, exc: Exception
+) -> None:
+    """``_async_stop_scanner`` logs and clears the scanner when ``.stop()`` raises."""
+    mock_scanner = MagicMock()
+    mock_scanner.start = AsyncMock()
+    mock_scanner.stop = AsyncMock(side_effect=exc)
+    with patch("habluetooth.scanner.OriginalBleakScanner", return_value=mock_scanner):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+        caplog.clear()
+        await scanner.async_stop()
+    assert "Error stopping scanner" in caplog.text
+    assert scanner.scanner is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(NOT_POSIX)
+async def test_async_force_stop_discovery_logs_on_timeout(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Force-stop logs an error when ``stop_discovery`` times out."""
+    ha_scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    ha_scanner.async_setup()
+    with patch("habluetooth.scanner.stop_discovery", side_effect=TimeoutError("slow")):
+        await ha_scanner._async_force_stop_discovery()
+    assert "Timeout force stopping scanner" in caplog.text
+    await ha_scanner.async_stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(NOT_POSIX)
+async def test_async_force_stop_discovery_logs_on_unexpected_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Force-stop logs an error when ``stop_discovery`` raises an unexpected error."""
+    ha_scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    ha_scanner.async_setup()
+    with patch("habluetooth.scanner.stop_discovery", side_effect=BleakError("boom")):
+        await ha_scanner._async_force_stop_discovery()
+    assert "Failed to force stop scanner" in caplog.text
+    await ha_scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_get_allocations_returns_none_without_slot_manager() -> None:
+    """``HaScanner.get_allocations`` returns None when manager has no slot manager."""
+    ha_scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    ha_scanner.async_setup()
+    with patch.object(get_manager(), "slot_manager", None):
+        assert ha_scanner.get_allocations() is None
+    await ha_scanner.async_stop()
