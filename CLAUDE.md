@@ -122,7 +122,7 @@ poetry run pytest -k allocation            # by keyword
 ```
 
 Lint / format (pre-commit covers ruff, black, mypy, codespell, prettier,
-poetry-check, commitizen):
+poetry-check):
 
 ```bash
 pre-commit run -a
@@ -157,9 +157,15 @@ Tests use `pytest-asyncio` (no auto-mode — mark coroutines explicitly) and
 
 ## Commit / PR conventions
 
-- **Conventional Commits** are enforced via `commitlint` on CI and
-  `commitizen` in pre-commit (`commit-msg` stage). Typical scopes:
-  `feat`, `fix`, `chore`, `ci`, `docs`, `refactor`, `test`, `perf`.
+- **Conventional Commits PR title, lowercase subject.** PRs are
+  squash-merged, so the **PR title** becomes the commit on `main` and is the
+  only string that has to parse as a Conventional Commit. The repo enforces
+  this via the `pr-title` CI job in `ci.yml` using
+  `amannn/action-semantic-pull-request`. Accepted types: `feat`, `fix`,
+  `chore`, `ci`, `docs`, `refactor`, `test`, `perf`, `build`, etc. The
+  subject (text after `type(scope):`) must start lowercase (enforced by
+  `subjectPattern: ^(?![A-Z]).+$`). Per-commit messages on the PR branch are
+  **not** linted; they get collapsed at squash-merge.
 - Releases are fully automated by `python-semantic-release` from the commit
   log. Anything that should land in the changelog must use `feat:` or `fix:`
   (or a breaking-change footer). `chore*` and `ci*` are excluded.
