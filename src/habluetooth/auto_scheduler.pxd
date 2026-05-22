@@ -1,14 +1,6 @@
 import cython
 
-from .manager cimport BluetoothManager
 from .models cimport BluetoothServiceInfoBleak
-
-# auto_scheduler intentionally cimports BluetoothManager even though the
-# attribute is stored untyped: the mutual cimport (manager <-> auto_scheduler)
-# is what lets Cython's deferred-resolution path settle the init order on
-# macOS. The one-way variant produced KeyError: '__pyx_vtable__' on the
-# partially-initialized peer because the deferral only kicks in when both
-# sides advertise the dependency at compile time.
 
 
 cdef class ActiveScanRequest:
@@ -20,13 +12,6 @@ cdef class ActiveScanRequest:
 
 cdef class AutoScanScheduler:
 
-    # _manager is typed as object rather than BluetoothManager to keep the
-    # attribute access through Python protocol; promoting to a typed cdef
-    # would require base_scanner to also cimport auto_scheduler and the
-    # resulting three-way cycle (manager <-> base_scanner, base_scanner <->
-    # auto_scheduler, auto_scheduler <-> manager) breaks macOS Cython init
-    # with KeyError: '__pyx_vtable__' on whichever module is partial when
-    # the chain comes back around.
     cdef public object _manager
     cdef public dict _requests_by_address
     cdef public dict _needs
