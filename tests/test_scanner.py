@@ -2792,3 +2792,403 @@ async def test_get_allocations_returns_none_without_slot_manager() -> None:
     with patch.object(get_manager(), "slot_manager", None):
         assert ha_scanner.get_allocations() is None
     await ha_scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_discovered_properties_delegate_when_scanner_attached() -> None:
+    """Discovered* delegate to the underlying bleak scanner when one is attached."""
+    device = generate_ble_device("AA:BB:CC:DD:EE:01", "x")
+    adv = generate_advertisement_data(local_name="x")
+
+    class MockBleakScanner:
+        def __init__(self) -> None:
+            self.discovered_devices = [device]
+            self.discovered_devices_and_advertisement_data = {
+                device.address: (device, adv),
+            }
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: MockBleakScanner(),
+    ):
+        ha_scanner = HaScanner(
+            BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:FF"
+        )
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        try:
+            assert ha_scanner.discovered_devices == [device]
+            assert ha_scanner.discovered_devices_and_advertisement_data == {
+                device.address: (device, adv)
+            }
+            assert ha_scanner.get_discovered_device_advertisement_data(
+                device.address
+            ) == (device, adv)
+            assert device.address in list(ha_scanner.discovered_addresses)
+        finally:
+            await ha_scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_detection_callback_coerces_non_str_name_and_non_int_tx_power() -> None:
+    """
+    Defensive coercion: bleak occasionally returns non-str names / non-int tx_power.
+
+    The advertisement path normalizes both so downstream code can rely
+    on plain Python str / int rather than bytes-likes or numpy ints.
+    Inspects ``manager._all_history`` (populated by
+    ``_scanner_adv_received``) since the cython method itself isn't
+    monkey-patchable.
+    """
+    ha_scanner = HaScanner(BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    ha_scanner.async_setup()
+
+    class _StrSubclass(str):
+        """str subclass — `type() is not str` so coercion fires."""
+
+    class _IntLike:
+        """Non-int that ``int()`` accepts (e.g. numpy.int64 stand-in)."""
+
+        def __int__(self) -> int:
+            return -7
+
+    address = "AA:BB:CC:DD:EE:F0"
+    device = generate_ble_device(address, None)
+    adv = generate_advertisement_data(
+        local_name=_StrSubclass("weird"),
+        tx_power=_IntLike(),
+    )
+    ha_scanner._async_detection_callback(device, adv)
+    info = get_manager()._all_history[address]
+    # Both fields were coerced to the canonical Python type.
+    assert type(info.name) is str
+    assert info.name == "weird"
+    assert type(info.tx_power) is int
+    assert info.tx_power == -7
+    await ha_scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_start_attempt_timeout_resets_then_raises_on_exhaustion(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Persistent start TimeoutError: attempt 2 resets the adapter, attempt 4 raises.
+
+    Covers the in-between `attempt < START_ATTEMPTS` return-False branch
+    (logged as a retry warning) and the `attempt == START_ATTEMPTS` raise.
+    Subclasses HaScanner because the cython type is immutable so a
+    bare patch.object can't override its methods.
+    """
+    reset_calls: list[bool] = []
+
+    class _RecordingResetScanner(HaScanner):
+        async def _async_reset_adapter(self, gone_silent: bool) -> None:
+            reset_calls.append(gone_silent)
+
+    class TimeoutMockBleakScanner:
+        async def start(self):
+            raise TimeoutError("simulated start timeout")
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: TimeoutMockBleakScanner(),
+    ):
+        ha_scanner = _RecordingResetScanner(
+            BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:FF"
+        )
+        ha_scanner.async_setup()
+        with (
+            caplog.at_level(logging.DEBUG, logger="habluetooth.scanner"),
+            pytest.raises(ScannerStartError, match="Timed out starting Bluetooth"),
+        ):
+            await ha_scanner.async_start()
+    # Attempt 2 (gone_silent=False) triggered exactly one adapter reset.
+    assert reset_calls == [False]
+    await ha_scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_async_restart_scanner_logs_when_start_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Watchdog restart swallows + logs ``ScannerStartError`` from ``_async_start``.
+
+    Covers the ``except ScannerStartError`` branch in
+    ``_async_restart_scanner`` so a single restart failure doesn't
+    propagate out of the background task. Uses a subclass to override
+    methods because cython types are immutable.
+    """
+
+    class _RaisingRestartScanner(HaScanner):
+        async def _async_start(self) -> None:
+            raise ScannerStartError("simulated restart failure")
+
+        async def _async_stop_scanner(self) -> None:
+            pass
+
+        async def _async_reset_adapter(self, gone_silent: bool) -> None:
+            pass
+
+    ha_scanner = _RaisingRestartScanner(
+        BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:FF"
+    )
+    ha_scanner.async_setup()
+    with caplog.at_level(logging.ERROR, logger="habluetooth.scanner"):
+        await ha_scanner._async_restart_scanner()
+    assert "Failed to restart Bluetooth scanner" in caplog.text
+    assert "simulated restart failure" in caplog.text
+
+
+@pytest.fixture
+def force_non_linux_non_macos_scanner_mode() -> Generator[None, None, None]:
+    """Force the non-Linux, non-macOS branch of the active-window entry."""
+    with (
+        patch("habluetooth.scanner.IS_LINUX", False),
+        patch("habluetooth.scanner.IS_MACOS", False),
+    ):
+        yield
+
+
+@pytest.mark.usefixtures("force_non_linux_non_macos_scanner_mode")
+@pytest.mark.asyncio
+async def test_async_request_active_window_restart_path_happy() -> None:
+    """Non-Linux active-window entry: full stop+restart leaves scanner in ACTIVE."""
+
+    class MockBleakScanner:
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: MockBleakScanner(),
+    ):
+        ha_scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:F1")
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        try:
+            assert await ha_scanner.async_request_active_window(0.5) is True
+            assert ha_scanner.current_mode is BluetoothScanningMode.ACTIVE
+            assert ha_scanner._scan_mode_override is BluetoothScanningMode.ACTIVE
+            assert ha_scanner._active_window_handle is not None
+        finally:
+            await ha_scanner.async_stop()
+
+
+@pytest.mark.usefixtures("force_non_linux_non_macos_scanner_mode")
+@pytest.mark.asyncio
+async def test_async_request_active_window_restart_path_scanner_start_error() -> None:
+    """
+    Non-Linux entry: a ``ScannerStartError`` triggers the abort recovery path.
+
+    ``_async_begin_active_window_via_restart`` catches the error and
+    routes through ``_async_abort_active_window`` so the scanner comes
+    back up in its underlying mode instead of being left stopped.
+    """
+    starts = 0
+
+    class AlwaysFailAfterFirstMockBleakScanner:
+        async def start(self):
+            nonlocal starts
+            starts += 1
+            # First start (initial async_start) succeeds; every
+            # subsequent start raises so all 4 retries of the
+            # restart attempt exhaust, raising ScannerStartError,
+            # which the abort path then suppresses.
+            if starts > 1:
+                raise BleakError("simulated start failure")
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    class _NoResetScanner(HaScanner):
+        async def _async_reset_adapter(self, gone_silent: bool) -> None:
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: AlwaysFailAfterFirstMockBleakScanner(),
+    ):
+        ha_scanner = _NoResetScanner(
+            BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:F2"
+        )
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        try:
+            assert await ha_scanner.async_request_active_window(0.5) is False
+            # Abort cleared the override; no end-of-window timer armed.
+            assert ha_scanner._scan_mode_override is None
+            assert ha_scanner._active_window_handle is None
+        finally:
+            await ha_scanner.async_stop()
+
+
+@pytest.mark.usefixtures("force_non_linux_non_macos_scanner_mode")
+@pytest.mark.asyncio
+async def test_async_request_active_window_restart_path_unexpected_error() -> None:
+    """
+    Non-Linux entry: unexpected exceptions clear the override and re-raise.
+
+    Mirrors the toggle-path test for the restart-path
+    ``except BaseException`` branch in
+    ``_async_begin_active_window_via_restart``: a non-ScannerStartError
+    must not poison ``_scan_mode_override`` for the next start.
+    """
+    raise_on_restart = False
+
+    class _MaybeRaiseRestartScanner(HaScanner):
+        async def _async_stop_then_start_under_lock(self) -> None:
+            if raise_on_restart:
+                raise RuntimeError("simulated unexpected error")
+
+    class MockBleakScanner:
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: MockBleakScanner(),
+    ):
+        ha_scanner = _MaybeRaiseRestartScanner(
+            BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:F4"
+        )
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        try:
+            raise_on_restart = True
+            with pytest.raises(RuntimeError, match="simulated unexpected error"):
+                await ha_scanner.async_request_active_window(0.5)
+            assert ha_scanner._scan_mode_override is None
+        finally:
+            raise_on_restart = False
+            await ha_scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_detection_callback_skips_last_detection_for_empty_advertisement() -> (
+    None
+):
+    """
+    Empty advertisements don't bump ``_last_detection``.
+
+    Bleak occasionally hands us a callback with no name / data /
+    service info, which we treat as a heartbeat from a failing
+    adapter rather than a real ping.
+    """
+    ha_scanner = HaScanner(BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    ha_scanner.async_setup()
+    ha_scanner._last_detection = -1.0
+    device = generate_ble_device("AA:BB:CC:DD:EE:F5", None)
+    # All four fields explicitly empty so the truthy-check skips the
+    # _last_detection bump (generate_advertisement_data defaults
+    # local_name to "Unknown", which would otherwise trip it).
+    adv = generate_advertisement_data(
+        local_name=None,
+        manufacturer_data={},
+        service_data={},
+        service_uuids=[],
+    )
+    ha_scanner._async_detection_callback(device, adv)
+    assert ha_scanner._last_detection == -1.0
+    await ha_scanner.async_stop()
+
+
+@pytest.mark.usefixtures("force_non_linux_non_macos_scanner_mode")
+@pytest.mark.asyncio
+async def test_async_request_active_window_restart_path_mode_mismatch() -> None:
+    """
+    Non-Linux entry: a restart that doesn't land in ACTIVE clears the override.
+
+    Simulates a backend that ignores ``_scan_mode_override`` by patching
+    ``_async_stop_then_start_under_lock`` at the class level so it
+    leaves ``current_mode`` unchanged at PASSIVE. The branch must clear
+    the override and return False so the public method can report
+    failure to the scheduler.
+    """
+    noop_restart = False
+
+    class _NoopRestartScanner(HaScanner):
+        async def _async_stop_then_start_under_lock(self) -> None:
+            if not noop_restart:
+                await HaScanner._async_stop_then_start_under_lock(self)
+
+    class MockBleakScanner:
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: MockBleakScanner(),
+    ):
+        ha_scanner = _NoopRestartScanner(
+            BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:F3"
+        )
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        # Pretend a previous start left current_mode at PASSIVE.
+        ha_scanner.set_current_mode(BluetoothScanningMode.PASSIVE)
+        try:
+            noop_restart = True
+            assert await ha_scanner.async_request_active_window(0.5) is False
+            assert ha_scanner._scan_mode_override is None
+            assert ha_scanner._active_window_handle is None
+        finally:
+            noop_restart = False
+            await ha_scanner.async_stop()
