@@ -516,6 +516,46 @@ async def test_remove_scanner_stops_its_worker() -> None:
 
 
 @pytest.mark.asyncio
+async def test_remove_scanner_prunes_owned_needs_entries() -> None:
+    """
+    _needs entries owned by the leaving scanner are pruned at remove.
+
+    Without the prune, those entries would sit pinned until the
+    device either turns up on another scanner (history flips) or
+    expires from _all_history.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address_owned = "AA:00:00:00:00:10"
+    address_foreign = "AA:00:00:00:00:11"
+    s_a = _RecordingAutoScanner("AA:00:00:00:00:01", BluetoothScanningMode.AUTO)
+    s_b = _RecordingAutoScanner("AA:00:00:00:00:02", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(s_a)
+    c_b = manager.async_register_scanner(s_b)
+    cancel_owned = manager.async_register_active_scan(
+        address_owned, scan_interval=60.0, scan_duration=5.0
+    )
+    cancel_foreign = manager.async_register_active_scan(
+        address_foreign, scan_interval=60.0, scan_duration=5.0
+    )
+    try:
+        _inject(s_a, address_owned)
+        _inject(s_b, address_foreign)
+        assert address_owned in sched._needs
+        assert address_foreign in sched._needs
+        # Remove s_a. The owned entry must be pruned; the foreign one
+        # (owned by s_b) must remain.
+        c_a()
+        await asyncio.sleep(0)
+        assert address_owned not in sched._needs
+        assert address_foreign in sched._needs
+    finally:
+        cancel_owned()
+        cancel_foreign()
+        c_b()
+
+
+@pytest.mark.asyncio
 async def test_add_scanner_before_start_defers_worker() -> None:
     """A scanner registered before start() gets its worker on start()."""
     manager = get_manager()
@@ -621,6 +661,9 @@ async def test_register_active_scan_validates_inputs() -> None:
         manager.async_register_active_scan(
             "AA:BB:CC:DD:EE:00", scan_interval=60.0, scan_duration=4.5
         )
+    # Empty address.
+    with pytest.raises(ValueError, match="address must be a non-empty string"):
+        manager.async_register_active_scan("", scan_interval=60.0)
 
 
 @pytest.mark.asyncio

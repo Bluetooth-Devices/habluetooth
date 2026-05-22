@@ -1095,6 +1095,8 @@ class BluetoothManager:
         seen. ACTIVE and PASSIVE scanners ignore the request. Returns
         a cancel callable.
         """
+        if not address:
+            raise ValueError("address must be a non-empty string")
         if scan_interval is None:
             scan_interval = DEFAULT_ACTIVE_SCAN_INTERVAL
         if scan_duration is None:

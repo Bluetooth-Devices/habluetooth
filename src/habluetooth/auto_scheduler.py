@@ -495,10 +495,27 @@ class AutoScanScheduler:
         self._spawn_worker(scanner)
 
     def remove_scanner(self, scanner: BaseHaScanner) -> None:
-        """Stop the worker for a scanner leaving the manager."""
-        worker = self._workers.pop(scanner.source, None)
+        """
+        Stop the worker for a scanner leaving the manager.
+
+        Also prunes any ``_needs`` entries whose current owner is the
+        leaving scanner. Without this they'd sit until the device
+        either turns up on another scanner (history flips, that
+        worker picks them up) or expires from ``_all_history`` (the
+        next worker tick on any scanner drops them). Self-healing in
+        the steady state, but the explicit prune closes the small
+        window where a removed-and-not-rediscovered device keeps a
+        tracked entry pinned.
+        """
+        source = scanner.source
+        worker = self._workers.pop(source, None)
         if worker is not None:
             worker.stop()
+        last_service_info = self._manager.async_last_service_info
+        for address in list(self._needs):
+            history = last_service_info(address, False)
+            if history is not None and history.source == source:
+                del self._needs[address]
 
     def _spawn_worker(self, scanner: BaseHaScanner) -> None:
         assert self._loop is not None  # noqa: S101

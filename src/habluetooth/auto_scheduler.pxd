@@ -80,6 +80,10 @@ cdef class AutoScanScheduler:
 
     cpdef void add_scanner(self, object scanner)
 
+    @cython.locals(
+        source=str,
+        address=str,
+    )
     cpdef void remove_scanner(self, object scanner)
 
     @cython.locals(
