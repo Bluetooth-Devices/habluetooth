@@ -2,6 +2,12 @@ import cython
 
 from .models cimport BluetoothServiceInfoBleak
 
+cdef double _AUTO_INITIAL_SWEEP_DELAY
+cdef double _AUTO_REDISCOVERY_INTERVAL
+cdef double _AUTO_REDISCOVERY_SWEEP_DURATION
+cdef double _AUTO_WINDOW_MAX_DURATION
+cdef double _AUTO_WINDOW_MIN_DURATION
+
 
 cdef class ActiveScanRequest:
 

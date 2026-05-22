@@ -25,6 +25,14 @@ from .const import (
 )
 from .models import BluetoothScanningMode
 
+# Locally aliased so the Cython .pxd can declare them as C-typed constants;
+# the unaliased names stay importable from this module for Python callers.
+_AUTO_INITIAL_SWEEP_DELAY = AUTO_INITIAL_SWEEP_DELAY
+_AUTO_REDISCOVERY_INTERVAL = AUTO_REDISCOVERY_INTERVAL
+_AUTO_REDISCOVERY_SWEEP_DURATION = AUTO_REDISCOVERY_SWEEP_DURATION
+_AUTO_WINDOW_MAX_DURATION = AUTO_WINDOW_MAX_DURATION
+_AUTO_WINDOW_MIN_DURATION = AUTO_WINDOW_MIN_DURATION
+
 if TYPE_CHECKING:
     from .base_scanner import BaseHaScanner
     from .manager import BluetoothManager
@@ -73,7 +81,7 @@ class _ScannerWorker:
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Start the worker task; first sweep AUTO_INITIAL_SWEEP_DELAY out."""
         self._sweep_last_completed = (
-            loop.time() + AUTO_INITIAL_SWEEP_DELAY - AUTO_REDISCOVERY_INTERVAL
+            loop.time() + _AUTO_INITIAL_SWEEP_DELAY - _AUTO_REDISCOVERY_INTERVAL
         )
         self._task = loop.create_task(self._run())
 
@@ -90,7 +98,7 @@ class _ScannerWorker:
         """Return the earliest loop-time at which this worker has work."""
         if self._window_end > now:
             return self._window_end
-        next_at = self._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        next_at = self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
         source = self._scanner.source
         needs = self._scheduler._needs
         all_history = self._scheduler._manager._all_history
@@ -107,23 +115,20 @@ class _ScannerWorker:
 
     async def _run(self) -> None:
         """Sleep until next event or wake, then process due work."""
-        try:
-            while True:
-                loop = self._scheduler._loop
-                if loop is None:
-                    return
-                now = loop.time()
-                next_at = self._next_event_at(now)
-                self._wake.clear()
-                delay = max(0.0, next_at - now)
-                if delay > 0:
-                    with contextlib.suppress(asyncio.TimeoutError):
-                        await asyncio.wait_for(self._wake.wait(), timeout=delay)
-                if not self._scheduler._running:
-                    return
-                await self._tick()
-        except asyncio.CancelledError:
-            raise
+        while True:
+            loop = self._scheduler._loop
+            if loop is None:
+                return
+            now = loop.time()
+            next_at = self._next_event_at(now)
+            self._wake.clear()
+            delay = max(0.0, next_at - now)
+            if delay > 0:
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._wake.wait(), timeout=delay)
+            if not self._scheduler._running:
+                return
+            await self._tick()
 
     async def _tick(self) -> None:
         """Fire due per-device windows, then the sweep."""
@@ -172,16 +177,16 @@ class _ScannerWorker:
         if loop is None:
             return
         now = loop.time()
-        if now < self._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL:
+        if now < self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL:
             return
         sweep_lock = self._scheduler._sweep_lock
         if sweep_lock is None:
             return
         async with sweep_lock:
             now = loop.time()
-            if now < self._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL:
+            if now < self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL:
                 return
-            duration = AUTO_REDISCOVERY_SWEEP_DURATION
+            duration = _AUTO_REDISCOVERY_SWEEP_DURATION
             self._window_end = now + duration
             try:
                 await self._run_window(duration)
@@ -306,10 +311,10 @@ class AutoScanScheduler:
         """Pick the max requested duration, clamped to the configured range."""
         requested = max(
             (e.scan_duration for e in entries if e.scan_duration is not None),
-            default=AUTO_WINDOW_MIN_DURATION,
+            default=_AUTO_WINDOW_MIN_DURATION,
         )
-        if requested < AUTO_WINDOW_MIN_DURATION:
-            return AUTO_WINDOW_MIN_DURATION
-        if requested > AUTO_WINDOW_MAX_DURATION:
-            return AUTO_WINDOW_MAX_DURATION
+        if requested < _AUTO_WINDOW_MIN_DURATION:
+            return _AUTO_WINDOW_MIN_DURATION
+        if requested > _AUTO_WINDOW_MAX_DURATION:
+            return _AUTO_WINDOW_MAX_DURATION
         return requested
