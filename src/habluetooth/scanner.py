@@ -880,6 +880,10 @@ class HaScanner(BaseHaScanner):
                 self.name,
                 ex,
             )
+            # The bleak scanner may be in an undefined state; mark
+            # the wrapper not-scanning so the caller's fallback path
+            # treats it as stopped.
+            self.scanning = False
             return False
         # Private bleak attribute — no public API for mode change.
         # BlueZ reads it on every start; macOS isn't reachable here.
@@ -893,6 +897,9 @@ class HaScanner(BaseHaScanner):
                 self.name,
                 ex,
             )
+            # Scanner was stopped above and didn't come back; mark
+            # not-scanning so it matches reality.
+            self.scanning = False
             return False
         self.scanning = True
         self.set_current_mode(effective_mode)

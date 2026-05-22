@@ -1905,7 +1905,59 @@ async def test_async_toggle_active_window_mode_returns_false_on_stop_error() -> 
         scanner_obj.async_setup()
         await scanner_obj.async_start()
         scanner_obj._scan_mode_override = BluetoothScanningMode.ACTIVE
+        assert scanner_obj.scanning is True
         assert await scanner_obj._async_toggle_active_window_mode() is False
+        # scanner.stop() raised so the bleak scanner is in an
+        # undefined state; the wrapper must reflect that as not-
+        # scanning so the caller's fallback path treats it correctly.
+        assert scanner_obj.scanning is False
+
+
+@pytest.mark.usefixtures("force_linux_scanner_mode")
+@pytest.mark.asyncio
+async def test_async_toggle_active_window_mode_marks_not_scanning_on_start_error() -> (
+    None
+):
+    """
+    Toggle's start-error path also clears self.scanning.
+
+    The stop succeeded but the post-mode-flip start raised, so the
+    bleak scanner is stopped. self.scanning must follow.
+    """
+    starts = 0
+
+    class StartErrorMockBleakScanner:
+        _backend = types.SimpleNamespace(_scanning_mode="passive")
+
+        async def start(self):
+            nonlocal starts
+            starts += 1
+            # First start (initial async_start) succeeds; the
+            # post-flip start (second call) raises.
+            if starts > 1:
+                raise BleakError("simulated start failure")
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_, **__: StartErrorMockBleakScanner(),
+    ):
+        scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner_obj.async_setup()
+        await scanner_obj.async_start()
+        scanner_obj._scan_mode_override = BluetoothScanningMode.ACTIVE
+        assert scanner_obj.scanning is True
+        assert await scanner_obj._async_toggle_active_window_mode() is False
+        assert scanner_obj.scanning is False
 
 
 @pytest.mark.usefixtures("force_linux_scanner_mode")

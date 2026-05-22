@@ -884,7 +884,115 @@ async def test_repeated_window_failures_log_only_first_traceback(
 
 
 @pytest.mark.asyncio
-async def test_start_replays_pre_start_requests_when_history_exists() -> None:
+async def test_tick_sync_phase_exception_is_logged_and_worker_survives(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Sync-phase failures in _tick are logged; worker survives.
+
+    Stubs async_last_service_info to raise so _collect_due_buckets
+    blows up; the outer except in _tick catches it and logs.
+    """
+    import logging
+
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:91"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=60.0, scan_duration=5.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:31", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        worker = sched._workers[scanner.source]
+        original = manager.async_last_service_info
+
+        def _boom(_addr: str, _conn: bool) -> None:
+            raise RuntimeError("boom in last_service_info")
+
+        manager.async_last_service_info = _boom  # type: ignore[assignment,method-assign]
+        try:
+            with caplog.at_level(logging.ERROR):
+                await worker._tick()
+            assert any(
+                "unexpected error in auto-window tick" in record.message
+                for record in caplog.records
+            )
+            # Worker is still alive; _window_end was reset.
+            assert worker._window_end == 0.0
+        finally:
+            manager.async_last_service_info = original  # type: ignore[method-assign]
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_mode_switch_unregister_then_register_picks_up_existing_request() -> None:
+    """
+    Scheduler survives a HA-style scanner mode switch on the same source.
+
+    HA's UI mode-switch path reloads the config entry: the old
+    scanner is unregistered, a new one with the same source is
+    registered with the new mode. The scheduler must (1) prune
+    _needs entries the leaving scanner owned via remove_scanner,
+    (2) keep user-registered ActiveScanRequests in
+    _requests_by_address, (3) spawn a fresh worker for a new AUTO
+    scanner via add_scanner, and (4) bootstrap _needs on the first
+    advertisement from the new scanner.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:92"
+    # Register the active-scan need first.
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=60.0, scan_duration=5.0
+    )
+    # Start in AUTO, see the device, then "switch to ACTIVE".
+    auto_scanner = _RecordingAutoScanner(
+        "AA:BB:CC:DD:EE:32", BluetoothScanningMode.AUTO
+    )
+    auto_cancel = manager.async_register_scanner(auto_scanner)
+    try:
+        _inject(auto_scanner, address)
+        assert address in sched._needs
+        assert auto_scanner.source in sched._workers
+        # Mode switch in UI -> unregister AUTO scanner.
+        auto_cancel()
+        assert auto_scanner.source not in sched._workers
+        assert address not in sched._needs
+        # User's registration is preserved across the switch.
+        assert address in sched._requests_by_address
+        # Re-register with the SAME source but PASSIVE mode.
+        passive_scanner = _RecordingAutoScanner(
+            "AA:BB:CC:DD:EE:32", BluetoothScanningMode.PASSIVE
+        )
+        passive_cancel = manager.async_register_scanner(passive_scanner)
+        try:
+            # PASSIVE doesn't get a worker.
+            assert passive_scanner.source not in sched._workers
+            # Still no _needs entry (no AUTO scanner owns it).
+            assert address not in sched._needs
+            passive_cancel()
+            # Now switch BACK to AUTO with the same source.
+            new_auto = _RecordingAutoScanner(
+                "AA:BB:CC:DD:EE:32", BluetoothScanningMode.AUTO
+            )
+            new_auto_cancel = manager.async_register_scanner(new_auto)
+            try:
+                assert new_auto.source in sched._workers
+                # First advertisement on the new AUTO scanner bootstraps
+                # tracking again from the still-registered request.
+                _inject(new_auto, address)
+                assert address in sched._needs
+            finally:
+                new_auto_cancel()
+        except BaseException:
+            passive_cancel()
+            raise
+    finally:
+        cancel()
     """
     add_request before start() seeds _needs at start() if history exists.
 

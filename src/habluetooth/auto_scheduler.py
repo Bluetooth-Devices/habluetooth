@@ -320,7 +320,9 @@ class _ScannerWorker:
         so ``scan_interval`` is a true period between window starts
         rather than ``scan_interval + duration``. The scanner call's
         return value is ignored: we advance on failure too so a stuck
-        scanner can't busy-loop the worker.
+        scanner can't busy-loop the worker. An outer except keeps
+        the worker alive if the sync-phase (``_collect_due_buckets``,
+        ``_advance_due``) raises unexpectedly.
         """
         loop = self._scheduler._loop
         if loop is None:
@@ -332,44 +334,52 @@ class _ScannerWorker:
         if self._window_end > now:
             return
         self._window_end = 0.0
-        due_buckets, all_due = self._collect_due_buckets(now)
-        sweep_due = now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
-        if not all_due and not sweep_due:
-            return
-        duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
-        if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
-            duration = _AUTO_REDISCOVERY_SWEEP_DURATION
-        self._window_end = now + duration
-        # Advance pre-await: a new owner that wakes mid-window must
-        # see the entries already advanced, otherwise an RSSI flip
-        # would let the new owner fire a duplicate window.
-        self._advance_due(due_buckets, now)
-        if sweep_due:
-            self._sweep_last_completed = now
         try:
-            await self._scanner.async_request_active_window(duration)
-        except Exception as ex:  # pylint: disable=broad-except
-            # First failure per recovery-cycle gets a traceback;
-            # subsequent failures collapse to a one-liner so a
-            # persistently broken scanner can't spam the log. Flag
-            # clears on the next success so failure-after-recovery
-            # captures a stack again.
-            if self._failed_window:
-                _LOGGER.warning(
-                    "%s: error running active window of %.1fs: %s",
-                    self._scanner.name,
-                    duration,
-                    ex,
-                )
+            due_buckets, all_due = self._collect_due_buckets(now)
+            sweep_due = now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
+            if not all_due and not sweep_due:
+                return
+            duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
+            if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
+                duration = _AUTO_REDISCOVERY_SWEEP_DURATION
+            self._window_end = now + duration
+            # Advance pre-await: a new owner that wakes mid-window
+            # must see the entries already advanced, otherwise an
+            # RSSI flip would let the new owner fire a duplicate
+            # window.
+            self._advance_due(due_buckets, now)
+            if sweep_due:
+                self._sweep_last_completed = now
+            try:
+                await self._scanner.async_request_active_window(duration)
+            except Exception as ex:  # pylint: disable=broad-except
+                # First failure per recovery-cycle gets a traceback;
+                # subsequent failures collapse to a one-liner so a
+                # persistently broken scanner can't spam the log.
+                # Flag clears on the next success so failure-after-
+                # recovery captures a stack again.
+                if self._failed_window:
+                    _LOGGER.warning(
+                        "%s: error running active window of %.1fs: %s",
+                        self._scanner.name,
+                        duration,
+                        ex,
+                    )
+                else:
+                    self._failed_window = True
+                    _LOGGER.exception(
+                        "%s: error running active window of %.1fs",
+                        self._scanner.name,
+                        duration,
+                    )
             else:
-                self._failed_window = True
-                _LOGGER.exception(
-                    "%s: error running active window of %.1fs",
-                    self._scanner.name,
-                    duration,
-                )
-        else:
-            self._failed_window = False
+                self._failed_window = False
+        except Exception:  # pylint: disable=broad-except
+            # Sync-phase failure (collect/advance/coalesce). Log so
+            # the worker doesn't die silently, then continue.
+            _LOGGER.exception(
+                "%s: unexpected error in auto-window tick", self._scanner.name
+            )
         finally:
             self._window_end = 0.0
 
@@ -447,9 +457,9 @@ class AutoScanScheduler:
         """
         Register an AUTO-mode scanner; spawn its worker if running.
 
-        Skips when ``_running`` is False (``stop()`` leaves ``_loop``
-        set, so without this guard a post-stop registration would
-        spawn a worker that exits on its first iteration).
+        Skips when ``_running`` or ``_loop`` are unset (both cleared
+        by ``stop()``), so a post-stop registration doesn't spawn a
+        worker that would have to exit on its first iteration.
         """
         if scanner.requested_mode is not BluetoothScanningMode.AUTO:
             return
