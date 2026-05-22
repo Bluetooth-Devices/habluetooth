@@ -21,6 +21,8 @@ from . import (
     generate_ble_device,
 )
 
+pytestmark = pytest.mark.timeout(60)
+
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
