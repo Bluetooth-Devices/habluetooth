@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.2.1 (2026-05-22)
+
+### Bug fixes
+
+
+- Scope cp314 wheel build to non free threaded abi ([`84162aa`](https://github.com/Bluetooth-Devices/habluetooth/commit/84162aa94b61cab70bdebec4dcbf1d0fd0204884))
+
+
 ## v6.2.0 (2026-05-22)
 
 ### Bug fixes

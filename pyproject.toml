@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "habluetooth"
-version = "6.2.0"
+version = "6.2.1"
 license = "Apache-2.0"
 description = "High availability Bluetooth"
 authors = [{ name = "J. Nick Koston", email = "bluetooth@koston.org" }]
@@ -49,6 +49,7 @@ pytest = ">=9.0.3,<10"
 pytest-cov = ">=3,<8"
 pytest-asyncio = ">=0.23.6,<1.4.0"
 pytest-codspeed = ">=5.0.2,<6.0.0"
+pytest-timeout = ">=2.3.1"
 freezegun = "^1.5.5"
 dbus-fast = ">=4.3.0"
 
@@ -90,6 +91,7 @@ addopts = "-v -Wdefault --cov=habluetooth --cov-report=term-missing:skip-covered
 pythonpath = ["src"]
 log_cli="true"
 log_level="NOTSET"
+timeout = 5
 
 [tool.coverage.run]
 branch = true
