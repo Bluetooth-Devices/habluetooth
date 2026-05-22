@@ -887,7 +887,11 @@ class BluetoothManager:
                     bleak_callback, service_info.device, advertisement_data
                 )
 
-        self._auto_scheduler.on_advertisement(service_info)
+        # Local-typed assignment so cython.locals casts to AutoScanScheduler
+        # and the call below is a direct vtable dispatch even though
+        # _auto_scheduler is stored untyped on BluetoothManager.
+        auto_scheduler = self._auto_scheduler
+        auto_scheduler.on_advertisement(service_info)
         self._subclass_discover_info(service_info)
 
     def async_clear_advertisement_history(self, address: str) -> None:
