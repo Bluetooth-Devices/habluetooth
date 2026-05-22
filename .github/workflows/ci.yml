@@ -140,7 +140,10 @@ jobs:
       - commitlint
 
     runs-on: ubuntu-latest
-    environment: release
+    # Only enter the protected 'release' environment when actually releasing
+    # from main; PR dry-runs would otherwise be blocked by the env's
+    # main-only branch policy.
+    environment: ${{ github.ref_name == 'main' && 'release' || '' }}
     concurrency:
       group: release-${{ github.head_ref || github.ref }}
       cancel-in-progress: false
@@ -152,10 +155,29 @@ jobs:
       newest_release_tag: ${{ steps.release.outputs.tag }}
 
     steps:
+      # Mint a short-lived installation token for the release-bot GitHub
+      # App, which is in the main ruleset's bypass_actors list so PSR's
+      # version-bump commit/tag push isn't blocked by required checks.
+      # Per PSR's docs, the same token must be passed to actions/checkout
+      # (via `token`) so its persisted http.extraheader doesn't override
+      # PSR's URL-embedded auth at push time and re-attribute the push
+      # to github-actions[bot].
+      - name: Generate release App token
+        if: github.ref_name == 'main'
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
         with:
           fetch-depth: 0
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: ${{ github.ref }}
+          token: ${{ steps.app-token.outputs.token || github.token }}
+
+      - name: Create local branch name
+        run: git switch -C ${{ github.head_ref || github.ref_name }}
 
       # Do a dry run of PSR
       - name: Test release
@@ -170,7 +192,7 @@ jobs:
         id: release
         if: github.ref_name == 'main'
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ steps.app-token.outputs.token }}
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
@@ -180,7 +202,7 @@ jobs:
         uses: python-semantic-release/upload-to-gh-release@0a92b5d7ebfc15a84f9801ebd1bf706343d43711 # main
         if: steps.release.outputs.released == 'true'
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ steps.app-token.outputs.token }}
 
   build_wheels:
     needs: [release]
