@@ -1,12 +1,69 @@
 """
 Auto-mode active-window scheduler.
 
-One ``_ScannerWorker`` task per AUTO scanner sleeps on an
-``asyncio.Event`` with a ``wait_for`` timeout until the next due event;
-per-address registrations fire scan_interval/scan_duration windows on
-the scanner currently seeing the device, and each scanner sweeps once
-``AUTO_INITIAL_SWEEP_DELAY`` after joining then every
-``AUTO_REDISCOVERY_INTERVAL`` thereafter, serialized across scanners.
+Coordinates on-demand ACTIVE scans for AUTO-mode scanners. A scanner
+defaults to PASSIVE; the manager flips it to ACTIVE for ``duration``
+seconds on demand when an integration has asked for active scans on a
+specific device address.
+
+
+Flow
+====
+
+                     add_request(req)            on_advertisement(adv)
+                        |                            |
+                        | seed _needs[addr][req]     | re-seed if pruned
+                        | = now + scan_interval      | = now + scan_interval
+                        | wake address's owner       | wake adv.source
+                        v                            v
+                  +------------------------------------------+
+                  |  AutoScanScheduler                       |
+                  |    _requests_by_address                  |
+                  |       addr -> set of ActiveScanRequest   |
+                  |    _needs                                |
+                  |       addr -> {request: next_due_time}   |
+                  |    _workers                              |
+                  |       source -> _ScannerWorker           |
+                  +------------------------------------------+
+                                    |
+                                    | one task per AUTO scanner
+                                    v
+                  +------------------------------------------+
+                  |  _ScannerWorker._run loop                |
+                  |                                          |
+                  |    sleep on _wake with timeout =         |
+                  |      _next_event_at(now) - now           |
+                  |    await _tick()                         |
+                  |                                          |
+                  |  _tick (sync collect, one await):        |
+                  |    1. _collect_due_buckets               |
+                  |       skip addresses whose owner         |
+                  |       (last_service_info.source) is      |
+                  |       not this scanner                   |
+                  |    2. sweep_due = sweep cadence elapsed  |
+                  |    3. duration = max(due durations,      |
+                  |       SWEEP_DURATION if sweep_due)       |
+                  |    4. ONE await:                         |
+                  |       scanner.async_request_active_window|
+                  |    5. _advance_due / advance sweep clock |
+                  +------------------------------------------+
+
+
+Invariants
+==========
+
+* At most one outstanding window per scanner (``_window_end`` guards
+  re-entry into ``_tick``).
+* Per-device windows fire only on the scanner whose ``source`` matches
+  the device's most recent advertisement source; other scanners that
+  see the same device skip it.
+* Global rediscovery sweeps fire on every AUTO scanner at their own
+  cadence (first sweep at ``AUTO_INITIAL_SWEEP_DELAY`` + a staggered
+  offset assigned at registration, every
+  ``AUTO_REDISCOVERY_INTERVAL`` afterwards).
+* A registration kick-starts tracking immediately; ``on_advertisement``
+  is the fallback that re-creates the entry if the worker pruned it
+  because the device's history was missing at tick time.
 """
 
 from __future__ import annotations
