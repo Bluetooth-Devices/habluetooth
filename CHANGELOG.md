@@ -1,5 +1,61 @@
 # Changelog
 
+## v6.2.0 (2026-05-22)
+
+### Bug fixes
+
+
+- Use release-bot app token so psr push bypasses main ruleset ([`4595999`](https://github.com/Bluetooth-Devices/habluetooth/commit/4595999cf92d51dfe21797dde2e2e4cd27f09246))
+
+
+- Unify connect cleanup + phase 2 lifecycle audit findings (#340) ([`6578751`](https://github.com/Bluetooth-Devices/habluetooth/commit/6578751020aec5571e309b851f359157fdde9ba7))
+
+
+### Testing
+
+
+- Rename test_update_name_cache_* to test_seed_name_cache_* ([`29a8bca`](https://github.com/Bluetooth-Devices/habluetooth/commit/29a8bca04dc56855dd1a620d7b7d5c98ca121c21))
+
+
+- Cover manager.py uncovered branches ([`47d4b71`](https://github.com/Bluetooth-Devices/habluetooth/commit/47d4b71899c7086b72de53f9aa1384836735ca99))
+
+
+- Silence pytest collection and deprecated-shim warnings ([`6ae3eda`](https://github.com/Bluetooth-Devices/habluetooth/commit/6ae3eda86d6abd606aa4963b850373cb54ac61fd))
+
+
+- Cover baseharemotescanner restore/diagnostics/mode no-ops ([`62e7be2`](https://github.com/Bluetooth-Devices/habluetooth/commit/62e7be200fc58c9a8ff6fc78a6c048741afa747e))
+
+
+- Cover util and central_manager helpers ([`84b9d4d`](https://github.com/Bluetooth-Devices/habluetooth/commit/84b9d4dcb860a9905c9fa8f1132ec1e59b89ee20))
+
+
+### Features
+
+
+- Share device name cache across scanners ([`bb76920`](https://github.com/Bluetooth-Devices/habluetooth/commit/bb769205c7cb6172071f22a2a105a98447a53269))
+
+
+- Track lifetime connect counters per scanner ([`416a438`](https://github.com/Bluetooth-Devices/habluetooth/commit/416a43867c1dc53c4d145a92fca7a4af4b2a380e))
+
+
+- Surface connect-in-progress and failure counters in scanner diagnostics ([`32db633`](https://github.com/Bluetooth-Devices/habluetooth/commit/32db63362dfd8544e32423ad0c7924ea04048b26))
+
+
+- Support bleak 3.0+ without deprecation warnings ([`6bfa77f`](https://github.com/Bluetooth-Devices/habluetooth/commit/6bfa77f13d15441c3a9ddb4eb886253630b5ce86))
+
+
+### Performance improvements
+
+
+- Parallelize cython extension compilation ([`a39c93b`](https://github.com/Bluetooth-Devices/habluetooth/commit/a39c93bb5d9ad331a6ac058fb980dd8d66a0cdb2))
+
+
+### Documentation
+
+
+- Add claude.md guide for ai assistants ([`b12f98a`](https://github.com/Bluetooth-Devices/habluetooth/commit/b12f98ac3a1cc275bc8844913c27cdbd30116c68))
+
+
 ## v6.1.0 (2026-04-19)
 
 ### Features
