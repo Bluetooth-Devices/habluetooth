@@ -170,7 +170,15 @@ class _ScannerWorker:
         self._wake.set()
 
     def _next_event_at(self, now: float) -> float:
-        """Return the earliest loop-time at which this worker has work."""
+        """
+        Return the earliest loop-time at which this worker has work.
+
+        O(M) over every tracked address per wake. Acceptable at HA's
+        typical scale (a few dozen registered devices per manager); if
+        the API gets adopted by deployments with hundreds of registered
+        devices, replace with a per-worker invariant maintained at
+        add_request/on_advertisement/_advance_due time so this is O(1).
+        """
         if self._window_end > now:
             return self._window_end
         next_at = self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
