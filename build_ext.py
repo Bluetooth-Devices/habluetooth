@@ -15,6 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 
 TO_CYTHONIZE = [
     "src/habluetooth/advertisement_tracker.py",
+    "src/habluetooth/auto_scheduler.py",
     "src/habluetooth/base_scanner.py",
     "src/habluetooth/manager.py",
     "src/habluetooth/models.py",

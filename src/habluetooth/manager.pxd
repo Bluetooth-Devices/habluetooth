@@ -1,6 +1,7 @@
 import cython
 
 from .advertisement_tracker cimport AdvertisementTracker
+from .auto_scheduler cimport AutoScanScheduler
 from .base_scanner cimport BaseHaScanner
 from .models cimport BluetoothServiceInfoBleak
 
@@ -72,7 +73,7 @@ cdef class BluetoothManager:
     cdef public bint has_advertising_side_channel
     cdef public dict _side_channel_scanners
     cdef public object _mgmt_ctl
-    cdef public object _auto_scheduler
+    cdef public AutoScanScheduler _auto_scheduler
 
     @cython.locals(stale_seconds=double)
     cdef bint _prefer_previous_adv_from_different_source(
