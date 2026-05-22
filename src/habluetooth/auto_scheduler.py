@@ -167,8 +167,12 @@ class _ScannerWorker:
             self._window_end = now + duration
             await self._run_window(duration)
             now = loop.time()
+            # Re-check membership: remove_request may have dropped any of
+            # the due entries while we were awaiting the window, and we
+            # don't want to resurrect a cancelled registration.
             for request in due:
-                entries[request] = now + request.scan_interval
+                if request in entries:
+                    entries[request] = now + request.scan_interval
             self._window_end = 0.0
 
     async def _dispatch_sweep(self) -> None:
@@ -271,11 +275,8 @@ class AutoScanScheduler:
         """Register an active-scan request and wake the owning worker."""
         self._requests_by_address.setdefault(request.address, set()).add(request)
         history = self._manager._all_history.get(request.address)
-        if (
-            history is not None
-            and (worker := self._workers.get(history.source)) is not None
-        ):
-            worker.wake()
+        if history is not None:
+            self._wake_worker(history.source)
 
     def remove_request(self, request: ActiveScanRequest) -> None:
         """Drop the request from the index and from any pending tracking."""
@@ -304,7 +305,12 @@ class AutoScanScheduler:
             if request not in existing:
                 existing[request] = self._loop.time() + request.scan_interval
                 added = True
-        if added and (worker := self._workers.get(service_info.source)) is not None:
+        if added:
+            self._wake_worker(service_info.source)
+
+    def _wake_worker(self, source: str) -> None:
+        """Wake the worker for ``source`` if one is registered."""
+        if (worker := self._workers.get(source)) is not None:
             worker.wake()
 
     def _coalesce_duration(self, entries: list[ActiveScanRequest]) -> float:

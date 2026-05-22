@@ -1068,6 +1068,10 @@ class BluetoothManager:
         ACTIVE and PASSIVE scanners ignore the request. Returns a
         cancel callable.
         """
+        if scan_interval <= 0:
+            raise ValueError("scan_interval must be > 0")
+        if scan_duration is not None and scan_duration < 0:
+            raise ValueError("scan_duration must be None or >= 0")
         request = ActiveScanRequest(address, scan_interval, scan_duration)
         self._auto_scheduler.add_request(request)
         return partial(self._auto_scheduler.remove_request, request)

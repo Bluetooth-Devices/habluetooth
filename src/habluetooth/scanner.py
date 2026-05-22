@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import platform
 from collections.abc import Coroutine, Iterable
@@ -681,10 +682,14 @@ class HaScanner(BaseHaScanner):
         async with self._start_stop_lock:
             self._scan_mode_override = BluetoothScanningMode.ACTIVE
             try:
-                await self._async_stop_scanner()
-                await self._async_start()
+                await self._async_stop_then_start_under_lock()
             except ScannerStartError:
+                # ACTIVE start failed; try to bring the scanner back up
+                # in its underlying AUTO/passive mode so we don't leave
+                # it stopped.
                 self._scan_mode_override = None
+                with contextlib.suppress(ScannerStartError):
+                    await self._async_stop_then_start_under_lock()
                 return False
             if self.current_mode is not BluetoothScanningMode.ACTIVE:
                 # Linux's 4th-attempt fallback silently drops to PASSIVE.
@@ -708,14 +713,18 @@ class HaScanner(BaseHaScanner):
             if not self.scanning:
                 return
             try:
-                await self._async_stop_scanner()
-                await self._async_start()
+                await self._async_stop_then_start_under_lock()
             except ScannerStartError as ex:
                 _LOGGER.warning(
                     "%s: Failed to restart scanner after active window: %s",
                     self.name,
                     ex,
                 )
+
+    async def _async_stop_then_start_under_lock(self) -> None:
+        """Stop and restart the BleakScanner; caller holds _start_stop_lock."""
+        await self._async_stop_scanner()
+        await self._async_start()
 
     async def _async_stop_scanner(self) -> None:
         """Stop bluetooth discovery under the lock."""
