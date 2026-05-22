@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import math
 import platform
 from collections.abc import Callable, Iterable
 from dataclasses import asdict
@@ -1101,13 +1102,19 @@ class BluetoothManager:
             scan_interval = DEFAULT_ACTIVE_SCAN_INTERVAL
         if scan_duration is None:
             scan_duration = DEFAULT_ACTIVE_SCAN_DURATION
-        if scan_interval < MIN_ACTIVE_SCAN_INTERVAL:
+        # Reject non-finite values explicitly: NaN compared to anything
+        # returns False, so a NaN would slip past the lower-bound
+        # checks below and end up in _needs and call_later as a NaN
+        # due-time / duration, busy-looping the worker.
+        if not math.isfinite(scan_interval) or scan_interval < MIN_ACTIVE_SCAN_INTERVAL:
             raise ValueError(
-                f"scan_interval must be >= {MIN_ACTIVE_SCAN_INTERVAL:.0f}s"
+                f"scan_interval must be a finite number >= "
+                f"{MIN_ACTIVE_SCAN_INTERVAL:.0f}s"
             )
-        if scan_duration < MIN_ACTIVE_SCAN_DURATION:
+        if not math.isfinite(scan_duration) or scan_duration < MIN_ACTIVE_SCAN_DURATION:
             raise ValueError(
-                f"scan_duration must be >= {MIN_ACTIVE_SCAN_DURATION:.0f}s"
+                f"scan_duration must be a finite number >= "
+                f"{MIN_ACTIVE_SCAN_DURATION:.0f}s"
             )
         request = ActiveScanRequest(address.upper(), scan_interval, scan_duration)
         self._auto_scheduler.add_request(request)

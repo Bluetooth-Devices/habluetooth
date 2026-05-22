@@ -106,6 +106,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 from typing import TYPE_CHECKING
 
 from .const import (
@@ -626,9 +627,20 @@ class AutoScanScheduler:
             worker.wake()
 
     def _coalesce_duration(self, entries: list[ActiveScanRequest]) -> float:
-        """Pick the max requested duration, clamped to the configured range."""
+        """
+        Pick the max requested duration, clamped to the configured range.
+
+        ``async_register_active_scan`` already rejects NaN / inf
+        inputs, but ``ActiveScanRequest`` can be constructed directly
+        (e.g., internal callers); the ``isfinite`` guard here keeps a
+        bad value from poisoning ``call_later``'s timeout.
+        """
         requested = max(
-            (e.scan_duration for e in entries if e.scan_duration is not None),
+            (
+                e.scan_duration
+                for e in entries
+                if e.scan_duration is not None and math.isfinite(e.scan_duration)
+            ),
             default=_AUTO_WINDOW_MIN_DURATION,
         )
         if requested < _AUTO_WINDOW_MIN_DURATION:

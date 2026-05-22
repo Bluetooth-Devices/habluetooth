@@ -648,22 +648,34 @@ async def test_register_active_scan_validates_inputs() -> None:
     """scan_interval / scan_duration below the configured minimums raise."""
     manager = get_manager()
     # scan_interval below 60s.
-    with pytest.raises(ValueError, match="scan_interval must be >="):
+    with pytest.raises(ValueError, match="scan_interval must"):
         manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=0)
-    with pytest.raises(ValueError, match="scan_interval must be >="):
+    with pytest.raises(ValueError, match="scan_interval must"):
         manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=30.0)
     # scan_duration below 5s.
-    with pytest.raises(ValueError, match="scan_duration must be >="):
+    with pytest.raises(ValueError, match="scan_duration must"):
         manager.async_register_active_scan(
             "AA:BB:CC:DD:EE:00", scan_interval=60.0, scan_duration=-0.5
         )
-    with pytest.raises(ValueError, match="scan_duration must be >="):
+    with pytest.raises(ValueError, match="scan_duration must"):
         manager.async_register_active_scan(
             "AA:BB:CC:DD:EE:00", scan_interval=60.0, scan_duration=4.5
         )
     # Empty address.
     with pytest.raises(ValueError, match="address must be a non-empty string"):
         manager.async_register_active_scan("", scan_interval=60.0)
+    # Non-finite values must be rejected: NaN compared to anything
+    # returns False, so without the explicit isfinite() check a NaN
+    # would slip past the lower-bound validators.
+    import math as _math
+
+    for bad in (_math.nan, _math.inf, -_math.inf):
+        with pytest.raises(ValueError, match="scan_interval must be a finite number"):
+            manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=bad)
+        with pytest.raises(ValueError, match="scan_duration must be a finite number"):
+            manager.async_register_active_scan(
+                "AA:BB:CC:DD:EE:00", scan_interval=60.0, scan_duration=bad
+            )
 
 
 @pytest.mark.asyncio
@@ -1475,6 +1487,30 @@ async def test_coalesce_none_duration_uses_min() -> None:
     finally:
         sched.remove_request(request)
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_coalesce_skips_non_finite_durations() -> None:
+    """
+    A NaN / inf scan_duration on a hand-built request must not propagate.
+
+    async_register_active_scan rejects non-finite values at the
+    boundary, but ActiveScanRequest can be constructed directly;
+    _coalesce_duration must defensively skip non-finite scan_duration
+    entries so a bad value never lands in call_later as a NaN
+    timeout.
+    """
+    import math as _math
+
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    bad = ActiveScanRequest("ZZ:00:00:00:00:00", 60.0, _math.nan)
+    good = ActiveScanRequest("ZZ:00:00:00:00:01", 60.0, 10.0)
+    result = sched._coalesce_duration([bad, good])
+    assert result == 10.0
+    # All-NaN falls back to MIN.
+    result_all_bad = sched._coalesce_duration([bad])
+    assert result_all_bad == AUTO_WINDOW_MIN_DURATION
 
 
 @pytest.mark.asyncio
