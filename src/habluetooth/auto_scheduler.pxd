@@ -73,7 +73,6 @@ cdef class AutoScanScheduler:
 
     @cython.locals(
         existing=dict,
-        added=bint,
     )
     cpdef void add_request(self, ActiveScanRequest request)
 
