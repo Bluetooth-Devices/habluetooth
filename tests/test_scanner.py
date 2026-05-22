@@ -1711,3 +1711,143 @@ async def test_on_scanner_start_callback(
     # Verify the callback was called
     assert len(manager.scanner_start_calls) == 1
     assert manager.scanner_start_calls[0] is scanner
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_window_rejected_when_not_auto() -> None:
+    """Non-AUTO scanners ignore active-window requests and return False."""
+    scanner = HaScanner(BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    scanner.async_setup()
+    assert await scanner.async_request_active_window(1.0) is False
+    assert scanner._scan_mode_override is None
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_window_restarts_scanner_in_active_mode() -> None:
+    """An AUTO scanner flips to ACTIVE and schedules a return to the prior mode."""
+
+    class MockBleakScanner:
+        def __init__(self):
+            self.start_modes: list[str] = []
+
+        async def start(self):
+            self.start_modes.append("started")
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    starts: list[str] = []
+
+    def _factory(*_args, **kwargs):
+        starts.append(kwargs["scanning_mode"])
+        return MockBleakScanner()
+
+    with patch("habluetooth.scanner.OriginalBleakScanner", side_effect=_factory):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+        # Initial start: AUTO maps to passive in bleak's scanning_mode.
+        assert starts == ["passive"]
+
+        # Window with 0 duration so call_later fires on the next loop turn.
+        assert await scanner.async_request_active_window(0.0) is True
+        # The restart cycle ran in ACTIVE mode.
+        assert starts == ["passive", "active"]
+        assert scanner._scan_mode_override is BluetoothScanningMode.ACTIVE
+        assert scanner._active_window_handle is not None
+
+        # Let the call_later fire and the background restart task complete.
+        for _ in range(6):
+            await asyncio.sleep(0)
+        # End-of-window restored to passive (the underlying AUTO mode).
+        assert starts == ["passive", "active", "passive"]
+        assert scanner._scan_mode_override is None
+        assert scanner._active_window_handle is None  # type: ignore[unreachable]
+
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_window_extends_existing_window() -> None:
+    """A second request inside an active window extends the timer in place."""
+
+    class MockBleakScanner:
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    starts: list[str] = []
+
+    def _factory(*_args, **kwargs):
+        starts.append(kwargs["scanning_mode"])
+        return MockBleakScanner()
+
+    with patch("habluetooth.scanner.OriginalBleakScanner", side_effect=_factory):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+
+        assert await scanner.async_request_active_window(100.0) is True
+        first_handle = scanner._active_window_handle
+        first_end = scanner._active_window_end
+        # A longer request extends the existing window without a second restart.
+        assert await scanner.async_request_active_window(200.0) is True
+        assert scanner._active_window_handle is not first_handle
+        assert scanner._active_window_end > first_end
+        # Restart only happened once (initial + active), not three times.
+        assert starts == ["passive", "active"]
+        # A shorter follow-up is a no-op on the timer.
+        kept_end = scanner._active_window_end
+        assert await scanner.async_request_active_window(0.001) is True
+        assert scanner._active_window_end == kept_end
+
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_async_stop_clears_active_window_state() -> None:
+    """Stopping mid-window cancels the timer and clears the override."""
+
+    class MockBleakScanner:
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_, **__: MockBleakScanner(),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+        await scanner.async_request_active_window(100.0)
+        assert scanner._active_window_handle is not None
+        await scanner.async_stop()
+        assert scanner._active_window_handle is None
+        assert scanner._scan_mode_override is None  # type: ignore[unreachable]
+        assert scanner._active_window_end == 0.0

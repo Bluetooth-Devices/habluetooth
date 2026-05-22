@@ -601,3 +601,121 @@ async def test_stop_cancels_pending_window_tasks() -> None:
         # event loop has no dangling waiter at fixture teardown.
         blocking.set()
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_uuid_filter_excludes_non_matching_callback() -> None:
+    """A callback whose UUID filter does not intersect the adv is skipped."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+
+    def _cb(_device: Any, _adv: Any) -> None: ...
+
+    cancel = manager.async_register_bleak_callback(
+        _cb,
+        {"UUIDs": {"0000abcd-0000-1000-8000-00805f9b34fb"}},
+        scanning_mode=BluetoothScanningMode.AUTO,
+        scan_interval=60.0,
+        scan_duration=3.0,
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        device = generate_ble_device("11:22:33:44:55:66", "x")
+        # Service UUIDs that don't intersect the callback filter.
+        adv = generate_advertisement_data(
+            local_name="x",
+            service_uuids=["0000eeee-0000-1000-8000-00805f9b34fb"],
+        )
+        scanner._async_on_advertisement(
+            device.address,
+            adv.rssi,
+            device.name or "",
+            adv.service_uuids,
+            adv.service_data,
+            adv.manufacturer_data,
+            adv.tx_power,
+            {},
+            loop.time(),
+        )
+        # Callback did not match; no tracking entry was created.
+        assert sched._needs == {}
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_remove_scanner_clears_sweep_in_flight() -> None:
+    """Unregistering a scanner mid-sweep resets _sweep_in_flight."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    cancel = manager.async_register_scanner(scanner)
+    sched._sweep_in_flight = scanner.source
+    cancel()
+    assert sched._sweep_in_flight is None
+
+
+@pytest.mark.asyncio
+async def test_dispatch_drops_tracking_for_unseen_address() -> None:
+    """A due address with no history entry is pruned, not retried."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+
+    def _cb(_device: Any, _adv: Any) -> None: ...
+
+    cancel = manager.async_register_bleak_callback(
+        _cb,
+        {},
+        scanning_mode=BluetoothScanningMode.AUTO,
+        scan_interval=60.0,
+    )
+    try:
+        # Inject a tracking entry directly so we can exercise the
+        # "history missing" branch without staging a real advertisement.
+        bleak_callback = next(iter(sched._interval_callbacks))
+        sched._needs["aa:bb:cc:dd:ee:ff"] = {bleak_callback: loop.time() - 1.0}
+        sched._async_tick()
+        assert "aa:bb:cc:dd:ee:ff" not in sched._needs
+    finally:
+        cancel()
+
+
+@pytest.mark.asyncio
+async def test_add_scanner_before_start_stores_placeholder() -> None:
+    """A scanner registered before start() leaves a placeholder until start runs."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = sched._loop
+    # Detach the running loop so add_scanner takes the pre-start branch.
+    assert loop is not None
+    sched._loop = None
+    try:
+        scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+        sched.add_scanner(scanner)
+        assert sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] == 0.0
+        # start() overwrites the 0.0 placeholder so the first sweep is one
+        # full interval out instead of immediate.
+        manager._sources[scanner.source] = scanner
+        sched.start(loop)
+        assert sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] > 0.0
+    finally:
+        manager._sources.pop("AA:BB:CC:DD:EE:00", None)
+        sched._sweep_last_completed.pop("AA:BB:CC:DD:EE:00", None)
+
+
+@pytest.mark.asyncio
+async def test_stop_is_safe_when_already_idle() -> None:
+    """Calling stop() twice in a row is fully idempotent."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    sched.stop()
+    sched.stop()
+    assert sched._tick_handle is None
+    assert sched._pending_tasks == set()
+    assert sched._scanner_windows == {}
+    assert sched._sweep_in_flight is None
