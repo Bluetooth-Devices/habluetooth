@@ -1,6 +1,14 @@
 import cython
 
+from .manager cimport BluetoothManager
 from .models cimport BluetoothServiceInfoBleak
+
+# auto_scheduler intentionally cimports BluetoothManager even though the
+# attribute is stored untyped: the mutual cimport (manager <-> auto_scheduler)
+# is what lets Cython's deferred-resolution path settle the init order on
+# macOS. The one-way variant produced KeyError: '__pyx_vtable__' on the
+# partially-initialized peer because the deferral only kicks in when both
+# sides advertise the dependency at compile time.
 
 
 cdef class ActiveScanRequest:
@@ -12,6 +20,13 @@ cdef class ActiveScanRequest:
 
 cdef class AutoScanScheduler:
 
+    # _manager is typed as object rather than BluetoothManager to keep the
+    # attribute access through Python protocol; promoting to a typed cdef
+    # would require base_scanner to also cimport auto_scheduler and the
+    # resulting three-way cycle (manager <-> base_scanner, base_scanner <->
+    # auto_scheduler, auto_scheduler <-> manager) breaks macOS Cython init
+    # with KeyError: '__pyx_vtable__' on whichever module is partial when
+    # the chain comes back around.
     cdef public object _manager
     cdef public dict _requests_by_address
     cdef public dict _needs
@@ -24,15 +39,6 @@ cdef class AutoScanScheduler:
 
     cpdef void remove_request(self, ActiveScanRequest request)
 
-    # scanner is typed as object rather than BaseHaScanner to avoid a
-    # three-way cimport cycle: manager.pxd cimports auto_scheduler,
-    # auto_scheduler would cimport base_scanner, and base_scanner already
-    # cimports manager. Cython handles a 2-way cycle (manager <->
-    # base_scanner) via forward declarations but the 3-way variant
-    # breaks on macOS at init time with KeyError: '__pyx_vtable__'
-    # because base_scanner is only partially initialized when
-    # auto_scheduler tries to resolve BaseHaScanner. Object typing on
-    # these cold paths costs nothing measurable.
     cpdef void add_scanner(self, object scanner)
 
     cpdef void remove_scanner(self, object scanner)
