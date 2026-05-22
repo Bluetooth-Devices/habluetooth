@@ -1822,6 +1822,77 @@ async def test_async_request_active_window_extends_existing_window() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_request_active_window_end_time_matches_real_timer() -> None:
+    """
+    _active_window_end reflects the post-restart loop.time() + duration.
+
+    Regression: a slow stop/restart cycle previously left
+    ``_active_window_end`` set to ``loop.time() + duration`` captured
+    *before* the restart, so it lagged the real ``call_later`` fire
+    time by the restart duration. The fix moved the
+    ``_active_window_end`` computation inside
+    ``_arm_active_window_timer`` so it always matches when the timer
+    will actually fire. A subsequent request with a duration just
+    slightly above the lagged stored end-time but below the real
+    fire time would otherwise have cancelled the live timer and
+    armed a shorter one, silently shortening the active window.
+    """
+    # Big enough that the pre-fix lag (~0.1s) is well above any
+    # approx-tolerance noise, but small enough to keep the test
+    # quick.
+    restart_sleep = 0.1
+    duration = 10.0
+
+    class SlowMockBleakScanner:
+        async def start(self):
+            await asyncio.sleep(restart_sleep)
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *a, **k: SlowMockBleakScanner(),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+
+        loop = asyncio.get_running_loop()
+        before = loop.time()
+        assert await scanner.async_request_active_window(duration) is True
+        after = loop.time()
+        # Sanity: the restart actually took the slow path.
+        assert after - before >= restart_sleep
+        # The stored end-time must match the post-restart fire time
+        # (loop.time() + duration), not before + duration. Pre-fix
+        # this assertion fails by ~restart_sleep.
+        assert scanner._active_window_end == pytest.approx(after + duration, abs=0.01)
+        first_handle = scanner._active_window_handle
+
+        # A follow-up whose new_end lands between the pre-fix stored
+        # end and the real fire time must NOT be treated as an
+        # extension. With the fix this is rejected; without it the
+        # live timer would be cancelled and armed shorter.
+        # Pick a duration that puts new_end at before + duration +
+        # restart_sleep/2 - i.e. above the stale stored end but below
+        # the real fire time.
+        target_new_end = before + duration + restart_sleep / 2
+        shorter_duration = target_new_end - loop.time()
+        assert await scanner.async_request_active_window(shorter_duration) is True
+        assert scanner._active_window_handle is first_handle
+
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_async_request_active_window_skips_restart_if_still_active() -> None:
     """
     Re-arm the timer instead of restarting if the scanner is still ACTIVE.
