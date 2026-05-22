@@ -1076,25 +1076,22 @@ class BluetoothManager:
         """
         Declare an on-demand active-scan need for a specific address.
 
-        ``address`` is normalized to upper-case so it matches the
-        case BlueZ / bleak use for advertisement source addresses;
-        callers don't have to think about case. ``scan_interval`` and
-        ``scan_duration`` default to DEFAULT_ACTIVE_SCAN_INTERVAL
-        (300s, 5 minutes) and DEFAULT_ACTIVE_SCAN_DURATION (10s) when
-        not provided; those defaults work for the typical sensor
-        case. Integrations that genuinely need faster updates can pass
-        a smaller ``scan_interval`` explicitly. The effective window
-        the scanner actually runs is the requested ``scan_duration``
-        clamped into [AUTO_WINDOW_MIN_DURATION,
-        AUTO_WINDOW_MAX_DURATION] (5s..30s) and coalesced with any
-        other due requests for the same scanner, so very large
-        ``scan_duration`` values are capped rather than honored
-        verbatim. The scheduler asks the AUTO-mode scanner currently
-        in range of ``address`` to flip active for that window every
-        ``scan_interval`` seconds (measured between window starts,
-        not between successive windows) while the device is being
-        seen. ACTIVE and PASSIVE scanners ignore the request. Returns
-        a cancel callable.
+        Colon-form MAC addresses are normalized to upper-case to
+        match BlueZ / ESPHome / Shelly source addresses; UUIDs (no
+        colons, used by macOS CoreBluetooth) are passed through
+        as-is since CoreBluetooth preserves case on its source
+        addresses.
+
+        ``scan_interval`` / ``scan_duration`` default to
+        DEFAULT_ACTIVE_SCAN_INTERVAL (300s, 5 min) and
+        DEFAULT_ACTIVE_SCAN_DURATION (10s); pass smaller values to
+        get a tighter cadence. The effective window is clamped to
+        [AUTO_WINDOW_MIN_DURATION, AUTO_WINDOW_MAX_DURATION]
+        (5s..30s) and coalesced with other due requests for the
+        scanner; very large ``scan_duration`` values are capped.
+        ``scan_interval`` is measured between window starts (not
+        between successive windows). ACTIVE / PASSIVE scanners
+        ignore the request. Returns a cancel callable.
         """
         if not address:
             raise ValueError("address must be a non-empty string")
@@ -1116,7 +1113,11 @@ class BluetoothManager:
                 f"scan_duration must be a finite number >= "
                 f"{MIN_ACTIVE_SCAN_DURATION:.0f}s"
             )
-        request = ActiveScanRequest(address.upper(), scan_interval, scan_duration)
+        # MAC addresses (colon-form) get upper-cased to match BlueZ /
+        # ESPHome conventions; UUIDs (macOS CoreBluetooth) pass
+        # through as-is.
+        normalized = address.upper() if ":" in address else address
+        request = ActiveScanRequest(normalized, scan_interval, scan_duration)
         self._auto_scheduler.add_request(request)
         return partial(self._auto_scheduler.remove_request, request)
 

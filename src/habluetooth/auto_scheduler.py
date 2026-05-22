@@ -136,13 +136,11 @@ _LOGGER = logging.getLogger(__name__)
 
 class ActiveScanRequest:
     """
-    A registered need for on-demand active scans on a specific address.
+    A registered need for on-demand active scans on one address.
 
-    ``scan_interval`` and ``scan_duration`` must both be finite positive
-    floats. ``async_register_active_scan`` enforces the boundary
-    (rejecting NaN / inf / below-minimum values and substituting the
-    DEFAULT_* constants when callers pass None); internal callers
-    constructing this directly are expected to honor the same contract.
+    ``scan_interval`` and ``scan_duration`` must be finite positive
+    floats. ``async_register_active_scan`` enforces this at the
+    public boundary; direct constructors must honor the same contract.
     """
 
     __slots__ = ("address", "scan_duration", "scan_interval")
@@ -191,12 +189,10 @@ class _ScannerWorker:
         self, loop: asyncio.AbstractEventLoop, initial_offset: float = 0.0
     ) -> None:
         """
-        Start the worker task; first sweep AUTO_INITIAL_SWEEP_DELAY out.
+        Start the worker; first sweep at AUTO_INITIAL_SWEEP_DELAY + offset.
 
-        ``initial_offset`` lets the caller stagger first sweeps across
-        concurrently-registered scanners so they don't all flip ACTIVE in
-        the same second; subsequent sweeps stay staggered because each
-        worker advances its own clock from when its prior window finished.
+        ``initial_offset`` staggers first sweeps across concurrently-
+        registered scanners so they don't all flip ACTIVE at once.
         """
         self._sweep_last_completed = (
             loop.time()
@@ -219,11 +215,9 @@ class _ScannerWorker:
         """
         Return the earliest loop-time at which this worker has work.
 
-        O(M) over every tracked address per wake. Acceptable at HA's
-        typical scale (a few dozen registered devices per manager); if
-        the API gets adopted by deployments with hundreds of registered
-        devices, replace with a per-worker invariant maintained at
-        add_request/on_advertisement/_advance_due time so this is O(1).
+        O(M) over tracked addresses per wake. Fine at HA scale (a few
+        dozen devices); replace with a per-worker invariant maintained
+        at add_request/on_advertisement/_advance_due time if M grows.
         """
         if self._window_end > now:
             return self._window_end
@@ -264,13 +258,12 @@ class _ScannerWorker:
         list[ActiveScanRequest],
     ]:
         """
-        Return (due_buckets, all_due) for every address this scanner owns.
+        Return (due_buckets, all_due) for addresses this scanner owns.
 
-        ``due_buckets`` is the list of (entries dict, due requests) pairs to
-        advance after the window fires; ``all_due`` is the flattened list of
-        every due request, used to coalesce the window duration.
-        Addresses whose owning scanner is no longer known are pruned from
-        ``_needs`` in passing.
+        ``due_buckets`` is the (entries, due) pairs to advance after
+        the window; ``all_due`` is the flattened list used to coalesce
+        the window duration. Prunes orphan ``_needs`` entries
+        (history None) in passing.
         """
         source = self._scanner.source
         needs = self._scheduler._needs
@@ -306,13 +299,11 @@ class _ScannerWorker:
         """
         Set every advanced request's next-due to from_time + scan_interval.
 
-        ``from_time`` is the timestamp the next-due is measured against;
-        ``_tick`` passes the tick's start ``now`` so ``scan_interval``
-        is the period between window starts. Called pre-await from
-        ``_tick`` so the window's owner has already claimed the slot
-        before any other worker can wake; no membership check is needed
-        because nothing has yielded since ``_collect_due_buckets``
-        populated due_buckets.
+        ``_tick`` passes its start ``now`` so ``scan_interval`` is the
+        period between window starts. Called pre-await so the owner
+        has claimed the slot before any other worker can wake;
+        nothing has yielded since ``_collect_due_buckets`` populated
+        the buckets, so no membership re-check is needed.
         """
         for entries, due in due_buckets:
             for request in due:
@@ -322,28 +313,22 @@ class _ScannerWorker:
         """
         Fire one coalesced window covering due per-device + sweep work.
 
-        Collection is sync; only the scanner's active-window call is
-        awaited. The window duration is the max of every due per-device
-        duration and (if the sweep is due) the configured sweep duration
-        so a single ACTIVE flip on the scanner catches every device it
-        sees during the window. ``scan_interval`` is measured between
-        window *starts* (not after each window ends), so the next due
-        time advances from ``now`` (this tick's start) rather than from
-        ``window_end``; the same applies to the sweep clock. The return
-        value of ``async_request_active_window`` is intentionally
-        ignored: even on failure we still advance by ``scan_interval``
-        so a stuck scanner can't busy-loop the worker.
+        Collection is sync; only the scanner call is awaited. The
+        window duration is the max of every due per-device duration
+        and (if sweep is due) the sweep duration. Next-due / sweep
+        clock advance from ``now`` (tick start), not ``window_end``,
+        so ``scan_interval`` is a true period between window starts
+        rather than ``scan_interval + duration``. The scanner call's
+        return value is ignored: we advance on failure too so a stuck
+        scanner can't busy-loop the worker.
         """
         loop = self._scheduler._loop
         if loop is None:
             return
         now = loop.time()
-        # Defense-in-depth: _tick is only ever invoked from _run on a
-        # single per-worker task, and the finally below clears
-        # _window_end after the await returns, so this re-entry guard
-        # cannot trip on the current call path. Keep it cheap and
-        # explicit so a future refactor that calls _tick from
-        # elsewhere can't accidentally double-fire a window.
+        # Defense-in-depth re-entry guard: unreachable on the current
+        # call path (single per-worker task, finally clears
+        # _window_end) but kept for future callers of _tick.
         if self._window_end > now:
             return
         self._window_end = 0.0
@@ -355,30 +340,20 @@ class _ScannerWorker:
         if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
             duration = _AUTO_REDISCOVERY_SWEEP_DURATION
         self._window_end = now + duration
-        # Advance per-device next-due times and the sweep clock BEFORE the
-        # await so a concurrent worker that becomes the new owner of any
-        # of these addresses mid-window (e.g. an RSSI flip on a fresh
-        # advertisement) doesn't fire a duplicate window for the same
-        # request. Advancing from ``now`` (not ``window_end``) makes
-        # ``scan_interval`` a true period between window starts; the
-        # alternative ("interval after window ends") would make the
-        # effective cadence ``scan_interval + duration`` and drift with
-        # the actual stop/start cost. Failure of the scanner call is
-        # handled the same way as success: we still don't retry until
-        # scan_interval out (or AUTO_REDISCOVERY_INTERVAL out for the
-        # sweep), which prevents busy-looping the worker on a stuck
-        # scanner.
+        # Advance pre-await: a new owner that wakes mid-window must
+        # see the entries already advanced, otherwise an RSSI flip
+        # would let the new owner fire a duplicate window.
         self._advance_due(due_buckets, now)
         if sweep_due:
             self._sweep_last_completed = now
         try:
             await self._scanner.async_request_active_window(duration)
         except Exception as ex:  # pylint: disable=broad-except
-            # First failure per recovery-cycle gets a full traceback;
-            # subsequent failures get a one-liner so a persistently
-            # broken scanner doesn't spam scan_interval-cadenced stack
-            # traces. The flag clears on the next successful call so a
-            # later failure-after-recovery captures a stack again.
+            # First failure per recovery-cycle gets a traceback;
+            # subsequent failures collapse to a one-liner so a
+            # persistently broken scanner can't spam the log. Flag
+            # clears on the next success so failure-after-recovery
+            # captures a stack again.
             if self._failed_window:
                 _LOGGER.warning(
                     "%s: error running active window of %.1fs: %s",
@@ -424,21 +399,12 @@ class AutoScanScheduler:
         """
         Bind to the event loop and spawn one worker per AUTO scanner.
 
-        Fully idempotent: if ``_running`` is already True (start was
-        called previously without an intervening ``stop()``), this is a
-        no-op so an accidental double-call can't bind a different loop
-        to the same scheduler or re-run the replay. A genuine restart
-        sequence is ``stop()`` (which sets ``_running = False``) and
-        then ``start(new_loop)``, which works because ``stop()`` clears
-        the workers dict.
-
-        Replays any ``_requests_by_address`` registered before
-        ``start()`` into ``_needs`` so the first window for those
-        requests fires ``scan_interval`` after start (assuming the
-        device is in history) instead of waiting for the next
-        advertisement to bootstrap tracking. Same gating as
-        ``add_request``: no seed when ``last_service_info`` is None;
-        ``on_advertisement`` will bootstrap on first sight.
+        Idempotent: no-op if already running. A genuine restart is
+        ``stop()`` (which flips ``_running`` to False) then
+        ``start(new_loop)``. Also replays any pre-start
+        ``_requests_by_address`` into ``_needs`` so embedders that
+        register before ``async_setup`` still get the kick-start
+        cadence; same history-gating as ``add_request``.
         """
         if self._running:
             return
@@ -450,10 +416,6 @@ class AutoScanScheduler:
                 and scanner.source not in self._workers
             ):
                 self._spawn_worker(scanner)
-        # Replay pre-start() registrations: seed _needs for any
-        # request whose address already has a last_service_info, so
-        # the kick-start contract holds for embedders that register
-        # before BluetoothManager.async_setup runs.
         now = loop.time()
         last_service_info = self._manager.async_last_service_info
         for address, requests in self._requests_by_address.items():
@@ -468,17 +430,13 @@ class AutoScanScheduler:
         """
         Cancel all worker tasks (fire-and-forget).
 
-        Sync to match ``BluetoothManager.async_stop``. ``worker.stop()``
-        calls ``task.cancel()`` but doesn't await: the cancellation
-        propagates on the next event-loop iteration and the task is
-        reaped by asyncio. If a worker is mid-``_tick`` (mid-await on
-        ``scanner.async_request_active_window``) when stop runs, the
-        scanner call may complete its current await before
-        ``CancelledError`` is delivered; for HA shutdown that's harmless
-        because the scanners themselves are being torn down. Callers
-        outside teardown that need to know the workers have actually
-        stopped should ensure the event loop runs at least one more
-        iteration after this returns.
+        Sync to match ``BluetoothManager.async_stop``;
+        ``worker.stop()`` calls ``task.cancel()`` without awaiting.
+        Cancellation lands on the next loop iteration and asyncio
+        reaps the task; a mid-``_tick`` scanner call may complete
+        first. Harmless for HA shutdown (scanners are being torn
+        down). Non-teardown callers should run the loop one more
+        iteration to know workers have actually stopped.
         """
         self._running = False
         for worker in self._workers.values():
@@ -487,14 +445,11 @@ class AutoScanScheduler:
 
     def add_scanner(self, scanner: BaseHaScanner) -> None:
         """
-        Register an AUTO-mode scanner; spawn its worker if start() has run.
+        Register an AUTO-mode scanner; spawn its worker if running.
 
-        Skips if the scheduler is not currently running. ``stop()``
-        sets ``_running = False`` but leaves ``_loop`` set, so without
-        this guard a scanner registered between stop and (a possible
-        future) restart would spawn a worker that immediately exits
-        on its next iteration when ``_running`` is checked in
-        ``_run``.
+        Skips when ``_running`` is False (``stop()`` leaves ``_loop``
+        set, so without this guard a post-stop registration would
+        spawn a worker that exits on its first iteration).
         """
         if scanner.requested_mode is not BluetoothScanningMode.AUTO:
             return
@@ -506,14 +461,9 @@ class AutoScanScheduler:
         """
         Stop the worker for a scanner leaving the manager.
 
-        Also prunes any ``_needs`` entries whose current owner is the
-        leaving scanner. Without this they'd sit until the device
-        either turns up on another scanner (history flips, that
-        worker picks them up) or expires from ``_all_history`` (the
-        next worker tick on any scanner drops them). Self-healing in
-        the steady state, but the explicit prune closes the small
-        window where a removed-and-not-rediscovered device keeps a
-        tracked entry pinned.
+        Also prunes ``_needs`` entries the scanner currently owns so
+        a removed-and-not-rediscovered device doesn't keep a tracked
+        entry pinned until the next history flip / age-out.
         """
         source = scanner.source
         worker = self._workers.pop(source, None)
@@ -528,16 +478,12 @@ class AutoScanScheduler:
     def _spawn_worker(self, scanner: BaseHaScanner) -> None:
         assert self._loop is not None  # noqa: S101
         worker = _ScannerWorker(self, scanner, self._manager)
-        # Stagger first sweeps so concurrently-registered scanners don't
-        # all flip ACTIVE in the same second. Each new worker's first
-        # sweep is one sweep duration later than the previous one's,
-        # wrapped into the initial-sweep window so the Nth scanner's
-        # first sweep is bounded to AUTO_INITIAL_SWEEP_DELAY + delay
-        # rather than growing linearly with worker count. Past
-        # AUTO_INITIAL_SWEEP_DELAY / SWEEP_DURATION scanners the offsets
-        # start to repeat, which is fine: BLE radios don't interfere
-        # when multiple are active so collisions are harmless and the
-        # natural advertisement jitter spreads them out over time.
+        # Stagger first sweeps so concurrently-registered scanners
+        # don't all flip ACTIVE at once. Modulo into the initial-sweep
+        # window so the Nth offset is bounded; past
+        # AUTO_INITIAL_SWEEP_DELAY/SWEEP_DURATION scanners offsets
+        # repeat, harmless since BLE radios don't interfere when
+        # multiple are active.
         offset = (
             len(self._workers) * _AUTO_REDISCOVERY_SWEEP_DURATION
         ) % _AUTO_INITIAL_SWEEP_DELAY
@@ -546,42 +492,30 @@ class AutoScanScheduler:
 
     def add_request(self, request: ActiveScanRequest) -> None:
         """
-        Register an active-scan request and start tracking immediately.
+        Register an active-scan request and start tracking.
 
-        If a previous advertisement for ``request.address`` is in
-        ``_all_history`` when this runs, the first window fires
-        ``scan_interval`` seconds after registration on the current
-        owner. If the device hasn't been seen yet, no ``_needs`` entry
-        is seeded (a speculative seed would just be pruned on the
-        next tick because ``_collect_due_buckets`` drops addresses
-        with no ``last_service_info``); ``on_advertisement`` creates
-        the entry and wakes the owner's worker the first time the
-        device is seen, so the first window fires ``scan_interval``
-        after that advertisement instead.
+        First window fires ``scan_interval`` after registration on
+        the current owner if history exists; otherwise
+        ``on_advertisement`` bootstraps tracking on first sight (the
+        first window then fires ``scan_interval`` after that ad).
 
-        ``ActiveScanRequest`` is compared by identity, so each public
-        call to ``BluetoothManager.async_register_active_scan`` creates
-        a new request that contributes its own cadence to the same
-        address (two callers asking for windows every 60s on the same
-        device get two independent 60s cadences, not one). Adding the
-        *same* request object twice is idempotent and no-ops the
-        wake. Cancellation is per-registration — the callable returned
-        from ``async_register_active_scan`` only removes that specific
-        request, not other registrations against the same address.
+        ``ActiveScanRequest`` compares by identity: each public
+        ``async_register_active_scan`` call adds an independent
+        cadence (two 60s registrations on the same address yield two
+        independent 60s cadences). Re-adding the same object is a
+        no-op; cancellation is per-registration.
 
-        Pre-``start()`` registrations (no event loop yet) record the
-        request only — no ``_needs`` entry is seeded, no wake fires.
+        Pre-``start()`` calls record the request only; no seed, no
+        wake (``start()`` replays them).
         """
         self._requests_by_address.setdefault(request.address, set()).add(request)
         if self._loop is None:
             return
         history = self._manager.async_last_service_info(request.address, False)
         if history is None:
-            # No history yet; seeding _needs would just be pruned on
-            # the next tick because _collect_due_buckets drops
-            # addresses with no last_service_info. on_advertisement
-            # will create the entry the first time the device is seen
-            # and wake the owner's worker.
+            # No history: skip the seed (the next tick would prune
+            # it anyway); on_advertisement will bootstrap on first
+            # sight.
             return
         existing = self._needs.setdefault(request.address, {})
         if request in existing:
@@ -602,17 +536,13 @@ class AutoScanScheduler:
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
         """
-        Hot path. Track requests for the advertisement's address.
+        Hot path. Track requests for the ad's address; wake the owner.
 
-        Always wakes the worker for ``service_info.source`` when the
-        address has registered active-scan requests. The wake covers
-        two cases: (1) bootstrap, when an entry is created in _needs
-        because the previous owner was pruned; (2) ownership flip,
-        when this scanner becomes the device's new owner and its
-        worker needs to re-evaluate _next_event_at to include the
-        (already-tracked) entry. A single wake() is one Event.set
-        call; cheap enough to do per accepted advertisement on a
-        tracked address.
+        Wake is unconditional (when the address has requests) so it
+        covers both bootstrap (entry created) and ownership flip
+        (existing entry, this scanner is now the owner and must
+        re-evaluate ``_next_event_at``). ``Event.set`` is cheap
+        enough to fire per tracked-address advertisement.
         """
         if not self._requests_by_address or self._loop is None:
             return
@@ -635,14 +565,11 @@ class AutoScanScheduler:
 
     def _coalesce_duration(self, entries: list[ActiveScanRequest]) -> float:
         """
-        Pick the max requested duration, clamped to the configured range.
+        Pick max requested duration, clamped to [MIN, MAX].
 
-        Hot path; trusts ``ActiveScanRequest.scan_duration`` to be a
-        finite positive float. The public boundary
-        (``async_register_active_scan``) substitutes
-        ``DEFAULT_ACTIVE_SCAN_DURATION`` for ``None`` and rejects
-        NaN / inf / below-minimum values, so this function pays no
-        per-tick None / isfinite cost.
+        Hot path; trusts ``scan_duration`` to be a finite positive
+        float (``async_register_active_scan`` enforces this at the
+        boundary).
         """
         requested = max(
             (e.scan_duration for e in entries),

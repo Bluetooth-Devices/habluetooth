@@ -674,27 +674,14 @@ class HaScanner(BaseHaScanner):
         """
         Schedule the end-of-window callback.
 
-        Computes ``_active_window_end`` from ``loop.time()`` at the
-        moment of arming so it matches the actual fire time of the
-        underlying ``call_later``. Earlier versions accepted an
-        externally-computed ``new_end`` snapshot, which drifted out of
-        sync with the real timer fire time across the stop/restart
-        cycle and let a *shorter* follow-up request masquerade as an
-        extension.
-
-        Cancels any existing handle before arming the new one so two
-        concurrent ``async_request_active_window`` calls cannot leak a
-        pending timer; today only the per-scanner scheduler worker
-        drives this and ``_tick`` serializes per worker, so the
-        contention is hypothetical, but the public method name reads
-        as if external callers may use it and nothing else in the
-        lock-side path defends against the race.
-
-        ``self._loop`` is assigned in ``async_setup`` and this method
-        is only reachable via ``async_request_active_window`` /
-        ``_async_start_attempt``, both of which run after setup. The
-        ``TYPE_CHECKING`` assert below is a mypy narrowing hint only;
-        it has no runtime effect.
+        Stores ``_active_window_end`` as ``loop.time() + duration``
+        at arming time so it matches the real ``call_later`` fire
+        time; an earlier ``new_end`` snapshot drifted across the
+        stop/restart cycle and let a *shorter* follow-up masquerade
+        as an extension. Cancels any existing handle first so two
+        callers can't leak a pending timer. ``_loop`` is set in
+        ``async_setup``; the TYPE_CHECKING assert is a mypy
+        narrowing hint with no runtime effect.
         """
         if TYPE_CHECKING:
             assert self._loop is not None
@@ -709,8 +696,10 @@ class HaScanner(BaseHaScanner):
         """
         Run an active scan for ``duration`` seconds then restore prior mode.
 
-        No-op on non-AUTO scanners. Overlapping requests extend the
-        existing window in place instead of triggering a second restart.
+        No-op on non-AUTO scanners. While a window is already open, a
+        longer follow-up extends the timer in place; a shorter (or
+        equal) follow-up is a no-op on the timer but still returns
+        True. Either way no second stop/restart cycle fires.
         """
         if self.requested_mode is not BluetoothScanningMode.AUTO:
             return False
@@ -744,11 +733,11 @@ class HaScanner(BaseHaScanner):
                     await self._async_stop_then_start_under_lock()
                 return False
             except BaseException:
-                # Any other failure (CancelledError, unexpected BleakError
-                # leaking out, etc.) must not poison the next start with
-                # a stale ACTIVE override sitting on _scan_mode_override.
-                # Clear it and re-raise so cancellation / unexpected
-                # errors still propagate to the caller / task runner.
+                # CancelledError, SystemExit, KeyboardInterrupt, an
+                # unexpected BleakError leaking out, etc. — any of
+                # those must not leave _scan_mode_override stuck at
+                # ACTIVE for the next start. Clear and re-raise so
+                # propagation is preserved.
                 self._scan_mode_override = None
                 raise
             mode_after_restart = self.current_mode

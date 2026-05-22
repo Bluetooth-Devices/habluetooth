@@ -700,6 +700,28 @@ async def test_register_active_scan_applies_defaults() -> None:
 
 
 @pytest.mark.asyncio
+async def test_register_active_scan_uuid_passes_through_unchanged() -> None:
+    """
+    MacOS CoreBluetooth UUIDs are not uppercased.
+
+    BlueZ / proxy addresses are colon-form MACs and get normalized
+    to upper-case; UUIDs (no colons) must pass through unchanged
+    because CoreBluetooth preserves case on its source addresses.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    uuid = "abcd1234-5678-90ab-cdef-1234567890ab"
+    cancel = manager.async_register_active_scan(uuid, scan_interval=60.0)
+    try:
+        assert uuid in sched._requests_by_address
+        assert uuid.upper() not in sched._requests_by_address
+        request = next(iter(sched._requests_by_address[uuid]))
+        assert request.address == uuid
+    finally:
+        cancel()
+
+
+@pytest.mark.asyncio
 async def test_register_active_scan_normalizes_address_case() -> None:
     """
     Lowercase addresses get normalized to the upper-case form.
