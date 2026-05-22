@@ -7,7 +7,7 @@ import logging
 import platform
 from collections.abc import Coroutine, Iterable
 from functools import lru_cache
-from typing import Any, no_type_check
+from typing import TYPE_CHECKING, Any, no_type_check
 
 import async_interrupt
 import bleak
@@ -102,6 +102,9 @@ START_ATTEMPTS = 4
 SCANNING_MODE_TO_BLEAK = {
     BluetoothScanningMode.ACTIVE: "active",
     BluetoothScanningMode.PASSIVE: "passive",
+    # AUTO starts in passive; the scheduler will request transient ACTIVE
+    # windows by calling HaScanner.async_request_active_window.
+    BluetoothScanningMode.AUTO: "passive",
 }
 
 # The minimum number of seconds to know
@@ -200,7 +203,10 @@ class HaScanner(BaseHaScanner):
     """
 
     __slots__ = (
+        "_active_window_end",
+        "_active_window_handle",
         "_background_tasks",
+        "_scan_mode_override",
         "_start_future",
         "_start_stop_lock",
         "mac_address",
@@ -223,6 +229,13 @@ class HaScanner(BaseHaScanner):
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.scanner: bleak.BleakScanner | None = None
         self._start_future: asyncio.Future[None] | None = None
+        # Set while an on-demand active window (auto-mode) is in flight.
+        # When set, `_async_start_attempt` uses this mode instead of
+        # `requested_mode`. `requested_mode` itself stays at AUTO so external
+        # listeners still see the integration's intent.
+        self._scan_mode_override: BluetoothScanningMode | None = None
+        self._active_window_handle: asyncio.TimerHandle | None = None
+        self._active_window_end: float = 0.0
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
@@ -360,7 +373,8 @@ class HaScanner(BaseHaScanner):
             self._loop is not None
         ), "Loop is not set, call async_setup first"
 
-        self.set_current_mode(self.requested_mode)
+        effective_mode = self._scan_mode_override or self.requested_mode
+        self.set_current_mode(effective_mode)
         # 1st attempt - no auto reset
         # 2nd attempt - try to reset the adapter and wait a bit
         # 3th attempt - no auto reset
@@ -369,7 +383,7 @@ class HaScanner(BaseHaScanner):
         if (
             IS_LINUX
             and attempt == START_ATTEMPTS
-            and self.requested_mode is BluetoothScanningMode.ACTIVE
+            and effective_mode is BluetoothScanningMode.ACTIVE
         ):
             _LOGGER.debug(
                 "%s: Falling back to passive scanning mode "
@@ -623,11 +637,86 @@ class HaScanner(BaseHaScanner):
 
     async def async_stop(self) -> None:
         """Stop bluetooth scanner."""
+        if self._active_window_handle is not None:
+            self._active_window_handle.cancel()
+            self._active_window_handle = None
         if self._start_future is not None and not self._start_future.done():
             self._start_future.set_exception(_AbortStartError())
         async with self._start_stop_lock:
             self._async_stop_scanner_watchdog()
             await self._async_stop_scanner()
+
+    async def async_request_active_window(self, duration: float) -> bool:
+        """
+        Run an active scan for ``duration`` seconds then restore prior mode.
+
+        Only effective for AUTO-mode scanners; ACTIVE/PASSIVE scanners are
+        already in a fixed mode and the call is a no-op.
+
+        Overlapping requests on the same scanner coalesce: a request whose
+        end time extends past the currently running window simply extends
+        the existing window, avoiding a second restart cycle.
+        """
+        if self.requested_mode is not BluetoothScanningMode.AUTO:
+            return False
+        if TYPE_CHECKING:
+            assert self._loop is not None
+        new_end = self._loop.time() + duration
+        if self._active_window_handle is not None:
+            # A window is already running; extend it if the new request
+            # reaches further than the existing end.
+            if new_end > self._active_window_end:
+                self._active_window_handle.cancel()
+                self._active_window_end = new_end
+                self._active_window_handle = self._loop.call_later(
+                    duration, self._schedule_end_active_window
+                )
+            return True
+        self._scan_mode_override = BluetoothScanningMode.ACTIVE
+        try:
+            await self._async_swap_scanner_for_window()
+        except ScannerStartError:
+            self._scan_mode_override = None
+            return False
+        self._active_window_end = new_end
+        self._active_window_handle = self._loop.call_later(
+            duration, self._schedule_end_active_window
+        )
+        return True
+
+    def _schedule_end_active_window(self) -> None:
+        """Schedule the end-of-window restart as a background task."""
+        self._active_window_handle = None
+        self._create_background_task(self._async_end_active_window())
+
+    async def _async_end_active_window(self) -> None:
+        """Restore the scanner to its underlying mode after an active window."""
+        self._scan_mode_override = None
+        if not self.scanning:
+            # Scanner was stopped while the window was active; nothing to do.
+            return
+        try:
+            await self._async_swap_scanner_for_window()
+        except ScannerStartError as ex:
+            _LOGGER.warning(
+                "%s: Failed to restart scanner after active window: %s",
+                self.name,
+                ex,
+            )
+
+    async def _async_swap_scanner_for_window(self) -> None:
+        """
+        Stop and restart the BleakScanner so a new mode takes effect.
+
+        This is the simple stop+start used by AUTO-mode active windows.
+        It differs from the watchdog's ``_async_restart_scanner`` in that
+        it never resets the underlying adapter — switching mode is
+        cheap, but adapter reset is heavy and only appropriate when the
+        scanner has gone silent.
+        """
+        async with self._start_stop_lock:
+            await self._async_stop_scanner()
+            await self._async_start()
 
     async def _async_stop_scanner(self) -> None:
         """Stop bluetooth discovery under the lock."""

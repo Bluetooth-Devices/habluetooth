@@ -19,6 +19,9 @@ cdef class HaScanner(BaseHaScanner):
     cdef public object _background_tasks
     cdef public object scanner
     cdef public object _start_future
+    cdef public object _scan_mode_override
+    cdef public object _active_window_handle
+    cdef public double _active_window_end
 
     @cython.locals(service_info=BluetoothServiceInfoBleak)
     cpdef void _async_detection_callback(

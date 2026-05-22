@@ -33,6 +33,9 @@ cdef class BleakCallback:
 
     cdef public object callback
     cdef public dict filters
+    cdef public object scanning_mode
+    cdef public object scan_interval
+    cdef public object scan_duration
 
 
 cdef class BluetoothManager:
@@ -69,6 +72,7 @@ cdef class BluetoothManager:
     cdef public bint has_advertising_side_channel
     cdef public dict _side_channel_scanners
     cdef public object _mgmt_ctl
+    cdef public object _auto_scheduler
 
     @cython.locals(stale_seconds=double)
     cdef bint _prefer_previous_adv_from_different_source(

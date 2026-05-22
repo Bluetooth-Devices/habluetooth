@@ -712,6 +712,20 @@ class BaseHaScanner:
             self.current_mode = mode
             self._manager.scanner_mode_changed(self)
 
+    async def async_request_active_window(self, duration: float) -> bool:
+        """
+        Run an active scan for ``duration`` seconds, then restore prior mode.
+
+        Default no-op implementation. Subclasses that can flip the underlying
+        adapter / proxy into active scanning on demand should override and
+        return True on success. The manager's auto-mode scheduler relies on
+        a True return value to know the window actually ran.
+        """
+        _LOGGER.debug(
+            "%s: scanner does not support on-demand active windows", self.name
+        )
+        return False
+
 
 class BaseHaRemoteScanner(BaseHaScanner):
     """Base class for a high availability remote BLE scanner."""
