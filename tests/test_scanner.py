@@ -1,6 +1,7 @@
 """Tests for the Bluetooth integration scanners."""
 
 import asyncio
+import logging
 import platform
 import time
 from datetime import timedelta
@@ -1851,3 +1852,132 @@ async def test_async_stop_clears_active_window_state() -> None:
         assert scanner._active_window_handle is None
         assert scanner._scan_mode_override is None  # type: ignore[unreachable]
         assert scanner._active_window_end == 0.0
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_window_recovers_on_start_failure() -> None:
+    """If the ACTIVE restart raises, recovery brings the scanner back up."""
+    call_count = 0
+    fail_until = 0
+
+    class MockBleakScanner:
+        async def start(self):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= fail_until:
+                raise BleakError("simulated start failure")
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_, **__: MockBleakScanner(),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+        before = call_count
+        # Fail the next 4 start attempts so the ACTIVE swap raises;
+        # then succeed so the recovery restart can come back up.
+        fail_until = call_count + 4
+        result = await scanner.async_request_active_window(1.0)
+        assert result is False
+        assert scanner._scan_mode_override is None
+        # Recovery restart happened after the failure path.
+        assert call_count > before + 4
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_window_detects_passive_fallback() -> None:
+    """If current_mode does not reach ACTIVE the request returns False."""
+
+    class MockBleakScanner:
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_, **__: MockBleakScanner(),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+        # Patch set_current_mode so the swap's restart does NOT reach
+        # ACTIVE, mimicking the Linux 4th-attempt PASSIVE fallback path.
+        original_set_current_mode = type(scanner).set_current_mode
+
+        def _stay_passive(self, mode):
+            original_set_current_mode(self, BluetoothScanningMode.PASSIVE)
+
+        with patch.object(type(scanner), "set_current_mode", _stay_passive):
+            result = await scanner.async_request_active_window(1.0)
+        assert result is False
+        assert scanner._scan_mode_override is None
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_async_end_active_window_handles_start_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ScannerStartError during the end-of-window restart logs a warning."""
+    starts = 0
+    fail_until = 0
+
+    class MockBleakScanner:
+        async def start(self):
+            nonlocal starts
+            starts += 1
+            if starts <= fail_until:
+                raise BleakError("simulated end-window failure")
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_, **__: MockBleakScanner(),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+        # Open a long active window then drive end-of-window with the
+        # bleak start mocked to fail.
+        await scanner.async_request_active_window(3600.0)
+        assert scanner._active_window_handle is not None
+        fail_until = starts + 4
+        scanner._active_window_handle.cancel()
+        scanner._active_window_handle = None
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            await scanner._async_end_active_window()
+        assert any(
+            "Failed to restart scanner after active window" in record.message
+            for record in caplog.records
+        )

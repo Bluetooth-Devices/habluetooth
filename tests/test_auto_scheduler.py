@@ -488,3 +488,119 @@ async def test_on_advertisement_wakes_owning_worker() -> None:
     finally:
         cancel()
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_register_active_scan_validates_inputs() -> None:
+    """Invalid scan_interval / scan_duration raise ValueError."""
+    manager = get_manager()
+    with pytest.raises(ValueError, match="scan_interval must be > 0"):
+        manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=0)
+    with pytest.raises(ValueError, match="scan_interval must be > 0"):
+        manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=-1)
+    with pytest.raises(ValueError, match="scan_duration must be None or >= 0"):
+        manager.async_register_active_scan(
+            "AA:BB:CC:DD:EE:00", scan_interval=60.0, scan_duration=-0.5
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_window_swallows_scanner_exception() -> None:
+    """An exception from async_request_active_window is logged, not re-raised."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+
+    class _FailingScanner(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            raise RuntimeError("boom")
+
+    scanner = _FailingScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        await worker._tick()
+        # The exception was swallowed; sweep state still advanced.
+        assert worker._sweep_last_completed > loop.time() - 1.0
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_does_not_resurrect_cancelled_request() -> None:
+    """A request cancelled while the window awaits is not re-added to entries."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=60.0, scan_duration=3.0
+    )
+
+    gate = asyncio.Event()
+
+    class _CancelDuringWindow(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            # Mid-window: caller cancels the registration.
+            cancel()
+            gate.set()
+            return True
+
+    scanner = _CancelDuringWindow("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        entries = sched._needs[address]
+        request = next(iter(entries))
+        entries[request] = loop.time() - 1.0
+        await sched._workers[scanner.source]._tick()
+        await gate.wait()
+        # remove_request emptied the bucket; the tick must not have
+        # re-added the cancelled request.
+        assert address not in sched._needs
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skips_address_owned_by_other_scanner() -> None:
+    """An address whose owner is a different scanner is left alone."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    owner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    other = _RecordingAutoScanner("AA:BB:CC:DD:EE:11", BluetoothScanningMode.AUTO)
+    c1 = manager.async_register_scanner(owner)
+    c2 = manager.async_register_scanner(other)
+    try:
+        _inject(owner, address)
+        entries = sched._needs[address]
+        for req in list(entries):
+            entries[req] = loop.time() - 1.0
+        # The "other" scanner runs its tick. The address is owned by
+        # owner, so other should not fire its window.
+        await sched._workers[other.source]._tick()
+        assert other.active_window_calls == []
+    finally:
+        cancel()
+        c1()
+        c2()
+
+
+@pytest.mark.asyncio
+async def test_next_event_at_returns_current_window_end() -> None:
+    """While a window is in flight, next event is its end time."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        worker._window_end = loop.time() + 42.0
+        assert worker._next_event_at(loop.time()) == worker._window_end
+    finally:
+        register_cancel()
