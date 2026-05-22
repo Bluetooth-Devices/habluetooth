@@ -993,6 +993,10 @@ async def test_mode_switch_unregister_then_register_picks_up_existing_request() 
             raise
     finally:
         cancel()
+
+
+@pytest.mark.asyncio
+async def test_start_replays_pre_start_requests_into_needs() -> None:
     """
     add_request before start() seeds _needs at start() if history exists.
 
@@ -2161,3 +2165,46 @@ async def test_device_migration_wakes_new_owner_worker() -> None:
         c_a()
         c_b()
         cancel()
+
+
+@pytest.mark.asyncio
+async def test_stop_clears_needs_so_restart_does_not_reuse_stale_due_times() -> None:
+    """
+    stop() drops _needs so a later start(new_loop) seeds fresh due-times.
+
+    Without this, a restart against a different event loop (whose
+    ``time()`` origin differs) would reuse timestamps from the
+    cancelled loop and either fire windows immediately or never.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:CC"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=60.0, scan_duration=5.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:CC", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        assert address in sched._needs
+        original_loop = sched._loop
+        sched.stop()
+        # _needs cleared so stale timestamps from the now-defunct loop
+        # can't survive into a re-start.
+        assert sched._needs == {}
+        assert sched._loop is None
+        assert sched._workers == {}
+        # _requests_by_address is loop-independent and must persist so
+        # start() can replay registrations on the new loop.
+        assert address in sched._requests_by_address
+        # Restart against the same loop; the request gets re-seeded with
+        # a fresh due time from the new loop.time() base.
+        assert original_loop is not None
+        sched.start(original_loop)
+        assert address in sched._needs
+        entries = sched._needs[address]
+        expected_due = original_loop.time() + 60.0
+        assert all(abs(due - expected_due) < 0.5 for due in entries.values())
+    finally:
+        cancel()
+        register_cancel()

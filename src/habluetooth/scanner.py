@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import platform
 from collections.abc import Coroutine, Iterable
 from functools import lru_cache
@@ -728,8 +729,19 @@ class HaScanner(BaseHaScanner):
         Concurrent / repeat callers while a window is open: a longer
         follow-up extends the timer; a shorter follow-up is a no-op
         on the timer but still returns True. No second restart fires.
+        Rejects non-finite or non-positive ``duration`` so a stray
+        NaN/inf can't poison ``loop.call_later`` or the extension
+        comparison; the scheduler clamps before calling but other
+        callers (subclasses, tests) may not.
         """
         if self.requested_mode is not BluetoothScanningMode.AUTO:
+            return False
+        if not math.isfinite(duration) or duration <= 0.0:
+            _LOGGER.warning(
+                "%s: refusing active window with invalid duration %r",
+                self.name,
+                duration,
+            )
             return False
         if IS_MACOS:
             return True
@@ -887,7 +899,20 @@ class HaScanner(BaseHaScanner):
             return False
         # Private bleak attribute — no public API for mode change.
         # BlueZ reads it on every start; macOS isn't reachable here.
-        self.scanner._backend._scanning_mode = mode_str
+        # Guarded so a future bleak refactor that renames/drops the
+        # attribute can't leave the scanner stopped with no restart;
+        # caller falls back to the full stop+recreate+start path.
+        try:
+            self.scanner._backend._scanning_mode = mode_str
+        except AttributeError as ex:
+            _LOGGER.warning(
+                "%s: bleak _backend._scanning_mode unavailable; "
+                "cannot toggle in place: %s",
+                self.name,
+                ex,
+            )
+            self.scanning = False
+            return False
         try:
             async with asyncio.timeout(START_TIMEOUT):
                 await self.scanner.start()

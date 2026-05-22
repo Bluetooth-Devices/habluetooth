@@ -1757,6 +1757,27 @@ async def test_async_request_active_window_rejected_when_not_auto() -> None:
     assert scanner._scan_mode_override is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("duration", [float("nan"), float("inf"), -1.0, 0.0])
+async def test_async_request_active_window_rejects_invalid_duration(
+    duration: float,
+) -> None:
+    """
+    NaN/inf/non-positive durations are refused at the entry point.
+
+    A bad duration would poison ``loop.call_later`` (which raises on
+    NaN) and the extension comparison (NaN ordering is always False,
+    inf would lock the window open). Guard the public entry so a
+    misbehaving subclass / direct caller can't corrupt the scheduler
+    state.
+    """
+    scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+    scanner.async_setup()
+    assert await scanner.async_request_active_window(duration) is False
+    assert scanner._scan_mode_override is None
+    assert scanner._active_window_handle is None
+
+
 @pytest.mark.usefixtures("force_linux_scanner_mode")
 @pytest.mark.asyncio
 async def test_async_request_active_window_restarts_scanner_in_active_mode() -> None:
@@ -1799,8 +1820,11 @@ async def test_async_request_active_window_restarts_scanner_in_active_mode() -> 
         backend = scanner.scanner._backend  # type: ignore[union-attr]
         backend._scanning_mode = "passive"
 
-        # Window with 0 duration so call_later fires on the next loop turn.
-        assert await scanner.async_request_active_window(0.0) is True
+        # Tiny duration so call_later fires on the next loop turn.
+        # async_request_active_window rejects 0/NaN/inf at the boundary,
+        # so we use the smallest positive value that round-trips through
+        # the timer arithmetic.
+        assert await scanner.async_request_active_window(1e-9) is True
         # The toggle flipped the existing instance to active.
         assert backend._scanning_mode == "active"
         assert scanner._scan_mode_override is BluetoothScanningMode.ACTIVE
@@ -1950,6 +1974,60 @@ async def test_async_toggle_active_window_mode_marks_not_scanning_on_start_error
     with patch(
         "habluetooth.scanner.OriginalBleakScanner",
         side_effect=lambda *_, **__: StartErrorMockBleakScanner(),
+    ):
+        scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner_obj.async_setup()
+        await scanner_obj.async_start()
+        scanner_obj._scan_mode_override = BluetoothScanningMode.ACTIVE
+        assert scanner_obj.scanning is True
+        assert await scanner_obj._async_toggle_active_window_mode() is False
+        assert scanner_obj.scanning is False
+
+
+@pytest.mark.usefixtures("force_linux_scanner_mode")
+@pytest.mark.asyncio
+async def test_async_toggle_active_window_mode_attribute_error_marks_not_scanning() -> (
+    None
+):
+    """
+    Toggle gracefully handles bleak refactoring away ``_scanning_mode``.
+
+    If a future bleak version drops or renames ``_backend._scanning_mode``,
+    the mutation raises AttributeError. The stop has already completed,
+    so without a guard the scanner would be left stopped and the caller
+    would have no signal to fall back to the full path. The guard logs,
+    clears ``self.scanning``, and returns False so the caller can
+    recover via the full restart path.
+    """
+
+    class MockBackend:
+        @property
+        def _scanning_mode(self) -> str:
+            raise AttributeError("simulated bleak refactor — attribute removed")
+
+        @_scanning_mode.setter
+        def _scanning_mode(self, value: str) -> None:
+            raise AttributeError("simulated bleak refactor — attribute removed")
+
+    class AttrErrorMockBleakScanner:
+        _backend = MockBackend()
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_, **__: AttrErrorMockBleakScanner(),
     ):
         scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner_obj.async_setup()

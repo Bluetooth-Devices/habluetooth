@@ -441,16 +441,21 @@ class AutoScanScheduler:
         ``worker.stop()`` cancels without awaiting. Nulls ``_loop``
         too so post-stop ``add_request`` / ``on_advertisement`` fall
         back to the record-only path instead of seeding ``_needs``
-        with timestamps from the cancelled loop. In-place restart
-        (``stop()`` then ``start(new_loop)``) needs an
-        ``await asyncio.sleep(0)`` between them so cancelled tasks
-        finish before new workers spawn on the same sources; HA's
-        flow never does this.
+        with timestamps from the cancelled loop. Clears ``_needs``
+        so a later ``start(new_loop)`` re-seeds from
+        ``_requests_by_address`` against the new loop's clock base;
+        leaving stale due-times would let them fire instantly (or
+        never) under a loop with a different ``time()`` origin.
+        In-place restart (``stop()`` then ``start(new_loop)``)
+        needs an ``await asyncio.sleep(0)`` between them so
+        cancelled tasks finish before new workers spawn on the same
+        sources; HA's flow never does this.
         """
         self._running = False
         for worker in self._workers.values():
             worker.stop()
         self._workers.clear()
+        self._needs.clear()
         self._loop = None
 
     def add_scanner(self, scanner: BaseHaScanner) -> None:
