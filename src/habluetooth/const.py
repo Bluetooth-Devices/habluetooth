@@ -54,6 +54,35 @@ SCANNER_WATCHDOG_INTERVAL: Final = timedelta(seconds=30)
 UNAVAILABLE_TRACK_SECONDS: Final = 60 * 5
 
 
+# AUTO scanning mode: each scanner gets its first sweep
+# AUTO_INITIAL_SWEEP_DELAY after joining, then every
+# AUTO_REDISCOVERY_INTERVAL, serialized across scanners.
+AUTO_INITIAL_SWEEP_DELAY: Final = 60 * 10
+AUTO_REDISCOVERY_INTERVAL: Final = 60 * 60 * 12
+AUTO_REDISCOVERY_SWEEP_DURATION: Final = 15.0
+
+# Per-callback scan_duration is clamped into this range. The floor
+# matches the validation in async_register_active_scan; the ceiling is
+# the longest single ACTIVE flip we'll ever do for one device tick.
+AUTO_WINDOW_MIN_DURATION: Final = 5.0
+AUTO_WINDOW_MAX_DURATION: Final = 30.0
+
+# Minimum values accepted by async_register_active_scan. Anything
+# shorter would just churn the radio without giving the device time to
+# respond on its scan response.
+MIN_ACTIVE_SCAN_INTERVAL: Final = 60.0
+MIN_ACTIVE_SCAN_DURATION: Final = 5.0
+
+# Defaults used by async_register_active_scan when the caller does
+# not specify a cadence. One 10s active window every 5 minutes per
+# device covers the typical temperature/humidity/battery sensor case
+# without burning the proxy's radio or the sensor's battery; an
+# integration that genuinely needs faster updates can pass a smaller
+# scan_interval explicitly.
+DEFAULT_ACTIVE_SCAN_INTERVAL: Final = 300.0
+DEFAULT_ACTIVE_SCAN_DURATION: Final = 10.0
+
+
 FAILED_ADAPTER_MAC = "00:00:00:00:00:00"
 
 

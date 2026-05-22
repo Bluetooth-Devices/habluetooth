@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import math
 import platform
 from collections.abc import Callable, Iterable
 from dataclasses import asdict
@@ -31,12 +32,17 @@ from .advertisement_tracker import (
     TRACKER_BUFFERING_WOBBLE_SECONDS,
     AdvertisementTracker,
 )
+from .auto_scheduler import ActiveScanRequest, AutoScanScheduler
 from .channels.bluez import CONNECTION_ERRORS, MGMTBluetoothCtl
 from .const import (
     ADV_RSSI_SWITCH_THRESHOLD,
     CALLBACK_TYPE,
+    DEFAULT_ACTIVE_SCAN_DURATION,
+    DEFAULT_ACTIVE_SCAN_INTERVAL,
     FAILED_ADAPTER_MAC,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
+    MIN_ACTIVE_SCAN_DURATION,
+    MIN_ACTIVE_SCAN_INTERVAL,
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .models import (
@@ -118,6 +124,7 @@ class BluetoothManager:
         "_all_history",
         "_allocations",
         "_allocations_callbacks",
+        "_auto_scheduler",
         "_bleak_callbacks",
         "_bluetooth_adapters",
         "_cancel_allocation_callbacks",
@@ -209,6 +216,7 @@ class BluetoothManager:
         ] = {}
         self._subclass_discover_info = self._discover_service_info
         self._mgmt_ctl: MGMTBluetoothCtl | None = None
+        self._auto_scheduler = AutoScanScheduler(self)
         if (
             self._discover_service_info.__func__  # type: ignore[attr-defined]
             is BluetoothManager._discover_service_info
@@ -363,6 +371,7 @@ class BluetoothManager:
         await self._async_refresh_adapters()
         install_multiple_bleak_catcher()
         self.async_setup_unavailable_tracking()
+        self._auto_scheduler.start(self._loop)
         if not IS_LINUX:
             return
         self._mgmt_ctl = MGMTBluetoothCtl(10.0, self._side_channel_scanners)
@@ -389,6 +398,7 @@ class BluetoothManager:
         if self._cancel_unavailable_tracking:
             self._cancel_unavailable_tracking.cancel()
             self._cancel_unavailable_tracking = None
+        self._auto_scheduler.stop()
         uninstall_multiple_bleak_catcher()
         self._cancel_allocation_callbacks()
         if self._mgmt_ctl:
@@ -810,6 +820,18 @@ class BluetoothManager:
 
         self._all_history[service_info.address] = service_info
 
+        # Hand the advertisement to the auto-scan scheduler right after
+        # _all_history is updated. Ownership-flip detection (a different
+        # scanner taking over a device's source) needs to fire even when
+        # the advertisement payload is identical to the previous one;
+        # the data-comparison short-circuit below would otherwise hide
+        # that flip from the scheduler. Local-typed assignment so
+        # cython.locals casts to AutoScanScheduler and the call is a
+        # direct vtable dispatch even though _auto_scheduler is stored
+        # untyped on BluetoothManager.
+        auto_scheduler = self._auto_scheduler
+        auto_scheduler.on_advertisement(service_info)
+
         # Track advertisement intervals to determine when we need to
         # switch adapters or mark a device as unavailable
         if (
@@ -995,6 +1017,7 @@ class BluetoothManager:
             self.slot_manager.remove_adapter(scanner.adapter)
         if (idx := scanner.adapter_idx) is not None:
             self._side_channel_scanners.pop(idx, None)
+        self._auto_scheduler.remove_scanner(scanner)
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.REMOVED)
 
     def async_register_scanner(
@@ -1022,6 +1045,7 @@ class BluetoothManager:
             self.async_on_allocation_changed(
                 self.slot_manager.get_allocations(scanner.adapter)
             )
+        self._auto_scheduler.add_scanner(scanner)
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.ADDED)
         return partial(
             self._async_unregister_scanner_internal, scanners, scanner, connection_slots
@@ -1042,6 +1066,60 @@ class BluetoothManager:
             )
 
         return partial(self._bleak_callbacks.remove, callback_entry)
+
+    def async_register_active_scan(
+        self,
+        address: str,
+        scan_interval: float | None = None,
+        scan_duration: float | None = None,
+    ) -> CALLBACK_TYPE:
+        """
+        Declare an on-demand active-scan need for a specific address.
+
+        Colon-form MAC addresses are normalized to upper-case to
+        match BlueZ / ESPHome / Shelly source addresses; UUIDs (no
+        colons, used by macOS CoreBluetooth) are passed through
+        as-is since CoreBluetooth preserves case on its source
+        addresses.
+
+        ``scan_interval`` / ``scan_duration`` default to
+        DEFAULT_ACTIVE_SCAN_INTERVAL (300s, 5 min) and
+        DEFAULT_ACTIVE_SCAN_DURATION (10s); pass smaller values to
+        get a tighter cadence. The effective window is clamped to
+        [AUTO_WINDOW_MIN_DURATION, AUTO_WINDOW_MAX_DURATION]
+        (5s..30s) and coalesced with other due requests for the
+        scanner; very large ``scan_duration`` values are capped.
+        ``scan_interval`` is measured between window starts (not
+        between successive windows). ACTIVE / PASSIVE scanners
+        ignore the request. Returns a cancel callable.
+        """
+        if not address:
+            raise ValueError("address must be a non-empty string")
+        if scan_interval is None:
+            scan_interval = DEFAULT_ACTIVE_SCAN_INTERVAL
+        if scan_duration is None:
+            scan_duration = DEFAULT_ACTIVE_SCAN_DURATION
+        # Reject non-finite values explicitly: NaN compared to anything
+        # returns False, so a NaN would slip past the lower-bound
+        # checks below and end up in _needs and call_later as a NaN
+        # due-time / duration, busy-looping the worker.
+        if not math.isfinite(scan_interval) or scan_interval < MIN_ACTIVE_SCAN_INTERVAL:
+            raise ValueError(
+                f"scan_interval must be a finite number >= "
+                f"{MIN_ACTIVE_SCAN_INTERVAL:.0f}s"
+            )
+        if not math.isfinite(scan_duration) or scan_duration < MIN_ACTIVE_SCAN_DURATION:
+            raise ValueError(
+                f"scan_duration must be a finite number >= "
+                f"{MIN_ACTIVE_SCAN_DURATION:.0f}s"
+            )
+        # MAC addresses (colon-form) get upper-cased to match BlueZ /
+        # ESPHome conventions; UUIDs (macOS CoreBluetooth) pass
+        # through as-is.
+        normalized = address.upper() if ":" in address else address
+        request = ActiveScanRequest(normalized, scan_interval, scan_duration)
+        self._auto_scheduler.add_request(request)
+        return partial(self._auto_scheduler.remove_request, request)
 
     def async_release_connection_slot(self, device: BLEDevice) -> None:
         """Release a connection slot."""

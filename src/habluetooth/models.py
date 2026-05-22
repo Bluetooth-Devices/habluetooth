@@ -99,6 +99,10 @@ class BluetoothScanningMode(Enum):
 
     PASSIVE = "passive"
     ACTIVE = "active"
+    # AUTO starts the scanner in PASSIVE and lets the manager promote it to
+    # ACTIVE on demand via BaseHaScanner.async_request_active_window — used
+    # for per-callback active windows and the periodic rediscovery sweep.
+    AUTO = "auto"
 
 
 class BluetoothServiceInfo:
