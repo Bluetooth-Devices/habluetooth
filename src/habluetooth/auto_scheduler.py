@@ -478,10 +478,19 @@ class AutoScanScheduler:
         self._workers.clear()
 
     def add_scanner(self, scanner: BaseHaScanner) -> None:
-        """Register an AUTO-mode scanner; spawn its worker if start() has run."""
+        """
+        Register an AUTO-mode scanner; spawn its worker if start() has run.
+
+        Skips if the scheduler is not currently running. ``stop()``
+        sets ``_running = False`` but leaves ``_loop`` set, so without
+        this guard a scanner registered between stop and (a possible
+        future) restart would spawn a worker that immediately exits
+        on its next iteration when ``_running`` is checked in
+        ``_run``.
+        """
         if scanner.requested_mode is not BluetoothScanningMode.AUTO:
             return
-        if self._loop is None or scanner.source in self._workers:
+        if self._loop is None or not self._running or scanner.source in self._workers:
             return
         self._spawn_worker(scanner)
 

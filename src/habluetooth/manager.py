@@ -1082,12 +1082,18 @@ class BluetoothManager:
         (300s, 5 minutes) and DEFAULT_ACTIVE_SCAN_DURATION (10s) when
         not provided; those defaults work for the typical sensor
         case. Integrations that genuinely need faster updates can pass
-        a smaller ``scan_interval`` explicitly. The scheduler asks the
-        AUTO-mode scanner currently in range of ``address`` to flip
-        active for ``scan_duration`` seconds every ``scan_interval``
-        seconds (measured between window starts, not between successive
-        windows) while the device is being seen. ACTIVE and PASSIVE
-        scanners ignore the request. Returns a cancel callable.
+        a smaller ``scan_interval`` explicitly. The effective window
+        the scanner actually runs is the requested ``scan_duration``
+        clamped into [AUTO_WINDOW_MIN_DURATION,
+        AUTO_WINDOW_MAX_DURATION] (5s..30s) and coalesced with any
+        other due requests for the same scanner, so very large
+        ``scan_duration`` values are capped rather than honored
+        verbatim. The scheduler asks the AUTO-mode scanner currently
+        in range of ``address`` to flip active for that window every
+        ``scan_interval`` seconds (measured between window starts,
+        not between successive windows) while the device is being
+        seen. ACTIVE and PASSIVE scanners ignore the request. Returns
+        a cancel callable.
         """
         if scan_interval is None:
             scan_interval = DEFAULT_ACTIVE_SCAN_INTERVAL

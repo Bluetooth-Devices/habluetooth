@@ -806,17 +806,26 @@ async def test_start_replays_pre_start_requests_when_history_exists() -> None:
                 assert address_with_history not in sched._needs
                 requests = list(sched._requests_by_address[address_with_history])
                 pre_existing, to_be_inserted = requests
-                # Pre-populate _needs with one request only.
-                sched._needs[address_with_history] = {pre_existing: 1234.5}
+                # Pre-populate _needs with one request only. The
+                # sentinel is well above loop.time() + scan_interval
+                # so the test is robust against the loop being
+                # freshly-started (CI) or long-lived; we don't care
+                # about the absolute value, only that start() leaves
+                # it alone.
+                sentinel = saved_loop.time() + 1.0e9
+                sched._needs[address_with_history] = {pre_existing: sentinel}
+                before_start = saved_loop.time()
                 sched.start(saved_loop)
                 seeded = sched._needs[address_with_history]
                 # The pre-existing entry was left alone (covers the
                 # `request not in existing` False branch).
-                assert seeded[pre_existing] == 1234.5
+                assert seeded[pre_existing] == sentinel
                 # The other request got freshly inserted (covers the
                 # insert line in the replay loop).
                 assert to_be_inserted in seeded
-                assert seeded[to_be_inserted] > 1234.5
+                assert seeded[to_be_inserted] == pytest.approx(
+                    before_start + to_be_inserted.scan_interval, abs=0.1
+                )
                 # No-history address: skipped by the
                 # `last_service_info(...) is None` branch.
                 assert address_no_history not in sched._needs
