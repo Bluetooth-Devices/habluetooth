@@ -1,9 +1,16 @@
 import cython
 
 from .advertisement_tracker cimport AdvertisementTracker
-from .auto_scheduler cimport ActiveScanRequest, AutoScanScheduler
 from .base_scanner cimport BaseHaScanner
 from .models cimport BluetoothServiceInfoBleak
+
+# auto_scheduler is intentionally NOT cimported here. Pulling AutoScanScheduler
+# into manager.pxd plus the existing manager <-> base_scanner two-way cycle
+# turned the load graph into a four-way chain that macOS Cython could not
+# settle at init time, leaving BluetoothManager's __pyx_vtable__ unbound when
+# base_scanner came back around to look it up. Importing AutoScanScheduler as
+# regular Python in manager.py and typing _auto_scheduler as object keeps the
+# class fully usable while removing the cimport that was breaking init.
 
 cdef int NO_RSSI_VALUE
 cdef int ADV_RSSI_SWITCH_THRESHOLD
@@ -70,7 +77,7 @@ cdef class BluetoothManager:
     cdef public bint has_advertising_side_channel
     cdef public dict _side_channel_scanners
     cdef public object _mgmt_ctl
-    cdef public AutoScanScheduler _auto_scheduler
+    cdef public object _auto_scheduler
 
     @cython.locals(stale_seconds=double)
     cdef bint _prefer_previous_adv_from_different_source(
