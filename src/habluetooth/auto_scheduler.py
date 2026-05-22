@@ -463,16 +463,26 @@ class AutoScanScheduler:
         """
         Register an active-scan request and start tracking immediately.
 
-        The first window fires ``scan_interval`` seconds after registration
-        (gated by the per-scanner history check at tick time, so it doesn't
-        fire on a scanner that hasn't seen the device yet). If the entry
-        gets pruned later because the device's history disappears,
-        on_advertisement re-creates it the next time the device is seen.
+        If ``start()`` has already run, the first window fires
+        ``scan_interval`` seconds after registration (gated by the
+        per-scanner history check at tick time, so it doesn't fire on
+        a scanner that hasn't seen the device yet). If the entry gets
+        pruned later because the device's history disappears,
+        on_advertisement re-creates it the next time the device is
+        seen.
 
         Only wakes the owner's worker when this call actually inserted
         a fresh entry into ``_needs``; re-registering an identical
         request (e.g., from an HA config-entry reload) is a no-op on
         the schedule so the wake would just churn ``_next_event_at``.
+
+        Pre-``start()`` registrations (no event loop yet) record the
+        request only — no ``_needs`` entry is seeded. The first window
+        for such a request fires ``scan_interval`` after the next
+        advertisement for ``address`` arrives, not after
+        ``start()``. This only matters if an integration registers
+        before ``BluetoothManager.async_setup``; HA's flow always sets
+        up the manager first.
         """
         self._requests_by_address.setdefault(request.address, set()).add(request)
         added = False

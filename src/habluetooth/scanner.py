@@ -664,9 +664,19 @@ class HaScanner(BaseHaScanner):
         sync with the real timer fire time across the stop/restart
         cycle and let a *shorter* follow-up request masquerade as an
         extension.
+
+        Cancels any existing handle before arming the new one so two
+        concurrent ``async_request_active_window`` calls cannot leak a
+        pending timer; today only the per-scanner scheduler worker
+        drives this and ``_tick`` serializes per worker, so the
+        contention is hypothetical, but the public method name reads
+        as if external callers may use it and nothing else in the
+        lock-side path defends against the race.
         """
         if TYPE_CHECKING:
             assert self._loop is not None
+        if self._active_window_handle is not None:
+            self._active_window_handle.cancel()
         self._active_window_end = self._loop.time() + duration
         self._active_window_handle = self._loop.call_later(
             duration, self._schedule_end_active_window

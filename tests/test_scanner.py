@@ -1776,6 +1776,56 @@ async def test_async_request_active_window_restarts_scanner_in_active_mode() -> 
 
 
 @pytest.mark.asyncio
+async def test_arm_active_window_timer_cancels_existing_handle() -> None:
+    """
+    _arm_active_window_timer cancels any prior handle before arming.
+
+    Regression for the concurrent-callers race noted in PR review:
+    two concurrent ``async_request_active_window`` calls could both
+    reach _arm_active_window_timer without the second cancelling the
+    first's TimerHandle, leaking a pending timer that would later fire
+    an extra _async_end_active_window. Today only the scheduler drives
+    the public method (and _tick serializes per worker) so the race
+    isn't reachable through normal callers, but the contract on
+    _arm_active_window_timer must defend against it.
+    """
+
+    class MockBleakScanner:
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: MockBleakScanner(),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+
+        # Arm a window so there's a handle to potentially leak.
+        assert await scanner.async_request_active_window(100.0) is True
+        first_handle = scanner._active_window_handle
+        assert first_handle is not None
+        # Directly call _arm again (simulating the race-path second
+        # caller). The first handle must be cancelled, not leaked.
+        scanner._arm_active_window_timer(50.0)
+        assert first_handle.cancelled()
+        assert scanner._active_window_handle is not first_handle
+
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_async_request_active_window_extends_existing_window() -> None:
     """A second request inside an active window extends the timer in place."""
 
@@ -1832,20 +1882,25 @@ async def test_async_request_active_window_end_time_matches_real_timer() -> None
     time by the restart duration. The fix moved the
     ``_active_window_end`` computation inside
     ``_arm_active_window_timer`` so it always matches when the timer
-    will actually fire. A subsequent request with a duration just
-    slightly above the lagged stored end-time but below the real
-    fire time would otherwise have cancelled the live timer and
-    armed a shorter one, silently shortening the active window.
-    """
-    # Big enough that the pre-fix lag (~0.1s) is well above any
-    # approx-tolerance noise, but small enough to keep the test
-    # quick.
-    restart_sleep = 0.1
-    duration = 10.0
+    will actually fire.
 
-    class SlowMockBleakScanner:
+    Uses an asyncio.Event to gate the restart-in-progress
+    deterministically rather than relying on asyncio.sleep precision,
+    which can fire slightly early on busy CI runners.
+    """
+    duration = 10.0
+    restart_started = asyncio.Event()
+    gate = asyncio.Event()
+
+    class GatedMockBleakScanner:
+        _first_start_done = False
+
         async def start(self):
-            await asyncio.sleep(restart_sleep)
+            if not type(self)._first_start_done:
+                type(self)._first_start_done = True
+                return
+            restart_started.set()
+            await gate.wait()
 
         async def stop(self):
             pass
@@ -1859,7 +1914,7 @@ async def test_async_request_active_window_end_time_matches_real_timer() -> None
 
     with patch(
         "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *a, **k: SlowMockBleakScanner(),
+        side_effect=lambda *a, **k: GatedMockBleakScanner(),
     ):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
@@ -1867,24 +1922,33 @@ async def test_async_request_active_window_end_time_matches_real_timer() -> None
 
         loop = asyncio.get_running_loop()
         before = loop.time()
-        assert await scanner.async_request_active_window(duration) is True
-        after = loop.time()
-        # Sanity: the restart actually took the slow path.
-        assert after - before >= restart_sleep
-        # The stored end-time must match the post-restart fire time
-        # (loop.time() + duration), not before + duration. Pre-fix
-        # this assertion fails by ~restart_sleep.
-        assert scanner._active_window_end == pytest.approx(after + duration, abs=0.01)
+        task = asyncio.create_task(scanner.async_request_active_window(duration))
+        await restart_started.wait()
+        # Provably advance loop.time() past `before` before the restart
+        # completes; the exact amount doesn't matter for the assertion
+        # below as long as loop.time() has visibly moved.
+        await asyncio.sleep(0.05)
+        elapsed = loop.time() - before
+        gate.set()
+        assert await task is True
+
+        # Contract: _active_window_end matches loop.time() + duration
+        # measured AFTER the restart, not before. Pre-fix it would be
+        # before + duration. Allow generous tolerance for the small
+        # gap between arming and reading.
+        now = loop.time()
+        assert scanner._active_window_end == pytest.approx(now + duration, abs=0.1)
+        # Reject pre-fix value (before + duration) explicitly with a
+        # margin well above asyncio scheduling jitter: the stored end
+        # is at least ``elapsed`` ahead of before + duration.
+        assert scanner._active_window_end - before - duration >= elapsed / 2
         first_handle = scanner._active_window_handle
 
         # A follow-up whose new_end lands between the pre-fix stored
         # end and the real fire time must NOT be treated as an
         # extension. With the fix this is rejected; without it the
         # live timer would be cancelled and armed shorter.
-        # Pick a duration that puts new_end at before + duration +
-        # restart_sleep/2 - i.e. above the stale stored end but below
-        # the real fire time.
-        target_new_end = before + duration + restart_sleep / 2
+        target_new_end = before + duration + elapsed / 2
         shorter_duration = target_new_end - loop.time()
         assert await scanner.async_request_active_window(shorter_duration) is True
         assert scanner._active_window_handle is first_handle
