@@ -87,7 +87,15 @@ def _inject(scanner: _RecordingAutoScanner, address: str) -> None:
 
 
 async def _drain() -> None:
-    await asyncio.sleep(0)
+    """Yield several times so worker tasks can process."""
+    for _ in range(4):
+        await asyncio.sleep(0)
+
+
+async def _run_worker_tick(scheduler: object, source: str) -> None:
+    """Drive one worker through a single tick for deterministic testing."""
+    worker = scheduler._workers[source]  # type: ignore[attr-defined]
+    await worker._tick()
 
 
 @pytest.mark.asyncio
@@ -128,8 +136,8 @@ async def test_advertisement_for_unrelated_address_is_ignored() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tick_requests_active_window_on_auto_scanner() -> None:
-    """A due tracker entry triggers an active window on the owning scanner."""
+async def test_worker_tick_fires_active_window() -> None:
+    """A due tracker entry causes the owning scanner's worker to fire a window."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -143,8 +151,7 @@ async def test_tick_requests_active_window_on_auto_scanner() -> None:
         entries = sched._needs["11:22:33:44:55:66"]
         request = next(iter(entries))
         entries[request] = loop.time() - 1.0
-        sched._async_tick()
-        await _drain()
+        await _run_worker_tick(sched, scanner.source)
         assert scanner.active_window_calls == [5.0]
         assert entries[request] > loop.time()
     finally:
@@ -153,8 +160,8 @@ async def test_tick_requests_active_window_on_auto_scanner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tick_coalesces_overlapping_requests() -> None:
-    """Two requests for the same address coalesce into one max-duration window."""
+async def test_worker_tick_coalesces_overlapping_requests() -> None:
+    """Multiple requests for the same address coalesce on max scan_duration."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -172,8 +179,7 @@ async def test_tick_coalesces_overlapping_requests() -> None:
         entries = sched._needs[address]
         for req in list(entries):
             entries[req] = loop.time() - 1.0
-        sched._async_tick()
-        await _drain()
+        await _run_worker_tick(sched, scanner.source)
         assert scanner.active_window_calls == [10.0]
     finally:
         cancel1()
@@ -203,16 +209,13 @@ async def test_multiple_requests_same_address_track_independent_intervals() -> N
         fast, slow = sorted(entries, key=lambda r: r.scan_interval)
         entries[fast] = loop.time() - 1.0
         entries[slow] = loop.time() + 200.0
-        sched._async_tick()
-        await _drain()
+        await _run_worker_tick(sched, scanner.source)
         assert scanner.active_window_calls == [2.0]
         assert entries[fast] > loop.time()
         assert entries[slow] > loop.time() + 100
-        sched._scanner_windows.clear()
         entries[fast] = loop.time() - 1.0
         entries[slow] = loop.time() - 1.0
-        sched._async_tick()
-        await _drain()
+        await _run_worker_tick(sched, scanner.source)
         assert scanner.active_window_calls == [2.0, 4.0]
     finally:
         cancel_fast()
@@ -221,53 +224,39 @@ async def test_multiple_requests_same_address_track_independent_intervals() -> N
 
 
 @pytest.mark.asyncio
-async def test_tick_skips_non_auto_scanner() -> None:
-    """ACTIVE / PASSIVE scanners are not asked to flip; due times advance."""
+async def test_no_worker_for_non_auto_scanner() -> None:
+    """ACTIVE / PASSIVE scanners don't get a worker; their windows are never fired."""
     manager = get_manager()
     sched = manager._auto_scheduler
-    loop = asyncio.get_running_loop()
-    address = "11:22:33:44:55:66"
-    cancel = manager.async_register_active_scan(
-        address, scan_interval=120.0, scan_duration=3.0
-    )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.ACTIVE)
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        _inject(scanner, address)
-        entries = sched._needs.get(address, {})
-        for req in list(entries):
-            entries[req] = loop.time() - 1.0
-        sched._async_tick()
-        await _drain()
-        assert scanner.active_window_calls == []
+        assert scanner.source not in sched._workers
     finally:
-        cancel()
         register_cancel()
 
 
 @pytest.mark.asyncio
 async def test_global_sweep_runs_on_auto_scanner() -> None:
-    """The 4h sweep fires async_request_active_window with SWEEP_DURATION."""
+    """The sweep fires async_request_active_window with SWEEP_DURATION."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] = (
-            loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
-        )
-        sched._async_tick()
-        await _drain()
+        worker = sched._workers[scanner.source]
+        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        await _run_worker_tick(sched, scanner.source)
         assert scanner.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
-        assert sched._sweep_in_flight is None
+        assert worker._sweep_last_completed > loop.time() - 1.0
     finally:
         register_cancel()
 
 
 @pytest.mark.asyncio
 async def test_global_sweep_one_scanner_at_a_time() -> None:
-    """While one scanner sweeps, no other scanner is asked to sweep."""
+    """Two scanners both due for sweep do not sweep concurrently."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -278,23 +267,23 @@ async def test_global_sweep_one_scanner_at_a_time() -> None:
     c1 = manager.async_register_scanner(s1)
     c2 = manager.async_register_scanner(s2)
     try:
-        now = loop.time()
-        sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] = (
-            now - AUTO_REDISCOVERY_INTERVAL - 10
-        )
-        sched._sweep_last_completed["AA:BB:CC:DD:EE:11"] = (
-            now - AUTO_REDISCOVERY_INTERVAL - 5
-        )
-        sched._async_tick()
+        w1 = sched._workers[s1.source]
+        w2 = sched._workers[s2.source]
+        w1._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 10
+        w2._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 5
+        # Kick worker 1 into its sweep (it'll block on the asyncio.Event).
+        t1 = asyncio.create_task(w1._tick())
         await _drain()
-        assert sched._sweep_in_flight == "AA:BB:CC:DD:EE:00"
-        sched._async_tick()
+        # While w1's sweep is blocked, w2 attempts its sweep too. It must
+        # wait on the shared _sweep_lock and not fire concurrently.
+        t2 = asyncio.create_task(w2._tick())
         await _drain()
+        assert s1.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
         assert s2.active_window_calls == []
         blocking.set()
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        assert sched._sweep_in_flight is None
+        await t1
+        await t2
+        assert s2.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
     finally:
         blocking.set()
         c1()
@@ -321,63 +310,8 @@ async def test_remove_request_clears_tracking() -> None:
 
 
 @pytest.mark.asyncio
-async def test_busy_scanner_defers_due_callbacks_not_busy_loops() -> None:
-    """A scanner mid-window pushes due requests past the window end."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    loop = asyncio.get_running_loop()
-    address = "11:22:33:44:55:66"
-    cancel = manager.async_register_active_scan(
-        address, scan_interval=60.0, scan_duration=3.0
-    )
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        _inject(scanner, address)
-        entries = sched._needs[address]
-        request = next(iter(entries))
-        entries[request] = loop.time() - 1.0
-        busy_end = loop.time() + 5.0
-        sched._scanner_windows[scanner.source] = busy_end
-        sched._async_tick()
-        await _drain()
-        assert scanner.active_window_calls == []
-        assert entries[request] >= busy_end
-    finally:
-        cancel()
-        register_cancel()
-
-
-@pytest.mark.asyncio
-async def test_failed_request_clears_busy_marker() -> None:
-    """A False return from async_request_active_window frees the scanner."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    loop = asyncio.get_running_loop()
-    address = "11:22:33:44:55:66"
-    cancel = manager.async_register_active_scan(
-        address, scan_interval=60.0, scan_duration=3.0
-    )
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    scanner._return_value = False
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        _inject(scanner, address)
-        entries = sched._needs[address]
-        for req in list(entries):
-            entries[req] = loop.time() - 1.0
-        sched._async_tick()
-        await _drain()
-        assert scanner.active_window_calls == [3.0]
-        assert scanner.source not in sched._scanner_windows
-    finally:
-        cancel()
-        register_cancel()
-
-
-@pytest.mark.asyncio
 async def test_failed_sweep_advances_sweep_last_completed() -> None:
-    """A False return on a sweep updates _sweep_last_completed so we don't busy-loop."""
+    """A False return on a sweep advances the worker's sweep clock."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -385,64 +319,54 @@ async def test_failed_sweep_advances_sweep_last_completed() -> None:
     scanner._return_value = False
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] = (
-            loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
-        )
-        before = sched._sweep_last_completed["AA:BB:CC:DD:EE:00"]
-        sched._async_tick()
-        await _drain()
+        worker = sched._workers[scanner.source]
+        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        before = worker._sweep_last_completed
+        await _run_worker_tick(sched, scanner.source)
         assert scanner.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
-        # _sweep_last_completed was advanced even though the window failed,
-        # so the next sweep is one full interval out instead of immediate.
-        assert sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] > before
-        assert sched._sweep_in_flight is None
+        # Even on False, the worker's sweep clock advanced so the next
+        # sweep is one full interval out instead of immediate.
+        assert worker._sweep_last_completed > before
     finally:
         register_cancel()
 
 
 @pytest.mark.asyncio
-async def test_stop_cancels_pending_window_tasks() -> None:
-    """Scheduler.stop cancels in-flight active-window tasks."""
+async def test_stop_cancels_worker_tasks() -> None:
+    """Scheduler.stop cancels every worker task."""
     manager = get_manager()
     sched = manager._auto_scheduler
-    loop = asyncio.get_running_loop()
-    blocking = asyncio.Event()
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    scanner._block_event = blocking
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] = (
-            loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
-        )
-        sched._async_tick()
-        await _drain()
-        assert len(sched._pending_tasks) == 1
-        pending = next(iter(sched._pending_tasks))
+        worker = sched._workers[scanner.source]
+        task = worker._task
+        assert task is not None
         sched.stop()
         await asyncio.sleep(0)
-        assert pending.cancelled() or pending.done()
-        assert sched._pending_tasks == set()
-        assert sched._scanner_windows == {}
-        assert sched._sweep_in_flight is None
+        assert task.cancelled() or task.done()
+        assert sched._workers == {}
     finally:
-        blocking.set()
         register_cancel()
 
 
 @pytest.mark.asyncio
 async def test_dispatch_drops_tracking_for_unseen_address() -> None:
-    """A due address with no history entry is pruned, not retried."""
+    """An address with no history entry is pruned on the next worker tick."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
     cancel = manager.async_register_active_scan("aa:bb:cc:dd:ee:ff", scan_interval=60.0)
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
     try:
         request = next(iter(sched._requests_by_address["aa:bb:cc:dd:ee:ff"]))
         sched._needs["aa:bb:cc:dd:ee:ff"] = {request: loop.time() - 1.0}
-        sched._async_tick()
+        await _run_worker_tick(sched, scanner.source)
         assert "aa:bb:cc:dd:ee:ff" not in sched._needs
     finally:
         cancel()
+        register_cancel()
 
 
 @pytest.mark.asyncio
@@ -454,55 +378,38 @@ async def test_first_sweep_is_delayed_after_scanner_registers() -> None:
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        last = sched._sweep_last_completed["AA:BB:CC:DD:EE:00"]
-        first_sweep_at = last + AUTO_REDISCOVERY_INTERVAL
+        worker = sched._workers[scanner.source]
+        first_sweep_at = worker._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
         now = loop.time()
-        # First sweep should land roughly AUTO_INITIAL_SWEEP_DELAY from now,
-        # not AUTO_REDISCOVERY_INTERVAL from now.
         assert (
             AUTO_INITIAL_SWEEP_DELAY - 1.0
             <= first_sweep_at - now
             <= AUTO_INITIAL_SWEEP_DELAY + 1.0
         )
-        # Force the tick at the scheduled first sweep time and confirm
-        # the sweep would fire.
-        sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] = (
-            now - AUTO_REDISCOVERY_INTERVAL - 1.0
-        )
-        sched._async_tick()
-        await _drain()
-        assert scanner.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
     finally:
         register_cancel()
 
 
 @pytest.mark.asyncio
-async def test_remove_scanner_clears_sweep_state() -> None:
-    """Unregistering a scanner drops its sweep / window state."""
+async def test_remove_scanner_stops_its_worker() -> None:
+    """Unregistering a scanner cancels and drops its worker."""
     manager = get_manager()
     sched = manager._auto_scheduler
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     cancel = manager.async_register_scanner(scanner)
-    assert "AA:BB:CC:DD:EE:00" in sched._sweep_last_completed
+    assert scanner.source in sched._workers
+    worker = sched._workers[scanner.source]
+    task = worker._task
     cancel()
-    assert "AA:BB:CC:DD:EE:00" not in sched._sweep_last_completed
+    await asyncio.sleep(0)
+    assert scanner.source not in sched._workers
+    assert task is not None
+    assert task.cancelled() or task.done()
 
 
 @pytest.mark.asyncio
-async def test_remove_scanner_clears_sweep_in_flight() -> None:
-    """Unregistering a scanner mid-sweep resets _sweep_in_flight."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    cancel = manager.async_register_scanner(scanner)
-    sched._sweep_in_flight = scanner.source
-    cancel()
-    assert sched._sweep_in_flight is None
-
-
-@pytest.mark.asyncio
-async def test_add_scanner_before_start_stores_placeholder() -> None:
-    """A scanner registered before start() leaves a placeholder until start runs."""
+async def test_add_scanner_before_start_defers_worker() -> None:
+    """A scanner registered before start() gets its worker on start()."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = sched._loop
@@ -511,13 +418,13 @@ async def test_add_scanner_before_start_stores_placeholder() -> None:
     try:
         scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
         sched.add_scanner(scanner)
-        assert sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] == 0.0
+        assert scanner.source not in sched._workers
         manager._sources[scanner.source] = scanner
         sched.start(loop)
-        assert sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] > 0.0
+        assert scanner.source in sched._workers
+        sched._workers[scanner.source].stop()
     finally:
         manager._sources.pop("AA:BB:CC:DD:EE:00", None)
-        sched._sweep_last_completed.pop("AA:BB:CC:DD:EE:00", None)
 
 
 @pytest.mark.asyncio
@@ -527,10 +434,7 @@ async def test_stop_is_safe_when_already_idle() -> None:
     sched = manager._auto_scheduler
     sched.stop()
     sched.stop()
-    assert sched._tick_handle is None
-    assert sched._pending_tasks == set()
-    assert sched._scanner_windows == {}
-    assert sched._sweep_in_flight is None
+    assert sched._workers == {}
 
 
 @pytest.mark.asyncio
@@ -563,4 +467,24 @@ async def test_on_advertisement_early_returns_with_no_requests() -> None:
         assert sched._needs == {}
         assert sched._requests_by_address == {}
     finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_on_advertisement_wakes_owning_worker() -> None:
+    """Adding a tracking entry wakes the worker so it picks the new event up."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    cancel = manager.async_register_active_scan(
+        "11:22:33:44:55:66", scan_interval=120.0
+    )
+    try:
+        worker = sched._workers[scanner.source]
+        worker._wake.clear()
+        _inject(scanner, "11:22:33:44:55:66")
+        assert worker._wake.is_set()
+    finally:
+        cancel()
         register_cancel()

@@ -18,14 +18,17 @@ scanners:
   are staggered across scanners so that at most one scanner is mid-sweep
   at a time, keeping the radio coverage gap bounded.
 
-The scheduler is a single per-manager instance driven by one
-``loop.call_at`` handle. ``on_advertisement`` is on the manager's hot
-path; it must return cheaply when no active-scan request is registered.
+Each AUTO scanner has one persistent ``_ScannerWorker`` task that sleeps
+on an ``asyncio.Event`` with a ``wait_for`` timeout matching the next
+scheduled event for that scanner. State mutations (new request, new
+advertisement, scanner registration) just set the wake event; no task is
+created per window dispatch.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -70,20 +73,181 @@ class ActiveScanRequest:
         self.scan_duration = scan_duration
 
 
+class _ScannerWorker:
+    """One persistent task per AUTO scanner; sleeps until next due event."""
+
+    __slots__ = (
+        "_scanner",
+        "_scheduler",
+        "_sweep_last_completed",
+        "_task",
+        "_wake",
+        "_window_end",
+    )
+
+    def __init__(self, scheduler: AutoScanScheduler, scanner: BaseHaScanner) -> None:
+        self._scheduler = scheduler
+        self._scanner = scanner
+        self._wake = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+        # When this scanner's current active window ends; 0.0 = idle.
+        self._window_end: float = 0.0
+        # When this scanner last completed (or attempted) a global sweep.
+        self._sweep_last_completed: float = 0.0
+
+    def start(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Start the worker task; first sweep AUTO_INITIAL_SWEEP_DELAY out."""
+        self._sweep_last_completed = (
+            loop.time() + AUTO_INITIAL_SWEEP_DELAY - AUTO_REDISCOVERY_INTERVAL
+        )
+        self._task = loop.create_task(self._run())
+
+    def stop(self) -> None:
+        """Cancel the worker task; it will exit on its next CancelledError."""
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+
+    def wake(self) -> None:
+        """Interrupt the worker's sleep so it re-evaluates pending work."""
+        self._wake.set()
+
+    def _next_event_at(self, now: float) -> float:
+        """Return the earliest loop-time at which this worker has work."""
+        # If we have an active window in flight, next event is its end.
+        if self._window_end > now:
+            return self._window_end
+        # Sweep cadence.
+        next_at = self._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        # Earliest per-device need owned by this scanner. A request's
+        # "owner" is whichever scanner currently sees its address.
+        source = self._scanner.source
+        needs = self._scheduler._needs
+        all_history = self._scheduler._manager._all_history
+        for address, entries in needs.items():
+            if not entries:
+                continue
+            history = all_history.get(address)
+            if history is None or history.source != source:
+                continue
+            earliest = min(entries.values())
+            if earliest < next_at:
+                next_at = earliest
+        return next_at
+
+    async def _run(self) -> None:
+        """Main loop: sleep until next event or wake, then process due work."""
+        try:
+            while True:
+                loop = self._scheduler._loop
+                if loop is None:
+                    return
+                now = loop.time()
+                next_at = self._next_event_at(now)
+                self._wake.clear()
+                delay = max(0.0, next_at - now)
+                if delay > 0:
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(self._wake.wait(), timeout=delay)
+                if not self._scheduler._running:
+                    return
+                await self._tick()
+        except asyncio.CancelledError:
+            raise
+
+    async def _tick(self) -> None:
+        """Fire any due per-device windows for this scanner, then the sweep."""
+        loop = self._scheduler._loop
+        if loop is None:
+            return
+        if self._window_end > loop.time():
+            # Still inside the previous window; nothing to do yet.
+            return
+        self._window_end = 0.0
+        await self._dispatch_per_device()
+        await self._dispatch_sweep()
+
+    async def _dispatch_per_device(self) -> None:
+        """Process per-(address, request) needs that target this scanner."""
+        loop = self._scheduler._loop
+        if loop is None:
+            return
+        source = self._scanner.source
+        needs = self._scheduler._needs
+        all_history = self._scheduler._manager._all_history
+        for address in list(needs):
+            entries = needs.get(address)
+            if not entries:
+                continue
+            history = all_history.get(address)
+            if history is None:
+                # Drop tracking for unseen addresses; on_advertisement will
+                # recreate the entry when the device next advertises.
+                del needs[address]
+                continue
+            if history.source != source:
+                continue
+            now = loop.time()
+            due = [r for r, t in entries.items() if t <= now]
+            if not due:
+                continue
+            duration = self._scheduler._coalesce_duration(due)
+            self._window_end = now + duration
+            await self._run_window(duration)
+            now = loop.time()
+            for request in due:
+                entries[request] = now + request.scan_interval
+            self._window_end = 0.0
+
+    async def _dispatch_sweep(self) -> None:
+        """Fire the global rediscovery sweep if it's our turn and due."""
+        loop = self._scheduler._loop
+        if loop is None:
+            return
+        now = loop.time()
+        if now < self._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL:
+            return
+        sweep_lock = self._scheduler._sweep_lock
+        if sweep_lock is None:
+            return
+        async with sweep_lock:
+            now = loop.time()
+            # Re-check after acquiring lock; another worker may have moved
+            # our sweep clock forward (unlikely but defensive).
+            if now < self._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL:
+                return
+            duration = AUTO_REDISCOVERY_SWEEP_DURATION
+            self._window_end = now + duration
+            try:
+                await self._run_window(duration)
+            finally:
+                # Advance even on failure so we don't busy-loop the worker.
+                self._sweep_last_completed = loop.time()
+                self._window_end = 0.0
+
+    async def _run_window(self, duration: float) -> bool:
+        """Ask the scanner for an active window; swallow per-call exceptions."""
+        try:
+            return await self._scanner.async_request_active_window(duration)
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.exception(
+                "%s: error running active window of %.1fs",
+                self._scanner.name,
+                duration,
+            )
+            return False
+
+
 class AutoScanScheduler:
-    """Schedules on-demand active windows across AUTO-mode scanners."""
+    """Coordinates on-demand active windows across AUTO-mode scanners."""
 
     __slots__ = (
         "_loop",
         "_manager",
         "_needs",
-        "_pending_tasks",
         "_requests_by_address",
         "_running",
-        "_scanner_windows",
-        "_sweep_in_flight",
-        "_sweep_last_completed",
-        "_tick_handle",
+        "_sweep_lock",
+        "_workers",
     )
 
     def __init__(self, manager: BluetoothManager) -> None:
@@ -93,76 +257,61 @@ class AutoScanScheduler:
         self._requests_by_address: dict[str, set[ActiveScanRequest]] = {}
         # address -> {request: next_due_loop_time}
         self._needs: dict[str, dict[ActiveScanRequest, float]] = {}
-        # source -> loop time when the current window ends (0.0 = idle)
-        self._scanner_windows: dict[str, float] = {}
-        # source -> last sweep completion loop time
-        self._sweep_last_completed: dict[str, float] = {}
-        # source currently running a global sweep, or None
-        self._sweep_in_flight: str | None = None
-        self._tick_handle: asyncio.TimerHandle | None = None
+        # source -> persistent worker task
+        self._workers: dict[str, _ScannerWorker] = {}
+        # Serializes global sweeps so at most one scanner is mid-sweep
+        # at a time across the whole manager.
+        self._sweep_lock: asyncio.Lock | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
-        self._pending_tasks: set[asyncio.Task[None]] = set()
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Bind the scheduler to the event loop and schedule the first tick."""
+        """Bind the scheduler to the event loop and spawn one worker per scanner."""
         self._loop = loop
         self._running = True
-        # Schedule the first sweep for each AUTO scanner AUTO_INITIAL_SWEEP_DELAY
-        # from now, so HA startup isn't crowded by ACTIVE scans on every
-        # adapter at once. We store a fake "last completed" in the past
-        # such that last + AUTO_REDISCOVERY_INTERVAL == now + initial_delay;
-        # this also overwrites any 0.0 placeholders left by pre-start
-        # add_scanner calls.
-        initial_last = (
-            loop.time() + AUTO_INITIAL_SWEEP_DELAY - AUTO_REDISCOVERY_INTERVAL
-        )
+        self._sweep_lock = asyncio.Lock()
         for scanner in self._manager._sources.values():
             if scanner.requested_mode is BluetoothScanningMode.AUTO:
-                self._sweep_last_completed[scanner.source] = initial_last
-        self._reschedule()
+                self._spawn_worker(scanner)
 
     def stop(self) -> None:
-        """Cancel any pending tick and pending window tasks."""
+        """Cancel all worker tasks; the manager is shutting down."""
         self._running = False
-        if self._tick_handle is not None:
-            self._tick_handle.cancel()
-            self._tick_handle = None
-        # Cancel any window tasks in flight so they cannot call
-        # async_request_active_window after shutdown has started.
-        for task in self._pending_tasks:
-            task.cancel()
-        self._pending_tasks.clear()
-        self._scanner_windows.clear()
-        self._sweep_in_flight = None
+        for worker in self._workers.values():
+            worker.stop()
+        self._workers.clear()
 
     def add_scanner(self, scanner: BaseHaScanner) -> None:
-        """Register an AUTO-mode scanner for the global rediscovery sweep."""
+        """Register an AUTO-mode scanner; spawns its worker if start() has run."""
         if scanner.requested_mode is not BluetoothScanningMode.AUTO:
             return
-        if self._loop is None:
-            self._sweep_last_completed.setdefault(scanner.source, 0.0)
+        if self._loop is None or scanner.source in self._workers:
             return
-        # First sweep AUTO_INITIAL_SWEEP_DELAY after this scanner joins, so
-        # a freshly connected proxy gets a chance to settle before its
-        # active sweep instead of firing immediately.
-        initial_last = (
-            self._loop.time() + AUTO_INITIAL_SWEEP_DELAY - AUTO_REDISCOVERY_INTERVAL
-        )
-        self._sweep_last_completed.setdefault(scanner.source, initial_last)
-        self._reschedule()
+        self._spawn_worker(scanner)
 
     def remove_scanner(self, scanner: BaseHaScanner) -> None:
-        """Drop scheduler state for a scanner that's leaving the manager."""
-        self._sweep_last_completed.pop(scanner.source, None)
-        self._scanner_windows.pop(scanner.source, None)
-        if self._sweep_in_flight == scanner.source:
-            self._sweep_in_flight = None
-        self._reschedule()
+        """Stop the worker for a scanner that's leaving the manager."""
+        worker = self._workers.pop(scanner.source, None)
+        if worker is not None:
+            worker.stop()
+
+    def _spawn_worker(self, scanner: BaseHaScanner) -> None:
+        """Start a fresh worker task for an AUTO scanner."""
+        assert self._loop is not None  # noqa: S101  # set by start()
+        worker = _ScannerWorker(self, scanner)
+        worker.start(self._loop)
+        self._workers[scanner.source] = worker
 
     def add_request(self, request: ActiveScanRequest) -> None:
         """Register an active-scan request for its address."""
         self._requests_by_address.setdefault(request.address, set()).add(request)
+        # Wake any worker that currently owns this address.
+        history = self._manager._all_history.get(request.address)
+        if (
+            history is not None
+            and (worker := self._workers.get(history.source)) is not None
+        ):
+            worker.wake()
 
     def remove_request(self, request: ActiveScanRequest) -> None:
         """Drop the request from the index and from any pending tracking."""
@@ -174,7 +323,6 @@ class AutoScanScheduler:
             entries.pop(request, None)
             if not entries:
                 del self._needs[request.address]
-        self._reschedule()
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
         """Hot path. Track requests for the advertisement's address."""
@@ -193,114 +341,11 @@ class AutoScanScheduler:
             if request not in existing:
                 existing[request] = self._loop.time() + request.scan_interval
                 added = True
-        if added:
-            # Reschedule once after the whole batch instead of per entry; on
-            # the hot path multiple registrations for the same address would
-            # otherwise cancel and re-arm the tick timer N times.
-            self._reschedule()
-
-    def _reschedule(self) -> None:
-        """Schedule the next tick based on the earliest pending due time."""
-        if not self._running or self._loop is None:
-            return
-        next_event = self._next_event_time(self._loop.time())
-        if self._tick_handle is not None:
-            self._tick_handle.cancel()
-            self._tick_handle = None
-        if next_event is None:
-            return
-        # Add a small floor so we never spin.
-        delay = max(0.05, next_event - self._loop.time())
-        self._tick_handle = self._loop.call_later(delay, self._async_tick)
-
-    def _next_event_time(self, now: float) -> float | None:
-        """Return the earliest upcoming event loop-time, or None if idle."""
-        candidates: list[float] = []
-        for callbacks in self._needs.values():
-            if callbacks:
-                candidates.append(min(callbacks.values()))
-        for source, last in self._sweep_last_completed.items():
-            if self._sweep_in_flight == source:
-                continue
-            candidates.append(last + AUTO_REDISCOVERY_INTERVAL)
-        if not candidates:
-            return None
-        return min(candidates)
-
-    def _async_tick(self) -> None:
-        """Process all due windows and reschedule."""
-        self._tick_handle = None
-        if not self._running or self._loop is None:
-            return
-        now = self._loop.time()
-        # Drop expired window markers.
-        for source in list(self._scanner_windows):
-            if self._scanner_windows[source] <= now:
-                del self._scanner_windows[source]
-        self._dispatch_per_device(now)
-        self._dispatch_global_sweep(now)
-        self._reschedule()
-
-    def _dispatch_per_device(self, now: float) -> None:
-        """Fire windows for any (address, request) whose due time has passed."""
-        for address, entries in list(self._needs.items()):
-            due = [r for r, t in entries.items() if t <= now]
-            if not due:
-                continue
-            history = self._manager._all_history.get(address)
-            if history is None:
-                # No recent sight; drop the tracking entries, they'll come
-                # back the next time the device advertises.
-                del self._needs[address]
-                continue
-            source = history.source
-            if (busy_end := self._scanner_windows.get(source)) is not None:
-                # Scanner busy. Defer due entries past the window end so
-                # _next_event_time doesn't stay in the past, which would
-                # otherwise busy-loop the tick every 50ms until the
-                # window drains.
-                deferred = busy_end + 0.05
-                for request in due:
-                    if entries[request] < deferred:
-                        entries[request] = deferred
-                continue
-            scanner = self._manager._sources.get(source)
-            if scanner is not None and scanner.requested_mode is (
-                BluetoothScanningMode.AUTO
-            ):
-                self._request_window(scanner, self._coalesce_duration(due))
-            # Whether we fired or skipped (non-AUTO scanner), advance each
-            # due entry to its next cadence so we don't re-fire next tick.
-            for request in due:
-                entries[request] = now + request.scan_interval
-
-    def _dispatch_global_sweep(self, now: float) -> None:
-        """Run a rediscovery sweep on the next eligible scanner, if any."""
-        if self._sweep_in_flight is not None:
-            return
-        eligible: str | None = None
-        oldest: float = now
-        for source, last in self._sweep_last_completed.items():
-            if last + AUTO_REDISCOVERY_INTERVAL > now:
-                continue
-            if source in self._scanner_windows:
-                continue
-            scanner = self._manager._sources.get(source)
-            if (
-                scanner is None
-                or scanner.requested_mode is not BluetoothScanningMode.AUTO
-            ):
-                continue
-            if last <= oldest:
-                oldest = last
-                eligible = source
-        if eligible is None:
-            return
-        scanner = self._manager._sources[eligible]
-        self._sweep_in_flight = eligible
-        self._request_window(
-            scanner, AUTO_REDISCOVERY_SWEEP_DURATION, sweep_source=eligible
-        )
+        # Wake the worker that owns this scanner so it can pick up the
+        # new tracking entry; without the wake the worker would sleep
+        # until its previously computed next-event time.
+        if added and (worker := self._workers.get(service_info.source)) is not None:
+            worker.wake()
 
     def _coalesce_duration(self, entries: list[ActiveScanRequest]) -> float:
         """Pick the max requested duration, clamped to the configured range."""
@@ -313,51 +358,3 @@ class AutoScanScheduler:
         if requested > AUTO_WINDOW_MAX_DURATION:
             return AUTO_WINDOW_MAX_DURATION
         return requested
-
-    def _request_window(
-        self,
-        scanner: BaseHaScanner,
-        duration: float,
-        sweep_source: str | None = None,
-    ) -> None:
-        """Mark the scanner busy and kick off the active-window request."""
-        if self._loop is None:
-            return
-        self._scanner_windows[scanner.source] = self._loop.time() + duration
-        task = self._loop.create_task(self._run_window(scanner, duration, sweep_source))
-        self._pending_tasks.add(task)
-        task.add_done_callback(self._pending_tasks.discard)
-
-    async def _run_window(
-        self,
-        scanner: BaseHaScanner,
-        duration: float,
-        sweep_source: str | None,
-    ) -> None:
-        """Await the scanner's active window and clear in-flight state."""
-        ok = False
-        try:
-            ok = await scanner.async_request_active_window(duration)
-        except Exception:  # pylint: disable=broad-except
-            _LOGGER.exception(
-                "%s: error running active window of %.1fs",
-                scanner.name,
-                duration,
-            )
-        finally:
-            # When the scanner could not honor the request (returned False
-            # or raised), drop the busy marker now so other work for that
-            # source isn't blocked for the full duration.
-            if not ok and self._scanner_windows.get(scanner.source) is not None:
-                del self._scanner_windows[scanner.source]
-            if sweep_source is not None:
-                # Update _sweep_last_completed even on failure so the next
-                # sweep is a full interval out instead of immediately
-                # re-eligible; otherwise _next_event_time would stay in
-                # the past and the tick would re-fire every 50ms, hammering
-                # the scanner with stop/start cycles.
-                if self._loop is not None:
-                    self._sweep_last_completed[sweep_source] = self._loop.time()
-                if self._sweep_in_flight == sweep_source:
-                    self._sweep_in_flight = None
-                self._reschedule()

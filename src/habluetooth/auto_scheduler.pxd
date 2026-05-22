@@ -16,13 +16,10 @@ cdef class AutoScanScheduler:
     cdef public object _manager
     cdef public dict _requests_by_address
     cdef public dict _needs
-    cdef public dict _scanner_windows
-    cdef public dict _sweep_last_completed
-    cdef public object _sweep_in_flight
-    cdef public object _tick_handle
+    cdef public dict _workers
+    cdef public object _sweep_lock
     cdef public object _loop
     cdef public bint _running
-    cdef public set _pending_tasks
 
     cpdef void add_request(self, ActiveScanRequest request)
 
