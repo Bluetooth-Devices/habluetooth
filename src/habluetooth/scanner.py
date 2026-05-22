@@ -639,16 +639,13 @@ class HaScanner(BaseHaScanner):
         """Stop bluetooth scanner."""
         if self._start_future is not None and not self._start_future.done():
             self._start_future.set_exception(_AbortStartError())
-        # All state mutation runs inside _start_stop_lock so an in-flight
-        # async_request_active_window or _async_end_active_window can't
-        # set the handle / override after we've cleared them.
         async with self._start_stop_lock:
             self._clear_active_window_state()
             self._async_stop_scanner_watchdog()
             await self._async_stop_scanner()
 
     def _clear_active_window_state(self) -> None:
-        """Reset all AUTO active-window bookkeeping (must hold start/stop lock)."""
+        """Reset AUTO active-window state (caller must hold start/stop lock)."""
         if self._active_window_handle is not None:
             self._active_window_handle.cancel()
             self._active_window_handle = None
@@ -656,7 +653,7 @@ class HaScanner(BaseHaScanner):
         self._active_window_end = 0.0
 
     def _arm_active_window_timer(self, duration: float, new_end: float) -> None:
-        """Schedule the end-of-window callback and record the end time."""
+        """Schedule the end-of-window callback."""
         if TYPE_CHECKING:
             assert self._loop is not None
         self._active_window_end = new_end
@@ -668,12 +665,8 @@ class HaScanner(BaseHaScanner):
         """
         Run an active scan for ``duration`` seconds then restore prior mode.
 
-        Only effective for AUTO-mode scanners; ACTIVE/PASSIVE scanners are
-        already in a fixed mode and the call is a no-op.
-
-        Overlapping requests on the same scanner coalesce: a request whose
-        end time extends past the currently running window simply extends
-        the existing window, avoiding a second restart cycle.
+        No-op on non-AUTO scanners. Overlapping requests extend the
+        existing window in place instead of triggering a second restart.
         """
         if self.requested_mode is not BluetoothScanningMode.AUTO:
             return False
@@ -681,15 +674,10 @@ class HaScanner(BaseHaScanner):
             assert self._loop is not None
         new_end = self._loop.time() + duration
         if self._active_window_handle is not None:
-            # A window is already running; extend it if the new request
-            # reaches further than the existing end.
             if new_end > self._active_window_end:
                 self._active_window_handle.cancel()
                 self._arm_active_window_timer(duration, new_end)
             return True
-        # All state mutation runs inside _start_stop_lock so we don't race
-        # with _async_end_active_window (which may have been scheduled by
-        # the timer firing concurrently) or async_stop.
         async with self._start_stop_lock:
             self._scan_mode_override = BluetoothScanningMode.ACTIVE
             try:
@@ -699,32 +687,25 @@ class HaScanner(BaseHaScanner):
                 self._scan_mode_override = None
                 return False
             if self.current_mode is not BluetoothScanningMode.ACTIVE:
-                # _async_start_attempt silently falls back to PASSIVE on
-                # Linux when ACTIVE fails on the final retry. Treat that
-                # as a failed window: the scanner is back up but not in
-                # ACTIVE, so the scheduler must not believe it engaged.
+                # Linux's 4th-attempt fallback silently drops to PASSIVE.
                 self._scan_mode_override = None
                 return False
             self._arm_active_window_timer(duration, new_end)
         return True
 
     def _schedule_end_active_window(self) -> None:
-        """Schedule the end-of-window restart as a background task."""
+        """Spawn the end-of-window restart task."""
         self._active_window_handle = None
         self._create_background_task(self._async_end_active_window())
 
     async def _async_end_active_window(self) -> None:
-        """Restore the scanner to its underlying mode after an active window."""
+        """Restore the scanner to its underlying mode after the window ends."""
         async with self._start_stop_lock:
             if self._active_window_handle is not None:
-                # A new active window was started while this end-window
-                # task was queued; defer to it. The new window owns the
-                # override and the timer; clearing them here would race
-                # the new window into restarting in passive.
+                # A new window took over; let it own the override and timer.
                 return
             self._scan_mode_override = None
             if not self.scanning:
-                # Scanner was stopped while the window was active.
                 return
             try:
                 await self._async_stop_scanner()

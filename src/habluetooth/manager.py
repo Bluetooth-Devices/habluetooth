@@ -358,16 +358,9 @@ class BluetoothManager:
 
     async def async_setup(self) -> None:
         """Set up the bluetooth manager."""
-        # Lazy-imported here to break a Cython circular-cimport chain on
-        # macOS: channels.bluez transitively cimports BleakCallback from
-        # this module via scanner -> base_scanner -> manager, and pulling
-        # it in at module top-level made channels.bluez try to look up
-        # BleakCallback while this module is still being initialized.
+        # Lazy-imported to break a Cython init cycle through channels.bluez.
         from .central_manager import CentralBluetoothManager
-        from .channels.bluez import (
-            CONNECTION_ERRORS,
-            MGMTBluetoothCtl,
-        )
+        from .channels.bluez import CONNECTION_ERRORS, MGMTBluetoothCtl
 
         if CentralBluetoothManager.manager is None:
             CentralBluetoothManager.manager = self
