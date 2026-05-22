@@ -199,7 +199,8 @@ class _ScannerWorker:
         """
         Fire one coalesced window covering due per-device + sweep work.
 
-        Collection is sync; only ``_run_window`` is awaited. The window
+        Collection is sync; only the scanner's active-window call is
+        awaited. The window
         duration is the max of every due per-device duration and (if the
         sweep is due) the configured sweep duration; a single ACTIVE flip
         catches every device the scanner sees during the window so
@@ -224,7 +225,13 @@ class _ScannerWorker:
             duration = _AUTO_REDISCOVERY_SWEEP_DURATION
         self._window_end = now + duration
         try:
-            await self._run_window(duration)
+            await self._scanner.async_request_active_window(duration)
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.exception(
+                "%s: error running active window of %.1fs",
+                self._scanner.name,
+                duration,
+            )
         finally:
             if sweep_due:
                 # Advance on failure too so a stuck scanner doesn't
@@ -232,18 +239,6 @@ class _ScannerWorker:
                 self._sweep_last_completed = loop.time()
             self._advance_due(due_buckets, loop.time())
             self._window_end = 0.0
-
-    async def _run_window(self, duration: float) -> bool:
-        """Ask the scanner for an active window; swallow per-call exceptions."""
-        try:
-            return await self._scanner.async_request_active_window(duration)
-        except Exception:  # pylint: disable=broad-except
-            _LOGGER.exception(
-                "%s: error running active window of %.1fs",
-                self._scanner.name,
-                duration,
-            )
-            return False
 
 
 class AutoScanScheduler:
