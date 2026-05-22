@@ -296,13 +296,13 @@ class _ScannerWorker:
         """
         Set every advanced request's next-due to from_time + scan_interval.
 
-        ``from_time`` is whatever the caller wants the next due time
-        measured against (``_tick`` passes ``window_end`` so the next
-        window fires ``scan_interval`` after this one is expected to
-        finish). Called pre-await from ``_tick`` so the window's owner
-        has already claimed the slot before any other worker can wake;
-        no membership check is needed because nothing has yielded since
-        ``_collect_due_buckets`` populated due_buckets.
+        ``from_time`` is the timestamp the next-due is measured against;
+        ``_tick`` passes the tick's start ``now`` so ``scan_interval``
+        is the period between window starts. Called pre-await from
+        ``_tick`` so the window's owner has already claimed the slot
+        before any other worker can wake; no membership check is needed
+        because nothing has yielded since ``_collect_due_buckets``
+        populated due_buckets.
         """
         for entries, due in due_buckets:
             for request in due:
@@ -316,18 +316,21 @@ class _ScannerWorker:
         awaited. The window duration is the max of every due per-device
         duration and (if the sweep is due) the configured sweep duration
         so a single ACTIVE flip on the scanner catches every device it
-        sees during the window. The return value of
-        ``async_request_active_window`` is intentionally ignored: even on
-        failure we still advance the entry by ``scan_interval`` so a
-        stuck scanner can't busy-loop the worker.
+        sees during the window. ``scan_interval`` is measured between
+        window *starts* (not after each window ends), so the next due
+        time advances from ``now`` (this tick's start) rather than from
+        ``window_end``; the same applies to the sweep clock. The return
+        value of ``async_request_active_window`` is intentionally
+        ignored: even on failure we still advance by ``scan_interval``
+        so a stuck scanner can't busy-loop the worker.
         """
         loop = self._scheduler._loop
         if loop is None:
             return
-        if self._window_end > loop.time():
+        now = loop.time()
+        if self._window_end > now:
             return
         self._window_end = 0.0
-        now = loop.time()
         due_buckets, all_due = self._collect_due_buckets(now)
         sweep_due = now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
         if not all_due and not sweep_due:
@@ -335,19 +338,23 @@ class _ScannerWorker:
         duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
         if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
             duration = _AUTO_REDISCOVERY_SWEEP_DURATION
-        window_end = now + duration
-        self._window_end = window_end
+        self._window_end = now + duration
         # Advance per-device next-due times and the sweep clock BEFORE the
         # await so a concurrent worker that becomes the new owner of any
         # of these addresses mid-window (e.g. an RSSI flip on a fresh
         # advertisement) doesn't fire a duplicate window for the same
-        # request. Failure of the scanner call is handled the same way as
-        # success: we still don't retry until scan_interval out (or
-        # AUTO_REDISCOVERY_INTERVAL out for the sweep), which prevents
-        # busy-looping the worker on a stuck scanner.
-        self._advance_due(due_buckets, window_end)
+        # request. Advancing from ``now`` (not ``window_end``) makes
+        # ``scan_interval`` a true period between window starts; the
+        # alternative ("interval after window ends") would make the
+        # effective cadence ``scan_interval + duration`` and drift with
+        # the actual stop/start cost. Failure of the scanner call is
+        # handled the same way as success: we still don't retry until
+        # scan_interval out (or AUTO_REDISCOVERY_INTERVAL out for the
+        # sweep), which prevents busy-looping the worker on a stuck
+        # scanner.
+        self._advance_due(due_buckets, now)
         if sweep_due:
-            self._sweep_last_completed = window_end
+            self._sweep_last_completed = now
         try:
             await self._scanner.async_request_active_window(duration)
         except Exception:  # pylint: disable=broad-except

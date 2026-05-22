@@ -158,6 +158,43 @@ async def test_worker_tick_fires_active_window() -> None:
 
 
 @pytest.mark.asyncio
+async def test_worker_tick_advances_by_scan_interval_from_window_start() -> None:
+    """
+    Next-due is window_start + scan_interval, not window_end + scan_interval.
+
+    scan_interval is documented as the cadence between window *starts*.
+    The scheduler advances entries from the tick's ``now`` (when the
+    window starts) so the effective period is exactly ``scan_interval``;
+    advancing from ``window_end`` instead would make the effective
+    period ``scan_interval + scan_duration``.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:77"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=15.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        entries = sched._needs[address]
+        request = next(iter(entries))
+        entries[request] = loop.time() - 1.0
+        before_tick = loop.time()
+        await _run_worker_tick(sched, scanner.source)
+        # entries[request] should be the tick's now + scan_interval ==
+        # roughly before_tick + 120. Definitely NOT before_tick + 135
+        # (which is what "scan_interval after window ends" would give).
+        assert entries[request] == pytest.approx(before_tick + 120.0, abs=0.1)
+        assert entries[request] < before_tick + 130.0
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_worker_tick_coalesces_overlapping_requests() -> None:
     """Multiple requests for the same address coalesce on max scan_duration."""
     manager = get_manager()
@@ -290,6 +327,75 @@ async def test_first_sweeps_stagger_across_scanners() -> None:
         c1()
         c2()
         c3()
+
+
+@pytest.mark.asyncio
+async def test_first_sweep_stagger_wraps_past_window_size() -> None:
+    """
+    Past AUTO_INITIAL_SWEEP_DELAY/SWEEP_DURATION scanners, offsets wrap.
+
+    With the modulo cap on the spawn offset, the Nth scanner where
+    N == AUTO_INITIAL_SWEEP_DELAY/AUTO_REDISCOVERY_SWEEP_DURATION
+    wraps back to offset 0. This locks in the contract that the
+    stagger does not grow unboundedly with worker count.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    wrap_at = int(AUTO_INITIAL_SWEEP_DELAY // AUTO_REDISCOVERY_SWEEP_DURATION)
+    n = wrap_at + 1  # one past the wrap
+    cancels = []
+    try:
+        for i in range(n):
+            s = _RecordingAutoScanner(
+                f"AA:BB:CC:00:00:{i:02x}", BluetoothScanningMode.AUTO
+            )
+            cancels.append(manager.async_register_scanner(s))
+        # The Nth scanner's first sweep is wrap_at scanners' worth of
+        # offset modulo AUTO_INITIAL_SWEEP_DELAY -> back to 0; the
+        # first scanner was also at offset 0, so their next-sweep times
+        # match within a small slack for loop.time() advancing.
+        workers = list(sched._workers.values())
+        first_sweep_a = workers[0]._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        first_sweep_wrap = (
+            workers[wrap_at]._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        )
+        assert abs(first_sweep_wrap - first_sweep_a) < 1.0
+    finally:
+        for c in cancels:
+            c()
+
+
+@pytest.mark.asyncio
+async def test_active_scan_registered_before_auto_scanner_wakes_on_register() -> None:
+    """
+    A request registered before any AUTO scanner exists wakes the right one.
+
+    Sequence: async_register_active_scan (request enters
+    _requests_by_address; no worker exists yet for the device).
+    Later, an AUTO scanner is registered and starts seeing the device.
+    The first advertisement on that scanner must wake its worker so
+    the entry in _needs is acted upon.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:88"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    # Sanity: request is recorded; no worker yet for any source.
+    assert address in sched._requests_by_address
+    try:
+        scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:99", BluetoothScanningMode.AUTO)
+        register_cancel = manager.async_register_scanner(scanner)
+        try:
+            worker = sched._workers[scanner.source]
+            worker._wake.clear()
+            _inject(scanner, address)
+            assert worker._wake.is_set()
+            # The address now has a tracked entry on this scanner.
+            assert address in sched._needs
+        finally:
+            register_cancel()
+    finally:
+        cancel()
 
 
 @pytest.mark.asyncio
