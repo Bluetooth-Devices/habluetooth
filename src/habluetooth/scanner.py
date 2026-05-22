@@ -681,6 +681,15 @@ class HaScanner(BaseHaScanner):
             return True
         async with self._start_stop_lock:
             self._scan_mode_override = BluetoothScanningMode.ACTIVE
+            # If the scanner is still ACTIVE here, the end-of-window task
+            # for the previous timer is queued but hasn't run yet (it
+            # would have cleared current_mode to PASSIVE). Skip the
+            # restart, arm a new timer; _async_end_active_window will
+            # see the new handle and bail when it acquires the lock.
+            mode_before_restart = self.current_mode
+            if mode_before_restart is BluetoothScanningMode.ACTIVE:
+                self._arm_active_window_timer(duration, new_end)
+                return True
             try:
                 await self._async_stop_then_start_under_lock()
             except ScannerStartError:
@@ -691,7 +700,8 @@ class HaScanner(BaseHaScanner):
                 with contextlib.suppress(ScannerStartError):
                     await self._async_stop_then_start_under_lock()
                 return False
-            if self.current_mode is not BluetoothScanningMode.ACTIVE:
+            mode_after_restart = self.current_mode
+            if mode_after_restart is not BluetoothScanningMode.ACTIVE:
                 # Linux's 4th-attempt fallback silently drops to PASSIVE.
                 self._scan_mode_override = None
                 return False

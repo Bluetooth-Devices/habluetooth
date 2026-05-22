@@ -1822,6 +1822,63 @@ async def test_async_request_active_window_extends_existing_window() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_request_active_window_skips_restart_if_still_active() -> None:
+    """
+    Re-arm the timer instead of restarting if the scanner is still ACTIVE.
+
+    A new request arriving after the end-of-window timer fires but
+    before the bg task runs reuses the in-flight ACTIVE mode and just
+    arms a new timer.
+    """
+
+    class MockBleakScanner:
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        @property
+        def discovered_devices(self):
+            return []
+
+        def register_detection_callback(self, callback):
+            pass
+
+    starts: list[str] = []
+
+    def _factory(*_args, **kwargs):
+        starts.append(kwargs["scanning_mode"])
+        return MockBleakScanner()
+
+    with patch("habluetooth.scanner.OriginalBleakScanner", side_effect=_factory):
+        scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        await scanner.async_start()
+        assert starts == ["passive"]
+
+        assert await scanner.async_request_active_window(100.0) is True
+        assert starts == ["passive", "active"]
+        # Simulate the timer firing but the end-window task not having
+        # run yet: clear the handle (like _schedule_end_active_window
+        # does) but leave _scan_mode_override / current_mode == ACTIVE.
+        handle = scanner._active_window_handle
+        assert handle is not None
+        handle.cancel()
+        scanner._active_window_handle = None
+
+        # Scanner is still ACTIVE; the new request must just re-arm
+        # the timer, not do an active->passive->active pair.
+        before_len = len(starts)
+        assert await scanner.async_request_active_window(50.0) is True
+        assert scanner._active_window_handle is not None
+        # No new starts; the restart was skipped.
+        assert len(starts) == before_len  # type: ignore[unreachable]
+
+        await scanner.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_async_stop_clears_active_window_state() -> None:
     """Stopping mid-window cancels the timer and clears the override."""
 
