@@ -523,6 +523,7 @@ async def test_add_scanner_before_start_defers_worker() -> None:
     loop = sched._loop
     assert loop is not None
     sched._loop = None
+    sched._running = False
     try:
         scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
         sched.add_scanner(scanner)
@@ -776,11 +777,12 @@ async def test_start_replays_pre_start_requests_when_history_exists() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     _inject(scanner, address)
     try:
-        # Drop loop to simulate pre-start() state, register, then
-        # restore and call start() again to drive the replay path.
+        # Simulate pre-start() state: clear _loop and _running so
+        # add_request takes its no-loop path and start() re-runs.
         saved_loop = sched._loop
         assert saved_loop is not None
         sched._loop = None
+        sched._running = False
         try:
             cancel = manager.async_register_active_scan(
                 address, scan_interval=60.0, scan_duration=5.0
@@ -797,8 +799,28 @@ async def test_start_replays_pre_start_requests_when_history_exists() -> None:
                 cancel()
         finally:
             sched._loop = saved_loop
+            sched._running = True
     finally:
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_start_is_idempotent_when_already_running() -> None:
+    """
+    A second start() call without an intervening stop() is a no-op.
+
+    Guards against an accidental double-call binding a different loop
+    to the same scheduler or re-running the pre-start replay block.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    # The conftest's async_setup already called start(), so _running
+    # is True. A second start with a different loop must NOT replace
+    # _loop or re-run anything.
+    original_loop = sched._loop
+    bogus_loop = object()
+    sched.start(bogus_loop)  # type: ignore[arg-type]
+    assert sched._loop is original_loop
 
 
 @pytest.mark.asyncio
@@ -1268,10 +1290,12 @@ async def test_start_ignores_non_auto_scanner() -> None:
         # Re-run start() so the False branch (non-AUTO scanner) of the
         # `if scanner.requested_mode is AUTO` check inside start() is hit.
         # First shut down the worker tasks the existing start() already
-        # spawned so we don't leak.
+        # spawned so we don't leak. Also flip _running back to False so
+        # start()'s idempotency guard lets the re-run through.
         for worker in list(sched._workers.values()):
             await _replace_worker_task(worker)
         sched._workers.clear()
+        sched._running = False
         sched.start(loop)
         assert auto.source in sched._workers
         assert active.source not in sched._workers

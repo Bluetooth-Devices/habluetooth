@@ -416,9 +416,13 @@ class AutoScanScheduler:
         """
         Bind to the event loop and spawn one worker per AUTO scanner.
 
-        Idempotent on the worker-spawn side: ``_workers`` is only added
-        to for sources that don't already have a worker, so a second
-        ``start()`` call won't create duplicate tasks.
+        Fully idempotent: if ``_running`` is already True (start was
+        called previously without an intervening ``stop()``), this is a
+        no-op so an accidental double-call can't bind a different loop
+        to the same scheduler or re-run the replay. A genuine restart
+        sequence is ``stop()`` (which sets ``_running = False``) and
+        then ``start(new_loop)``, which works because ``stop()`` clears
+        the workers dict.
 
         Replays any ``_requests_by_address`` registered before
         ``start()`` into ``_needs`` so the first window for those
@@ -428,6 +432,8 @@ class AutoScanScheduler:
         ``add_request``: no seed when ``last_service_info`` is None;
         ``on_advertisement`` will bootstrap on first sight.
         """
+        if self._running:
+            return
         self._loop = loop
         self._running = True
         for scanner in self._manager.async_current_scanners():
