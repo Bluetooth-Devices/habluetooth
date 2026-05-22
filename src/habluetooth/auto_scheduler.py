@@ -247,19 +247,22 @@ class _ScannerWorker:
         due_buckets: list[
             tuple[dict[ActiveScanRequest, float], list[ActiveScanRequest]]
         ],
-        now: float,
+        from_time: float,
     ) -> None:
         """
-        Push every advanced request's next-due to now + scan_interval.
+        Set every advanced request's next-due to from_time + scan_interval.
 
-        Called pre-await from ``_tick`` so the window's owner has already
-        claimed the slot before any other worker can wake; no membership
-        check is needed because nothing has yielded since
+        ``from_time`` is whatever the caller wants the next due time
+        measured against (``_tick`` passes ``window_end`` so the next
+        window fires ``scan_interval`` after this one is expected to
+        finish). Called pre-await from ``_tick`` so the window's owner
+        has already claimed the slot before any other worker can wake;
+        no membership check is needed because nothing has yielded since
         ``_collect_due_buckets`` populated due_buckets.
         """
         for entries, due in due_buckets:
             for request in due:
-                entries[request] = now + request.scan_interval
+                entries[request] = from_time + request.scan_interval
 
     async def _tick(self) -> None:
         """
@@ -344,7 +347,21 @@ class AutoScanScheduler:
                 self._spawn_worker(scanner)
 
     def stop(self) -> None:
-        """Cancel all worker tasks."""
+        """
+        Cancel all worker tasks (fire-and-forget).
+
+        Sync to match ``BluetoothManager.async_stop``. ``worker.stop()``
+        calls ``task.cancel()`` but doesn't await: the cancellation
+        propagates on the next event-loop iteration and the task is
+        reaped by asyncio. If a worker is mid-``_tick`` (mid-await on
+        ``scanner.async_request_active_window``) when stop runs, the
+        scanner call may complete its current await before
+        ``CancelledError`` is delivered; for HA shutdown that's harmless
+        because the scanners themselves are being torn down. Callers
+        outside teardown that need to know the workers have actually
+        stopped should ensure the event loop runs at least one more
+        iteration after this returns.
+        """
         self._running = False
         for worker in self._workers.values():
             worker.stop()

@@ -50,7 +50,7 @@ cdef class _ScannerWorker:
         due=list,
         request=ActiveScanRequest,
     )
-    cpdef void _advance_due(self, list due_buckets, double now)
+    cpdef void _advance_due(self, list due_buckets, double from_time)
 
 
 cdef class AutoScanScheduler:

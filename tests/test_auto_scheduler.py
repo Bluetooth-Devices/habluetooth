@@ -106,7 +106,7 @@ async def test_advertisement_starts_tracking() -> None:
     manager = get_manager()
     sched = manager._auto_scheduler
     cancel = manager.async_register_active_scan(
-        "11:22:33:44:55:66", scan_interval=120.0, scan_duration=3.0
+        "11:22:33:44:55:66", scan_interval=120.0, scan_duration=6.0
     )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
@@ -171,7 +171,7 @@ async def test_worker_tick_coalesces_overlapping_requests() -> None:
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
     cancel1 = manager.async_register_active_scan(
-        address, scan_interval=120.0, scan_duration=3.0
+        address, scan_interval=120.0, scan_duration=6.0
     )
     cancel2 = manager.async_register_active_scan(
         address, scan_interval=120.0, scan_duration=10.0
@@ -199,10 +199,10 @@ async def test_multiple_requests_same_address_track_independent_intervals() -> N
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
     cancel_fast = manager.async_register_active_scan(
-        address, scan_interval=60.0, scan_duration=2.0
+        address, scan_interval=60.0, scan_duration=5.0
     )
     cancel_slow = manager.async_register_active_scan(
-        address, scan_interval=300.0, scan_duration=4.0
+        address, scan_interval=300.0, scan_duration=7.0
     )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
@@ -214,13 +214,13 @@ async def test_multiple_requests_same_address_track_independent_intervals() -> N
         entries[fast] = loop.time() - 1.0
         entries[slow] = loop.time() + 200.0
         await _run_worker_tick(sched, scanner.source)
-        assert scanner.active_window_calls == [2.0]
+        assert scanner.active_window_calls == [5.0]
         assert entries[fast] > loop.time()
         assert entries[slow] > loop.time() + 100
         entries[fast] = loop.time() - 1.0
         entries[slow] = loop.time() - 1.0
         await _run_worker_tick(sched, scanner.source)
-        assert scanner.active_window_calls == [2.0, 4.0]
+        assert scanner.active_window_calls == [5.0, 7.0]
     finally:
         cancel_fast()
         cancel_slow()
@@ -502,15 +502,21 @@ async def test_on_advertisement_re_bootstraps_pruned_tracking() -> None:
 
 @pytest.mark.asyncio
 async def test_register_active_scan_validates_inputs() -> None:
-    """Invalid scan_interval / scan_duration raise ValueError."""
+    """scan_interval / scan_duration below the configured minimums raise."""
     manager = get_manager()
-    with pytest.raises(ValueError, match="scan_interval must be > 0"):
+    # scan_interval below 60s.
+    with pytest.raises(ValueError, match="scan_interval must be >="):
         manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=0)
-    with pytest.raises(ValueError, match="scan_interval must be > 0"):
-        manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=-1)
-    with pytest.raises(ValueError, match="scan_duration must be >= 0"):
+    with pytest.raises(ValueError, match="scan_interval must be >="):
+        manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=30.0)
+    # scan_duration below 5s.
+    with pytest.raises(ValueError, match="scan_duration must be >="):
         manager.async_register_active_scan(
             "AA:BB:CC:DD:EE:00", scan_interval=60.0, scan_duration=-0.5
+        )
+    with pytest.raises(ValueError, match="scan_duration must be >="):
+        manager.async_register_active_scan(
+            "AA:BB:CC:DD:EE:00", scan_interval=60.0, scan_duration=4.5
         )
 
 
@@ -565,7 +571,7 @@ async def test_dispatch_does_not_resurrect_cancelled_request() -> None:
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
     cancel = manager.async_register_active_scan(
-        address, scan_interval=60.0, scan_duration=3.0
+        address, scan_interval=60.0, scan_duration=6.0
     )
 
     gate = asyncio.Event()
@@ -1051,10 +1057,10 @@ async def test_coalesce_three_due_uses_max_clamped() -> None:
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
     c1 = manager.async_register_active_scan(
-        address, scan_interval=60.0, scan_duration=2.0
+        address, scan_interval=60.0, scan_duration=5.0
     )
     c2 = manager.async_register_active_scan(
-        address, scan_interval=60.0, scan_duration=4.0
+        address, scan_interval=60.0, scan_duration=7.0
     )
     c3 = manager.async_register_active_scan(
         address, scan_interval=60.0, scan_duration=9.0
@@ -1136,7 +1142,7 @@ async def test_coalesce_only_due_requests_count() -> None:
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
     c_short = manager.async_register_active_scan(
-        address, scan_interval=60.0, scan_duration=2.0
+        address, scan_interval=60.0, scan_duration=5.0
     )
     c_long = manager.async_register_active_scan(
         address, scan_interval=300.0, scan_duration=20.0
@@ -1146,14 +1152,14 @@ async def test_coalesce_only_due_requests_count() -> None:
     try:
         _inject(scanner, address)
         entries = sched._needs[address]
-        short_req = next(r for r in entries if r.scan_duration == 2.0)
+        short_req = next(r for r in entries if r.scan_duration == 5.0)
         long_req = next(r for r in entries if r.scan_duration == 20.0)
         # Only the short request is due; the long one is well in the
         # future and must not pull its bigger duration into the window.
         entries[short_req] = loop.time() - 1.0
         entries[long_req] = loop.time() + 200.0
         await sched._workers[scanner.source]._tick()
-        assert scanner.active_window_calls == [2.0]
+        assert scanner.active_window_calls == [5.0]
     finally:
         c_short()
         c_long()
@@ -1169,7 +1175,7 @@ async def test_coalesce_distinct_addresses_share_one_window() -> None:
     addr_a = "11:22:33:44:55:01"
     addr_b = "11:22:33:44:55:02"
     c1 = manager.async_register_active_scan(
-        addr_a, scan_interval=60.0, scan_duration=3.0
+        addr_a, scan_interval=60.0, scan_duration=6.0
     )
     c2 = manager.async_register_active_scan(
         addr_b, scan_interval=60.0, scan_duration=7.0
@@ -1201,7 +1207,7 @@ async def test_tick_combines_due_sweep_and_per_device_into_one_window() -> None:
     loop = asyncio.get_running_loop()
     address = "11:22:33:44:55:66"
     cancel = manager.async_register_active_scan(
-        address, scan_interval=60.0, scan_duration=3.0
+        address, scan_interval=60.0, scan_duration=6.0
     )
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
@@ -1273,7 +1279,7 @@ async def test_dispatch_coalesces_different_durations_to_max() -> None:
     addr_short = "11:22:33:44:55:01"
     addr_long = "11:22:33:44:55:02"
     c_short = manager.async_register_active_scan(
-        addr_short, scan_interval=60.0, scan_duration=3.0
+        addr_short, scan_interval=60.0, scan_duration=6.0
     )
     c_long = manager.async_register_active_scan(
         addr_long, scan_interval=60.0, scan_duration=12.0

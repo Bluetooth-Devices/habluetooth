@@ -39,6 +39,8 @@ from .const import (
     DEFAULT_ACTIVE_SCAN_INTERVAL,
     FAILED_ADAPTER_MAC,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
+    MIN_ACTIVE_SCAN_DURATION,
+    MIN_ACTIVE_SCAN_INTERVAL,
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .models import (
@@ -1084,10 +1086,10 @@ class BluetoothManager:
             scan_interval = DEFAULT_ACTIVE_SCAN_INTERVAL
         if scan_duration is None:
             scan_duration = DEFAULT_ACTIVE_SCAN_DURATION
-        if scan_interval <= 0:
-            raise ValueError("scan_interval must be > 0")
-        if scan_duration < 0:
-            raise ValueError("scan_duration must be >= 0")
+        if scan_interval < MIN_ACTIVE_SCAN_INTERVAL:
+            raise ValueError(f"scan_interval must be >= {MIN_ACTIVE_SCAN_INTERVAL}s")
+        if scan_duration < MIN_ACTIVE_SCAN_DURATION:
+            raise ValueError(f"scan_duration must be >= {MIN_ACTIVE_SCAN_DURATION}s")
         request = ActiveScanRequest(address, scan_interval, scan_duration)
         self._auto_scheduler.add_request(request)
         return partial(self._auto_scheduler.remove_request, request)

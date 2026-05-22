@@ -61,9 +61,17 @@ AUTO_INITIAL_SWEEP_DELAY: Final = 60 * 10
 AUTO_REDISCOVERY_INTERVAL: Final = 60 * 60 * 12
 AUTO_REDISCOVERY_SWEEP_DURATION: Final = 15.0
 
-# Per-callback scan_duration is clamped into this range.
-AUTO_WINDOW_MIN_DURATION: Final = 1.0
+# Per-callback scan_duration is clamped into this range. The floor
+# matches the validation in async_register_active_scan; the ceiling is
+# the longest single ACTIVE flip we'll ever do for one device tick.
+AUTO_WINDOW_MIN_DURATION: Final = 5.0
 AUTO_WINDOW_MAX_DURATION: Final = 30.0
+
+# Minimum values accepted by async_register_active_scan. Anything
+# shorter would just churn the radio without giving the device time to
+# respond on its scan response.
+MIN_ACTIVE_SCAN_INTERVAL: Final = 60.0
+MIN_ACTIVE_SCAN_DURATION: Final = 5.0
 
 # Defaults used by async_register_active_scan when the caller does
 # not specify a cadence. One 10s active window every 5 minutes per
