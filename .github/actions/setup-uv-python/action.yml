@@ -39,4 +39,10 @@ runs:
       shell: bash
       env:
         PYTHON_VERSION: ${{ inputs.python-version }}
-      run: uv python install "${PYTHON_VERSION}"
+      # 'uv python install' on Windows blows up with a reparse-point tag
+      # mismatch (os error 4394) when cache-python: true already restored
+      # the install dir, so only install when find says we have nothing yet.
+      run: |
+        if ! uv python find "${PYTHON_VERSION}" >/dev/null 2>&1; then
+          uv python install "${PYTHON_VERSION}"
+        fi
