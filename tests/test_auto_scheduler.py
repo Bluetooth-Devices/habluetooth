@@ -1490,30 +1490,6 @@ async def test_coalesce_none_duration_uses_min() -> None:
 
 
 @pytest.mark.asyncio
-async def test_coalesce_skips_non_finite_durations() -> None:
-    """
-    A NaN / inf scan_duration on a hand-built request must not propagate.
-
-    async_register_active_scan rejects non-finite values at the
-    boundary, but ActiveScanRequest can be constructed directly;
-    _coalesce_duration must defensively skip non-finite scan_duration
-    entries so a bad value never lands in call_later as a NaN
-    timeout.
-    """
-    import math as _math
-
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    bad = ActiveScanRequest("ZZ:00:00:00:00:00", 60.0, _math.nan)
-    good = ActiveScanRequest("ZZ:00:00:00:00:01", 60.0, 10.0)
-    result = sched._coalesce_duration([bad, good])
-    assert result == 10.0
-    # All-NaN falls back to MIN.
-    result_all_bad = sched._coalesce_duration([bad])
-    assert result_all_bad == AUTO_WINDOW_MIN_DURATION
-
-
-@pytest.mark.asyncio
 async def test_coalesce_only_due_requests_count() -> None:
     """Only the requests that are actually due contribute to coalesced duration."""
     manager = get_manager()

@@ -106,7 +106,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import math
 from typing import TYPE_CHECKING
 
 from .const import (
@@ -630,17 +629,14 @@ class AutoScanScheduler:
         """
         Pick the max requested duration, clamped to the configured range.
 
-        ``async_register_active_scan`` already rejects NaN / inf
-        inputs, but ``ActiveScanRequest`` can be constructed directly
-        (e.g., internal callers); the ``isfinite`` guard here keeps a
-        bad value from poisoning ``call_later``'s timeout.
+        Hot path; trusts ``scan_duration`` to be a finite number.
+        ``async_register_active_scan`` rejects non-finite values at
+        the public boundary, so this function does not pay a per-tick
+        ``isfinite`` cost. Internal callers that construct
+        ``ActiveScanRequest`` directly must respect the same contract.
         """
         requested = max(
-            (
-                e.scan_duration
-                for e in entries
-                if e.scan_duration is not None and math.isfinite(e.scan_duration)
-            ),
+            (e.scan_duration for e in entries if e.scan_duration is not None),
             default=_AUTO_WINDOW_MIN_DURATION,
         )
         if requested < _AUTO_WINDOW_MIN_DURATION:
