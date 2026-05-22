@@ -11,9 +11,9 @@ whichever scanner the manager currently considers the device's owner
 (``manager.async_last_service_info(address).source``). If three other
 AUTO scanners can also see the device, they stay PASSIVE for that
 window. Ownership can flip across scanners over time as RSSI changes;
-the next-due window then fires on the new owner. Sweeps are different
-and run on every AUTO scanner independently, since their job is to
-find devices not yet in history.
+the next-due window then fires on the new owner (see "Migration"
+below). Sweeps are different and run on every AUTO scanner
+independently, since their job is to find devices not yet in history.
 
 
 Flow
@@ -21,9 +21,9 @@ Flow
 
                      add_request(req)            on_advertisement(adv)
                         |                            |
-                        | seed _needs[addr][req]     | re-seed if pruned
-                        | = now + scan_interval      | = now + scan_interval
-                        | wake address's owner       | wake adv.source
+                        | seed _needs[addr][req]     | seed if pruned;
+                        | = now + scan_interval      | always wake
+                        | wake address's owner       | adv.source's worker
                         v                            v
                   +------------------------------------------+
                   |  AutoScanScheduler                       |
@@ -52,10 +52,33 @@ Flow
                   |    2. sweep_due = sweep cadence elapsed  |
                   |    3. duration = max(due durations,      |
                   |       SWEEP_DURATION if sweep_due)       |
-                  |    4. ONE await:                         |
+                  |    4. _advance_due (pre-await) so the    |
+                  |       new owner of any of these          |
+                  |       addresses can't double-fire        |
+                  |    5. ONE await:                         |
                   |       scanner.async_request_active_window|
-                  |    5. _advance_due / advance sweep clock |
                   +------------------------------------------+
+
+
+Migration
+=========
+
+When a device moves from scanner A to scanner B (RSSI flip; manager
+swaps ``_all_history[addr].source`` from A to B), the scheduler picks
+up the new owner without any address-level rescheduling:
+
+1. The manager's ``_scanner_adv_received`` updates ``_all_history``
+   and then calls ``auto_scheduler.on_advertisement(service_info)``
+   *before* the same-payload short-circuit, so the flip is visible to
+   the scheduler even for static-payload beacons.
+2. ``on_advertisement`` always calls ``_wake_worker(adv.source)`` when
+   the address has registered requests. B's worker wakes up.
+3. On B's next ``_tick``, ``_collect_due_buckets`` reads
+   ``last_service_info(addr).source`` and sees B; the entry is
+   collected and dispatched. A's worker on its own next tick sees
+   ``last_service_info(addr).source != A`` and skips.
+4. The pre-await ``_advance_due`` in step 4 of ``_tick`` prevents A
+   from double-firing if the flip lands mid-window.
 
 
 Invariants
@@ -73,6 +96,9 @@ Invariants
 * A registration kick-starts tracking immediately; ``on_advertisement``
   is the fallback that re-creates the entry if the worker pruned it
   because the device's history was missing at tick time.
+* Every accepted advertisement on a tracked address wakes the source's
+  worker so an ownership flip on the same scanner triggers a
+  re-evaluation of ``_next_event_at``.
 """
 
 from __future__ import annotations
