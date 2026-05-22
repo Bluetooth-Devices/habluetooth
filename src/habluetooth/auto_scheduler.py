@@ -135,7 +135,15 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class ActiveScanRequest:
-    """A registered need for on-demand active scans on a specific address."""
+    """
+    A registered need for on-demand active scans on a specific address.
+
+    ``scan_interval`` and ``scan_duration`` must both be finite positive
+    floats. ``async_register_active_scan`` enforces the boundary
+    (rejecting NaN / inf / below-minimum values and substituting the
+    DEFAULT_* constants when callers pass None); internal callers
+    constructing this directly are expected to honor the same contract.
+    """
 
     __slots__ = ("address", "scan_duration", "scan_interval")
 
@@ -143,7 +151,7 @@ class ActiveScanRequest:
         self,
         address: str,
         scan_interval: float,
-        scan_duration: float | None,
+        scan_duration: float,
     ) -> None:
         self.address = address
         self.scan_interval = scan_interval
@@ -629,14 +637,15 @@ class AutoScanScheduler:
         """
         Pick the max requested duration, clamped to the configured range.
 
-        Hot path; trusts ``scan_duration`` to be a finite number.
-        ``async_register_active_scan`` rejects non-finite values at
-        the public boundary, so this function does not pay a per-tick
-        ``isfinite`` cost. Internal callers that construct
-        ``ActiveScanRequest`` directly must respect the same contract.
+        Hot path; trusts ``ActiveScanRequest.scan_duration`` to be a
+        finite positive float. The public boundary
+        (``async_register_active_scan``) substitutes
+        ``DEFAULT_ACTIVE_SCAN_DURATION`` for ``None`` and rejects
+        NaN / inf / below-minimum values, so this function pays no
+        per-tick None / isfinite cost.
         """
         requested = max(
-            (e.scan_duration for e in entries if e.scan_duration is not None),
+            (e.scan_duration for e in entries),
             default=_AUTO_WINDOW_MIN_DURATION,
         )
         if requested < _AUTO_WINDOW_MIN_DURATION:

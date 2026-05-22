@@ -13,7 +13,7 @@ cdef class ActiveScanRequest:
 
     cdef public str address
     cdef public double scan_interval
-    cdef public object scan_duration
+    cdef public double scan_duration
 
 
 cdef class _ScannerWorker:

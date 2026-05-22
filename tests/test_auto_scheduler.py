@@ -591,7 +591,7 @@ async def test_duration_clamped_to_bounds() -> None:
     """_coalesce_duration clamps the requested duration to the configured range."""
     sched = get_manager()._auto_scheduler
 
-    def _req(duration: float | None) -> ActiveScanRequest:
+    def _req(duration: float) -> ActiveScanRequest:
         return ActiveScanRequest("AA", 60.0, duration)
 
     assert sched._coalesce_duration([_req(0.01)]) == AUTO_WINDOW_MIN_DURATION
@@ -601,7 +601,8 @@ async def test_duration_clamped_to_bounds() -> None:
     assert (
         sched._coalesce_duration([_req(7.5), _req(1000.0)]) == AUTO_WINDOW_MAX_DURATION
     )
-    assert sched._coalesce_duration([_req(None)]) == AUTO_WINDOW_MIN_DURATION
+    # Empty list falls back to the configured minimum.
+    assert sched._coalesce_duration([]) == AUTO_WINDOW_MIN_DURATION
 
 
 @pytest.mark.asyncio
@@ -1219,7 +1220,7 @@ async def test_remove_request_handles_missing_bucket() -> None:
     """remove_request tolerates a request whose bucket is already gone."""
     manager = get_manager()
     sched = manager._auto_scheduler
-    request = ActiveScanRequest("AA:BB:CC:DD:EE:99", 60.0, None)
+    request = ActiveScanRequest("AA:BB:CC:DD:EE:99", 60.0, 10.0)
     # Bucket was never added; remove_request must be a no-op.
     sched.remove_request(request)
     assert "AA:BB:CC:DD:EE:99" not in sched._requests_by_address
@@ -1285,8 +1286,8 @@ async def test_on_advertisement_with_all_requests_already_tracked() -> None:
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     address = "11:22:33:44:55:66"
-    req_a = ActiveScanRequest(address, 60.0, None)
-    req_b = ActiveScanRequest(address, 120.0, None)
+    req_a = ActiveScanRequest(address, 60.0, 10.0)
+    req_b = ActiveScanRequest(address, 120.0, 10.0)
     sched._requests_by_address[address] = {req_a, req_b}
     sched._needs[address] = {req_a: 0.0, req_b: 0.0}
     try:
@@ -1457,35 +1458,6 @@ async def test_coalesce_clamps_oversize_request() -> None:
         assert scanner.active_window_calls == [AUTO_WINDOW_MAX_DURATION]
     finally:
         cancel()
-        register_cancel()
-
-
-@pytest.mark.asyncio
-async def test_coalesce_none_duration_uses_min() -> None:
-    """
-    An explicit None scan_duration on a request falls back to the minimum.
-
-    Goes around async_register_active_scan (which defaults scan_duration
-    to DEFAULT_ACTIVE_SCAN_DURATION) to exercise the None branch of
-    _coalesce_duration directly with a hand-built ActiveScanRequest.
-    """
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    loop = asyncio.get_running_loop()
-    address = "11:22:33:44:55:66"
-    request = ActiveScanRequest(address, 60.0, None)
-    sched._requests_by_address.setdefault(address, set()).add(request)
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        _inject(scanner, address)
-        entries = sched._needs[address]
-        for req in list(entries):
-            entries[req] = loop.time() - 1.0
-        await sched._workers[scanner.source]._tick()
-        assert scanner.active_window_calls == [AUTO_WINDOW_MIN_DURATION]
-    finally:
-        sched.remove_request(request)
         register_cancel()
 
 
@@ -1787,7 +1759,7 @@ async def test_add_request_before_start_does_not_seed_needs() -> None:
     original_loop = sched._loop
     sched._loop = None
     try:
-        sched.add_request(ActiveScanRequest(address, 60.0, None))
+        sched.add_request(ActiveScanRequest(address, 60.0, 10.0))
         assert address in sched._requests_by_address
         assert address not in sched._needs
     finally:
@@ -1810,7 +1782,7 @@ async def test_add_request_idempotent_keeps_existing_due() -> None:
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:42", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        request = ActiveScanRequest(address, 60.0, None)
+        request = ActiveScanRequest(address, 60.0, 10.0)
         sched.add_request(request)
         # Inject so add_request can see history on the second call.
         _inject(scanner, address)
