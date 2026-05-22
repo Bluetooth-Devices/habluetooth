@@ -1026,11 +1026,17 @@ async def test_inject_100_bluez_raw_end_to_end_changed(
 
 
 # ---------------------------------------------------------------------------
-# _update_name_cache hot-path benchmarks
+# seed_name_cache benchmarks
 #
-# _update_name_cache runs on every advertisement from every scanner after the
-# Apple pre-filter, so its cost matters. These benchmarks isolate the four
-# distinct paths so a regression in any one shows up clearly:
+# The per-advertisement cost of the name cache in production is dominated by
+# the inlined fast path inside _scanner_adv_received (covered end-to-end by
+# the test_inject_100_* benchmarks above); the cdef _update_name_cache helper
+# itself only runs on genuine cache writes. We cannot call that cdef directly
+# from Python, so these microbenchmarks measure it through the
+# seed_name_cache wrapper. That adds a Python-level call layer on top, so
+# absolute numbers here include some wrapper overhead, but the relative
+# numbers across the prefix-rule paths still catch regressions in the body.
+# Covered paths:
 #   1. identity   - same Python str object as cached (typical steady state)
 #   2. equality   - cached and incoming compare equal but are different objects
 #                   (e.g. names rebuilt by different deserialization paths)
@@ -1041,7 +1047,7 @@ async def test_inject_100_bluez_raw_end_to_end_changed(
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
-def test_update_name_cache_steady_state_identity(benchmark: BenchmarkFixture) -> None:
+def test_seed_name_cache_steady_state_identity(benchmark: BenchmarkFixture) -> None:
     """Hot path: same name object as cached. Should be a dict.get + pointer compare."""
     manager = get_manager()
     address = "44:44:33:11:23:60"
@@ -1056,7 +1062,7 @@ def test_update_name_cache_steady_state_identity(benchmark: BenchmarkFixture) ->
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
-def test_update_name_cache_steady_state_equality(benchmark: BenchmarkFixture) -> None:
+def test_seed_name_cache_steady_state_equality(benchmark: BenchmarkFixture) -> None:
     """Hot path: cached name equals incoming but different str objects (no identity)."""
     manager = get_manager()
     address = "44:44:33:11:23:61"
@@ -1074,7 +1080,7 @@ def test_update_name_cache_steady_state_equality(benchmark: BenchmarkFixture) ->
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
-def test_update_name_cache_address_fallback(benchmark: BenchmarkFixture) -> None:
+def test_seed_name_cache_address_fallback(benchmark: BenchmarkFixture) -> None:
     """Hot path: passive scanner with no name (name == address). Must short-circuit."""
     manager = get_manager()
     address = "44:44:33:11:23:62"
@@ -1088,7 +1094,7 @@ def test_update_name_cache_address_fallback(benchmark: BenchmarkFixture) -> None
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
-def test_update_name_cache_cold_first_name(benchmark: BenchmarkFixture) -> None:
+def test_seed_name_cache_cold_first_name(benchmark: BenchmarkFixture) -> None:
     """First name observed for an address. Pops the entry every iteration."""
     manager = get_manager()
     address = "44:44:33:11:23:63"
@@ -1102,7 +1108,7 @@ def test_update_name_cache_cold_first_name(benchmark: BenchmarkFixture) -> None:
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
-def test_update_name_cache_prefix_rule_paths(benchmark: BenchmarkFixture) -> None:
+def test_seed_name_cache_prefix_rule_paths(benchmark: BenchmarkFixture) -> None:
     """
     Mixed write paths: extension, truncation, and rename.
 
