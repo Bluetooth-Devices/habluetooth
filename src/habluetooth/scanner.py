@@ -387,13 +387,24 @@ class HaScanner(BaseHaScanner):
         self._async_setup_scanner_watchdog()
         await restore_discoveries(self.scanner, self.adapter)
 
+    def _effective_mode(self) -> BluetoothScanningMode | None:
+        """
+        Return the mode the scanner should actually start in.
+
+        ``_scan_mode_override`` takes precedence so the scheduler can
+        transiently flip an AUTO scanner to ACTIVE for an on-demand
+        window without losing the integration-declared
+        ``requested_mode``.
+        """
+        return self._scan_mode_override or self.requested_mode
+
     async def _async_start_attempt(self, attempt: int) -> bool:
         """Start the scanner and handle errors."""
         assert (  # noqa: S101
             self._loop is not None
         ), "Loop is not set, call async_setup first"
 
-        effective_mode = self._scan_mode_override or self.requested_mode
+        effective_mode = self._effective_mode()
         self.set_current_mode(effective_mode)
         # 1st attempt - no auto reset
         # 2nd attempt - try to reset the adapter and wait a bit
@@ -827,7 +838,7 @@ class HaScanner(BaseHaScanner):
         """
         if self.scanner is None:
             return False
-        effective_mode = self._scan_mode_override or self.requested_mode
+        effective_mode = self._effective_mode()
         if TYPE_CHECKING:
             assert effective_mode is not None
         mode_str = SCANNING_MODE_TO_BLEAK[effective_mode]
