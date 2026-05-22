@@ -25,6 +25,11 @@ from .const import (
 )
 from .models import BluetoothScanningMode
 
+if TYPE_CHECKING:
+    from .base_scanner import BaseHaScanner
+    from .manager import BluetoothManager
+    from .models import BluetoothServiceInfoBleak
+
 # Locally aliased so the Cython .pxd can declare them as C-typed constants;
 # the unaliased names stay importable from this module for Python callers.
 _AUTO_INITIAL_SWEEP_DELAY = AUTO_INITIAL_SWEEP_DELAY
@@ -32,11 +37,6 @@ _AUTO_REDISCOVERY_INTERVAL = AUTO_REDISCOVERY_INTERVAL
 _AUTO_REDISCOVERY_SWEEP_DURATION = AUTO_REDISCOVERY_SWEEP_DURATION
 _AUTO_WINDOW_MAX_DURATION = AUTO_WINDOW_MAX_DURATION
 _AUTO_WINDOW_MIN_DURATION = AUTO_WINDOW_MIN_DURATION
-
-if TYPE_CHECKING:
-    from .base_scanner import BaseHaScanner
-    from .manager import BluetoothManager
-    from .models import BluetoothServiceInfoBleak
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,19 +61,10 @@ class ActiveScanRequest:
 class _ScannerWorker:
     """One persistent task per AUTO scanner; sleeps until next due event."""
 
-    __slots__ = (
-        "_scanner",
-        "_scheduler",
-        "_sweep_last_completed",
-        "_task",
-        "_wake",
-        "_window_end",
-    )
-
     def __init__(self, scheduler: AutoScanScheduler, scanner: BaseHaScanner) -> None:
         self._scheduler = scheduler
         self._scanner = scanner
-        self._wake = asyncio.Event()
+        self._wake: asyncio.Event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._window_end: float = 0.0
         self._sweep_last_completed: float = 0.0
@@ -130,25 +121,26 @@ class _ScannerWorker:
                 return
             await self._tick()
 
-    async def _tick(self) -> None:
-        """Fire due per-device windows, then the sweep."""
-        loop = self._scheduler._loop
-        if loop is None:
-            return
-        if self._window_end > loop.time():
-            return
-        self._window_end = 0.0
-        await self._dispatch_per_device()
-        await self._dispatch_sweep()
+    def _collect_due_buckets(self, now: float) -> tuple[
+        list[tuple[dict[ActiveScanRequest, float], list[ActiveScanRequest]]],
+        list[ActiveScanRequest],
+    ]:
+        """
+        Return (due_buckets, all_due) for every address this scanner owns.
 
-    async def _dispatch_per_device(self) -> None:
-        """Fire per-(address, request) needs that target this scanner."""
-        loop = self._scheduler._loop
-        if loop is None:
-            return
+        ``due_buckets`` is the list of (entries dict, due requests) pairs to
+        advance after the window fires; ``all_due`` is the flattened list of
+        every due request, used to coalesce the window duration.
+        Addresses whose owning scanner is no longer known are pruned from
+        ``_needs`` in passing.
+        """
         source = self._scanner.source
         needs = self._scheduler._needs
         last_service_info = self._scheduler._manager.async_last_service_info
+        due_buckets: list[
+            tuple[dict[ActiveScanRequest, float], list[ActiveScanRequest]]
+        ] = []
+        all_due: list[ActiveScanRequest] = []
         for address in list(needs):
             entries = needs.get(address)
             if not entries:
@@ -159,45 +151,84 @@ class _ScannerWorker:
                 continue
             if history.source != source:
                 continue
-            now = loop.time()
             due = [r for r, t in entries.items() if t <= now]
             if not due:
                 continue
-            duration = self._scheduler._coalesce_duration(due)
-            self._window_end = now + duration
-            await self._run_window(duration)
-            now = loop.time()
-            # Re-check membership: remove_request may have dropped any of
-            # the due entries while we were awaiting the window, and we
-            # don't want to resurrect a cancelled registration.
+            due_buckets.append((entries, due))
+            all_due.extend(due)
+        return due_buckets, all_due
+
+    def _advance_due(
+        self,
+        due_buckets: list[
+            tuple[dict[ActiveScanRequest, float], list[ActiveScanRequest]]
+        ],
+        now: float,
+    ) -> None:
+        """
+        Push every advanced request's next-due to now + scan_interval.
+
+        Re-checks membership: ``remove_request`` may have dropped any of
+        them while the window was awaiting, and we must not resurrect a
+        cancelled registration.
+        """
+        for entries, due in due_buckets:
             for request in due:
                 if request in entries:
                     entries[request] = now + request.scan_interval
-            self._window_end = 0.0
 
-    async def _dispatch_sweep(self) -> None:
-        """Fire the global rediscovery sweep if due."""
+    async def _tick(self) -> None:
+        """
+        Fire one coalesced window covering due per-device + sweep work.
+
+        Collection is sync; only ``_run_window`` and the optional sweep-lock
+        acquire are awaits. The window duration is the max of every due
+        per-device duration and (if the sweep is due) the configured sweep
+        duration; a single ACTIVE flip on the scanner catches everything
+        visible during the window so back-to-back windows would only churn
+        the radio. The global sweep lock serializes sweeps across scanners,
+        so a contended sweep blocks the per-device portion until the other
+        scanner finishes; contention is rare (once per scanner per
+        ``AUTO_REDISCOVERY_INTERVAL``).
+        """
         loop = self._scheduler._loop
         if loop is None:
             return
+        if self._window_end > loop.time():
+            return
+        self._window_end = 0.0
         now = loop.time()
-        if now < self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL:
-            return
+        due_buckets, all_due = self._collect_due_buckets(now)
         sweep_lock = self._scheduler._sweep_lock
-        if sweep_lock is None:
-            return
-        async with sweep_lock:
+        sweep_acquired = False
+        if (
+            now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
+            and sweep_lock is not None
+        ):
+            await sweep_lock.acquire()
             now = loop.time()
-            if now < self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL:
-                return
+            # Re-check after the wait; another worker may have moved our
+            # clock forward (unlikely but defensive).
+            if now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL:
+                sweep_acquired = True
+            else:
+                sweep_lock.release()
+        if not all_due and not sweep_acquired:
+            return
+        duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
+        if sweep_acquired and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
             duration = _AUTO_REDISCOVERY_SWEEP_DURATION
-            self._window_end = now + duration
-            try:
-                await self._run_window(duration)
-            finally:
-                # Advance on failure too so a stuck scanner doesn't busy-loop.
+        self._window_end = now + duration
+        try:
+            await self._run_window(duration)
+        finally:
+            if sweep_acquired:
+                # Advance on failure too so a stuck scanner doesn't
+                # busy-loop the worker.
                 self._sweep_last_completed = loop.time()
-                self._window_end = 0.0
+                sweep_lock.release()  # type: ignore[union-attr]
+            self._advance_due(due_buckets, loop.time())
+            self._window_end = 0.0
 
     async def _run_window(self, duration: float) -> bool:
         """Ask the scanner for an active window; swallow per-call exceptions."""
