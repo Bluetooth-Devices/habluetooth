@@ -140,6 +140,28 @@ def test_name_cache_case_folded_truncation_keeps_cached() -> None:
     assert manager._name_cache[address] == "Onvis XXX"
 
 
+def test_name_cache_equal_value_different_objects_noop() -> None:
+    """Two str objects with identical value hit the cached == name no-op path."""
+    manager = get_manager()
+    address = "AA:BB:CC:DD:EE:0B"
+    first = b"Onvis XXX".decode()
+    second = b"Onvis XXX".decode()
+    assert first is not second
+    manager.seed_name_cache(address, first)
+    manager.seed_name_cache(address, second)
+    # Value unchanged; the original object is still cached (no rewrite).
+    assert manager._name_cache[address] is first
+
+
+def test_name_cache_equal_length_case_only_diff_keeps_cached() -> None:
+    """Equal-length casefolded names differing only in case keep the cached value."""
+    manager = get_manager()
+    address = "AA:BB:CC:DD:EE:0C"
+    manager.seed_name_cache(address, "Onv")
+    manager.seed_name_cache(address, "ONV")
+    assert manager._name_cache[address] == "Onv"
+
+
 # ---------------------------------------------------------------------------
 # Cross-scanner integration: passive scanner gains name from active scanner
 # ---------------------------------------------------------------------------
@@ -235,6 +257,98 @@ async def test_active_scanner_extension_propagates_across_sources() -> None:
 
     assert manager._name_cache[address] == "Onvis XXX"
     assert manager._all_history[address].name == "Onvis XXX"
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_second_scanner_same_name_different_object_noop() -> None:
+    """
+    Second scanner reporting the same name (different str object) is a no-op.
+
+    Exercises the cached_name == service_info.name early-return inside
+    _handle_name_cache_miss: identity mismatch but value match.
+    """
+    manager = get_manager()
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+
+    scanner_a = _SeedFakeScanner("esp32-a", "esp32-a", connector, True)
+    scanner_b = _SeedFakeScanner("esp32-b", "esp32-b", connector, True)
+    cancels = [
+        scanner_a.async_setup(),
+        manager.async_register_scanner(scanner_a),
+        scanner_b.async_setup(),
+        manager.async_register_scanner(scanner_b),
+    ]
+
+    address = "44:44:33:11:23:56"
+    # Use bytes.decode() so each scanner gets a distinct str object.
+    device_a = generate_ble_device(address, b"Onvis XXX".decode(), {}, rssi=-60)
+    adv_a = generate_advertisement_data(local_name=b"Onvis XXX".decode(), rssi=-60)
+    scanner_a.inject_advertisement(device_a, adv_a)
+    cached_first = manager._name_cache[address]
+
+    device_b = generate_ble_device(address, b"Onvis XXX".decode(), {}, rssi=-50)
+    adv_b = generate_advertisement_data(
+        local_name=b"Onvis XXX".decode(),
+        manufacturer_data={1: b"\x01"},
+        rssi=-50,
+    )
+    scanner_b.inject_advertisement(device_b, adv_b)
+
+    # Cache value unchanged; original object is preserved (no rewrite).
+    assert manager._name_cache[address] is cached_first
+
+    for c in cancels:
+        c()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_truncation_from_second_scanner_patched_back() -> None:
+    """
+    Scanner reporting a truncated name has its service_info patched back.
+
+    Exercises the post-update patch branch in _handle_name_cache_miss:
+    _update_name_cache decides to keep the longer cached value, then the
+    incoming service_info is patched back to that cached value so the
+    dispatch carries the canonical name.
+    """
+    manager = get_manager()
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+
+    active = _SeedFakeScanner("esp32-full", "esp32-full", connector, True)
+    secondary = _SeedFakeScanner("esp32-trunc", "esp32-trunc", connector, True)
+    cancels = [
+        active.async_setup(),
+        manager.async_register_scanner(active),
+        secondary.async_setup(),
+        manager.async_register_scanner(secondary),
+    ]
+
+    address = "44:44:33:11:23:57"
+    active_device = generate_ble_device(address, "Onvis XXX", {}, rssi=-60)
+    active_adv = generate_advertisement_data(local_name="Onvis XXX", rssi=-60)
+    active.inject_advertisement(active_device, active_adv)
+    assert manager._name_cache[address] == "Onvis XXX"
+
+    # Secondary scanner sees only the truncated name (e.g. no SCAN_RSP yet).
+    trunc_device = generate_ble_device(address, "Onv", {}, rssi=-50)
+    trunc_adv = generate_advertisement_data(
+        local_name="Onv", manufacturer_data={1: b"\x01"}, rssi=-50
+    )
+    secondary.inject_advertisement(trunc_device, trunc_adv)
+
+    # Cache keeps the longer name and the dispatched view is patched back.
+    assert manager._name_cache[address] == "Onvis XXX"
+    assert manager._all_history[address].name == "Onvis XXX"
+    assert manager._all_history[address].device.name == "Onvis XXX"
+
+    for c in cancels:
+        c()
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
