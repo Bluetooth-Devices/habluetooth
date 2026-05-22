@@ -176,12 +176,18 @@ class AutoScanScheduler:
         if requests is None:
             return
         existing = self._needs.get(address)
+        added = False
         for request in requests:
             if existing is None:
                 existing = self._needs[address] = {}
             if request not in existing:
                 existing[request] = self._loop.time() + request.scan_interval
-                self._reschedule()
+                added = True
+        if added:
+            # Reschedule once after the whole batch instead of per entry; on
+            # the hot path multiple registrations for the same address would
+            # otherwise cancel and re-arm the tick timer N times.
+            self._reschedule()
 
     def _reschedule(self) -> None:
         """Schedule the next tick based on the earliest pending due time."""
@@ -344,7 +350,12 @@ class AutoScanScheduler:
             if not ok and self._scanner_windows.get(scanner.source) is not None:
                 del self._scanner_windows[scanner.source]
             if sweep_source is not None:
-                if ok and self._loop is not None:
+                # Update _sweep_last_completed even on failure so the next
+                # sweep is a full interval out instead of immediately
+                # re-eligible; otherwise _next_event_time would stay in
+                # the past and the tick would re-fire every 50ms, hammering
+                # the scanner with stop/start cycles.
+                if self._loop is not None:
                     self._sweep_last_completed[sweep_source] = self._loop.time()
                 if self._sweep_in_flight == sweep_source:
                     self._sweep_in_flight = None

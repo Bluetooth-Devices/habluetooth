@@ -375,6 +375,31 @@ async def test_failed_request_clears_busy_marker() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_sweep_advances_sweep_last_completed() -> None:
+    """A False return on a sweep updates _sweep_last_completed so we don't busy-loop."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    scanner._return_value = False
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] = (
+            loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        )
+        before = sched._sweep_last_completed["AA:BB:CC:DD:EE:00"]
+        sched._async_tick()
+        await _drain()
+        assert scanner.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
+        # _sweep_last_completed was advanced even though the window failed,
+        # so the next sweep is one full interval out instead of immediate.
+        assert sched._sweep_last_completed["AA:BB:CC:DD:EE:00"] > before
+        assert sched._sweep_in_flight is None
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_stop_cancels_pending_window_tasks() -> None:
     """Scheduler.stop cancels in-flight active-window tasks."""
     manager = get_manager()
