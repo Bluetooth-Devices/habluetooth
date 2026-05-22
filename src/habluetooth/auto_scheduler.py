@@ -303,14 +303,13 @@ class _ScannerWorker:
         Fire one coalesced window covering due per-device + sweep work.
 
         Collection is sync; only the scanner's active-window call is
-        awaited. The window
-        duration is the max of every due per-device duration and (if the
-        sweep is due) the configured sweep duration; a single ACTIVE flip
-        catches every device the scanner sees during the window so
-        back-to-back windows would only churn the radio. Scanners stagger
-        their first sweep at registration time so concurrent sweeps are
-        unlikely; BLE radios don't actually interfere when more than one
-        is active so the prior design's global sweep lock was over-engineered.
+        awaited. The window duration is the max of every due per-device
+        duration and (if the sweep is due) the configured sweep duration
+        so a single ACTIVE flip on the scanner catches every device it
+        sees during the window. The return value of
+        ``async_request_active_window`` is intentionally ignored: even on
+        failure we still advance the entry by ``scan_interval`` so a
+        stuck scanner can't busy-loop the worker.
         """
         loop = self._scheduler._loop
         if loop is None:
@@ -373,11 +372,20 @@ class AutoScanScheduler:
         self._running = False
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Bind to the event loop and spawn one worker per AUTO scanner."""
+        """
+        Bind to the event loop and spawn one worker per AUTO scanner.
+
+        Idempotent on the worker-spawn side: ``_workers`` is only added
+        to for sources that don't already have a worker, so a second
+        ``start()`` call won't create duplicate tasks.
+        """
         self._loop = loop
         self._running = True
         for scanner in self._manager.async_current_scanners():
-            if scanner.requested_mode is BluetoothScanningMode.AUTO:
+            if (
+                scanner.requested_mode is BluetoothScanningMode.AUTO
+                and scanner.source not in self._workers
+            ):
                 self._spawn_worker(scanner)
 
     def stop(self) -> None:

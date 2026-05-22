@@ -716,10 +716,14 @@ class BaseHaScanner:
         """
         Run an active scan for ``duration`` seconds, then restore prior mode.
 
-        Default no-op implementation. Subclasses that can flip the underlying
-        adapter / proxy into active scanning on demand should override and
-        return True on success. The manager's auto-mode scheduler relies on
-        a True return value to know the window actually ran.
+        Default no-op returning False. Subclasses that can flip the
+        underlying adapter / proxy into active scanning on demand should
+        override; ``True`` indicates the override actually flipped the
+        radio, ``False`` that the request was ignored. The current
+        scheduler does not branch on the return value (entries advance
+        by ``scan_interval`` regardless to avoid busy-looping a stuck
+        scanner), but the contract leaves room for callers that want
+        to surface a failed window.
         """
         _LOGGER.debug(
             "%s: scanner does not support on-demand active windows", self.name

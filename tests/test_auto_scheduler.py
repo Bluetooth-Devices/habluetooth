@@ -88,12 +88,6 @@ def _inject(scanner: _RecordingAutoScanner, address: str) -> None:
     )
 
 
-async def _drain() -> None:
-    """Yield several times so worker tasks can process."""
-    for _ in range(4):
-        await asyncio.sleep(0)
-
-
 async def _run_worker_tick(scheduler: object, source: str) -> None:
     """Drive one worker through a single tick for deterministic testing."""
     worker = scheduler._workers[source]  # type: ignore[attr-defined]
