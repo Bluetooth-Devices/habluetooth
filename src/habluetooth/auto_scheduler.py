@@ -434,17 +434,21 @@ class AutoScanScheduler:
         ``worker.stop()`` calls ``task.cancel()`` without awaiting.
         Cancellation lands on the next loop iteration; a mid-``_tick``
         scanner call may complete first. Harmless for HA shutdown.
-        Callers doing an in-place restart (``stop()`` then ``start()``
-        on the same scheduler) must ``await asyncio.sleep(0)`` between
-        them so cancelled tasks finish their finally blocks before
-        new workers spawn on the same sources; ``start()`` does not
-        guard against this since HA's setup/teardown flow never
-        does an in-place restart.
+        Also nulls ``_loop`` so post-stop ``add_request`` /
+        ``on_advertisement`` fall back to the record-only path
+        instead of seeding ``_needs`` with timestamps from the
+        cancelled loop. Callers doing an in-place restart
+        (``stop()`` then ``start(new_loop)``) must
+        ``await asyncio.sleep(0)`` between them so cancelled tasks
+        finish their finally blocks before new workers spawn on the
+        same sources; ``start()`` does not guard against this since
+        HA's setup/teardown flow never does an in-place restart.
         """
         self._running = False
         for worker in self._workers.values():
             worker.stop()
         self._workers.clear()
+        self._loop = None
 
     def add_scanner(self, scanner: BaseHaScanner) -> None:
         """

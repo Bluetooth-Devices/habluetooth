@@ -740,10 +740,12 @@ class HaScanner(BaseHaScanner):
             # If the scanner is still ACTIVE here, the end-of-window task
             # for the previous timer is queued but hasn't run yet (it
             # would have cleared current_mode to PASSIVE). Skip the
-            # restart, arm a new timer; _async_end_active_window will
-            # see the new handle and bail when it acquires the lock.
+            # restart, re-arm only if our new duration extends past the
+            # current end; a shorter concurrent caller must not shrink
+            # an in-flight window someone else asked for.
             if self.current_mode is BluetoothScanningMode.ACTIVE:
-                self._arm_active_window_timer(duration)
+                if self._loop.time() + duration > self._active_window_end:
+                    self._arm_active_window_timer(duration)
                 return True
             try:
                 flipped = await self._async_toggle_active_window_mode()

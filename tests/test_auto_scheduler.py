@@ -589,6 +589,43 @@ async def test_stop_is_safe_when_already_idle() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_clears_loop_so_post_stop_add_request_is_record_only() -> None:
+    """
+    After stop(), add_request and on_advertisement skip _needs.
+
+    Without nulling _loop, post-stop add_request would seed _needs
+    with timestamps from the cancelled loop and try to wake a worker
+    that no longer exists. on_advertisement is similar. Both must
+    fall back to the record-only / no-op path once stop() runs.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "AA:BB:CC:DD:EE:90"
+    scanner = _RecordingAutoScanner("AA:00:00:00:00:33", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)  # seed history
+        sched.stop()
+        assert sched._loop is None
+        # add_request after stop: still tracked in _requests_by_address
+        # but no _needs seed (loop is None).
+        cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+        try:
+            assert address in sched._requests_by_address
+            assert address not in sched._needs
+            # on_advertisement after stop is a no-op on _needs too.
+            _inject(scanner, address)
+            assert address not in sched._needs
+        finally:
+            cancel()
+    finally:
+        register_cancel()
+        # Restore the scheduler so the conftest teardown isn't surprised
+        # by a None loop.
+        sched.start(asyncio.get_running_loop())
+
+
+@pytest.mark.asyncio
 async def test_duration_clamped_to_bounds() -> None:
     """_coalesce_duration clamps the requested duration to the configured range."""
     sched = get_manager()._auto_scheduler
