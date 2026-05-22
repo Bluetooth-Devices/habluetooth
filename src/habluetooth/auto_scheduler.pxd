@@ -25,6 +25,7 @@ cdef class _ScannerWorker:
     cdef public object _task
     cdef public double _window_end
     cdef public double _sweep_last_completed
+    cdef public bint _failed_window
 
     cpdef void start(self, object loop, double initial_offset=*)
 
@@ -32,6 +33,14 @@ cdef class _ScannerWorker:
 
     cpdef void wake(self)
 
+    @cython.locals(
+        source=str,
+        needs=dict,
+        address=str,
+        entries=dict,
+        next_at=double,
+        earliest=double,
+    )
     cpdef double _next_event_at(self, double now)
 
     @cython.locals(

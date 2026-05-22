@@ -712,7 +712,8 @@ class HaScanner(BaseHaScanner):
             assert self._loop is not None
         if self._active_window_handle is not None:
             if self._loop.time() + duration > self._active_window_end:
-                self._active_window_handle.cancel()
+                # _arm_active_window_timer cancels the old handle
+                # internally so we don't need to do it twice here.
                 self._arm_active_window_timer(duration)
             return True
         async with self._start_stop_lock:

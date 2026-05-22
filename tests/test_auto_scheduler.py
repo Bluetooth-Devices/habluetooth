@@ -723,6 +723,85 @@ async def test_run_window_swallows_scanner_exception() -> None:
 
 
 @pytest.mark.asyncio
+async def test_repeated_window_failures_log_only_first_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Persistently failing scanner gets one exception log then warnings.
+
+    Without rate-limiting, a permanently broken scanner would emit a
+    full traceback every scan_interval (>= 60s). The first failure
+    still logs the full stack so the root cause is captured; subsequent
+    failures collapse to a one-line warning to avoid flooding the log.
+    """
+    import logging
+
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+
+    class _FailingScanner(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            raise RuntimeError("boom")
+
+    scanner = _FailingScanner("AA:BB:CC:DD:EE:11", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await worker._tick()
+            # Trigger a second failure.
+            worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+            await worker._tick()
+        records = [
+            r for r in caplog.records if "error running active window" in r.message
+        ]
+        assert len(records) == 2
+        # First has exception info (full traceback), second does not.
+        assert records[0].exc_info is not None
+        assert records[1].exc_info is None
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_start_replays_pre_start_requests_when_history_exists() -> None:
+    """add_request before start() seeds _needs at start() if history exists."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:80"
+    # Get history in place first.
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:21", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    _inject(scanner, address)
+    try:
+        # Drop loop to simulate pre-start() state, register, then
+        # restore and call start() again to drive the replay path.
+        saved_loop = sched._loop
+        assert saved_loop is not None
+        sched._loop = None
+        try:
+            cancel = manager.async_register_active_scan(
+                address, scan_interval=60.0, scan_duration=5.0
+            )
+            try:
+                assert address not in sched._needs
+                # start() should now seed _needs from
+                # _requests_by_address because history exists.
+                sched.start(saved_loop)
+                assert address in sched._needs
+                request = next(iter(sched._requests_by_address[address]))
+                assert request in sched._needs[address]
+            finally:
+                cancel()
+        finally:
+            sched._loop = saved_loop
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_dispatch_does_not_resurrect_cancelled_request() -> None:
     """A request cancelled while the window awaits is not re-added to entries."""
     manager = get_manager()

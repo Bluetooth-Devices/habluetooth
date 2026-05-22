@@ -154,6 +154,7 @@ class _ScannerWorker:
     """One persistent task per AUTO scanner; sleeps until next due event."""
 
     __slots__ = (
+        "_failed_window",
         "_manager",
         "_scanner",
         "_scheduler",
@@ -176,6 +177,7 @@ class _ScannerWorker:
         self._task: asyncio.Task[None] | None = None
         self._window_end: float = 0.0
         self._sweep_last_completed: float = 0.0
+        self._failed_window: bool = False
 
     def start(
         self, loop: asyncio.AbstractEventLoop, initial_offset: float = 0.0
@@ -328,6 +330,12 @@ class _ScannerWorker:
         if loop is None:
             return
         now = loop.time()
+        # Defense-in-depth: _tick is only ever invoked from _run on a
+        # single per-worker task, and the finally below clears
+        # _window_end after the await returns, so this re-entry guard
+        # cannot trip on the current call path. Keep it cheap and
+        # explicit so a future refactor that calls _tick from
+        # elsewhere can't accidentally double-fire a window.
         if self._window_end > now:
             return
         self._window_end = 0.0
@@ -357,12 +365,26 @@ class _ScannerWorker:
             self._sweep_last_completed = now
         try:
             await self._scanner.async_request_active_window(duration)
-        except Exception:  # pylint: disable=broad-except
-            _LOGGER.exception(
-                "%s: error running active window of %.1fs",
-                self._scanner.name,
-                duration,
-            )
+        except Exception as ex:  # pylint: disable=broad-except
+            # First failure per worker gets a full traceback; subsequent
+            # ones get a one-liner so a persistently broken scanner
+            # doesn't spam scan_interval-cadenced stack traces. The
+            # _failed_window flag resets when start() spawns a new
+            # worker for the source.
+            if self._failed_window:
+                _LOGGER.warning(
+                    "%s: error running active window of %.1fs: %s",
+                    self._scanner.name,
+                    duration,
+                    ex,
+                )
+            else:
+                self._failed_window = True
+                _LOGGER.exception(
+                    "%s: error running active window of %.1fs",
+                    self._scanner.name,
+                    duration,
+                )
         finally:
             self._window_end = 0.0
 
@@ -395,6 +417,14 @@ class AutoScanScheduler:
         Idempotent on the worker-spawn side: ``_workers`` is only added
         to for sources that don't already have a worker, so a second
         ``start()`` call won't create duplicate tasks.
+
+        Replays any ``_requests_by_address`` registered before
+        ``start()`` into ``_needs`` so the first window for those
+        requests fires ``scan_interval`` after start (assuming the
+        device is in history) instead of waiting for the next
+        advertisement to bootstrap tracking. Same gating as
+        ``add_request``: no seed when ``last_service_info`` is None;
+        ``on_advertisement`` will bootstrap on first sight.
         """
         self._loop = loop
         self._running = True
@@ -404,6 +434,19 @@ class AutoScanScheduler:
                 and scanner.source not in self._workers
             ):
                 self._spawn_worker(scanner)
+        # Replay pre-start() registrations: seed _needs for any
+        # request whose address already has a last_service_info, so
+        # the kick-start contract holds for embedders that register
+        # before BluetoothManager.async_setup runs.
+        now = loop.time()
+        last_service_info = self._manager.async_last_service_info
+        for address, requests in self._requests_by_address.items():
+            if last_service_info(address, False) is None:
+                continue
+            existing = self._needs.setdefault(address, {})
+            for request in requests:
+                if request not in existing:
+                    existing[request] = now + request.scan_interval
 
     def stop(self) -> None:
         """
