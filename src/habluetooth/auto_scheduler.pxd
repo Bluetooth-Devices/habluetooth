@@ -1,5 +1,6 @@
 import cython
 
+from .base_scanner cimport BaseHaScanner
 from .models cimport BluetoothServiceInfoBleak
 
 
@@ -24,14 +25,9 @@ cdef class AutoScanScheduler:
 
     cpdef void remove_request(self, ActiveScanRequest request)
 
-    # scanner is typed as object rather than BaseHaScanner to avoid a
-    # triangular cimport (manager -> auto_scheduler -> base_scanner ->
-    # manager) which loads modules in an order on macOS where
-    # BleakCallback is referenced from channels/bluez before manager
-    # finishes initializing.
-    cpdef void add_scanner(self, object scanner)
+    cpdef void add_scanner(self, BaseHaScanner scanner)
 
-    cpdef void remove_scanner(self, object scanner)
+    cpdef void remove_scanner(self, BaseHaScanner scanner)
 
     @cython.locals(
         address=str,
