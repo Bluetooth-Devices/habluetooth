@@ -16,6 +16,42 @@ cdef class ActiveScanRequest:
     cdef public object scan_duration
 
 
+cdef class _ScannerWorker:
+
+    cdef public object _scheduler
+    cdef public object _scanner
+    cdef public object _wake
+    cdef public object _task
+    cdef public double _window_end
+    cdef public double _sweep_last_completed
+
+    cpdef void start(self, object loop)
+
+    cpdef void stop(self)
+
+    cpdef void wake(self)
+
+    cpdef double _next_event_at(self, double now)
+
+    @cython.locals(
+        source=str,
+        needs=dict,
+        address=str,
+        entries=dict,
+        due=list,
+        due_buckets=list,
+        all_due=list,
+    )
+    cpdef tuple _collect_due_buckets(self, double now)
+
+    @cython.locals(
+        entries=dict,
+        due=list,
+        request=ActiveScanRequest,
+    )
+    cpdef void _advance_due(self, list due_buckets, double now)
+
+
 cdef class AutoScanScheduler:
 
     cdef public object _manager
