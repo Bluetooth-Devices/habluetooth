@@ -46,6 +46,7 @@ cdef class BluetoothManager:
     cdef public set _bleak_callbacks
     cdef public dict _all_history
     cdef public dict _connectable_history
+    cdef public dict _name_cache
     cdef public set _non_connectable_scanners
     cdef public set _connectable_scanners
     cdef public dict _adapters
@@ -76,6 +77,21 @@ cdef class BluetoothManager:
         BluetoothServiceInfoBleak new
     )
 
+    @cython.locals(
+        cached=str,
+        cached_cf=str,
+        name_cf=str,
+        cached_len=Py_ssize_t,
+        name_len=Py_ssize_t,
+    )
+    cdef void _update_name_cache(self, str address, str name)
+
+    cdef void _handle_name_cache_miss(
+        self,
+        BluetoothServiceInfoBleak service_info,
+        str cached_name,
+    )
+
     cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
 
     @cython.locals(
@@ -86,7 +102,8 @@ cdef class BluetoothManager:
         scanner=BaseHaScanner,
         connectable_scanner=BaseHaScanner,
         apple_cstr="const unsigned char *",
-        bleak_callback=BleakCallback
+        bleak_callback=BleakCallback,
+        cached_name=str
     )
     cdef void _scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
 

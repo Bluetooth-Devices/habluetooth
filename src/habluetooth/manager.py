@@ -132,6 +132,7 @@ class BluetoothManager:
         "_intervals",
         "_loop",
         "_mgmt_ctl",
+        "_name_cache",
         "_non_connectable_scanners",
         "_recovery_lock",
         "_scanner_mode_change_callbacks",
@@ -167,6 +168,15 @@ class BluetoothManager:
         self._bleak_callbacks: set[BleakCallback] = set()
         self._all_history: dict[str, BluetoothServiceInfoBleak] = {}
         self._connectable_history: dict[str, BluetoothServiceInfoBleak] = {}
+        # Cross-scanner name cache: address -> best name seen across all
+        # scanners. Passive scanners typically miss the device name because
+        # it lives in SCAN_RSP (active-only); the cache lets a name learned
+        # by an active scanner flow to passive scanners' service_info on
+        # dispatch. Updates use the case-folded prefix-extension rule: a
+        # longer name only replaces a shorter cached one when the cached
+        # one is a case-folded prefix; otherwise the new name is treated
+        # as a rename and replaces unconditionally.
+        self._name_cache: dict[str, str] = {}
         self._non_connectable_scanners: set[BaseHaScanner] = set()
         self._connectable_scanners: set[BaseHaScanner] = set()
         self._adapters: dict[str, AdapterDetails] = {}
@@ -476,6 +486,7 @@ class BluetoothManager:
                     # available for both connectable and non-connectable
                     tracker.async_remove_fallback_interval(address)
                     tracker.async_remove_address(address)
+                    self._name_cache.pop(address, None)
                     for disappear_callback in self._disappeared_callbacks:
                         try:
                             disappear_callback(address)
@@ -559,6 +570,127 @@ class BluetoothManager:
         """
         return self._mgmt_ctl
 
+    def _handle_name_cache_miss(
+        self,
+        service_info: BluetoothServiceInfoBleak,
+        cached_name: str | None,
+    ) -> None:
+        """
+        Handle the cold path when cached_name is not service_info.name.
+
+        Called from _scanner_adv_received only when the cached name and
+        the incoming name are different str objects (steady-state
+        identity match is filtered out at the call site). Walks through
+        three cases:
+
+        1. The incoming ad has no real name (empty or the MAC fallback
+           set by base_scanner): patch service_info from the cache if we
+           have one; this is the path that lets passive scanners inherit
+           a name learned by an active scanner.
+        2. No cached name yet: store the incoming name directly if it is
+           real; no patch needed since the cache now matches.
+        3. Cached and incoming are both real but differ: apply the
+           prefix rule via _update_name_cache and patch service_info
+           with whatever the cache settled on.
+        """
+        # When we patch service_info.name and service_info.device.name,
+        # we also clear service_info._advertisement so the lazy rebuild
+        # in BluetoothServiceInfoBleak._advertisement_internal picks up
+        # the canonical name and propagates it to bleak callbacks via
+        # advertisement.local_name. Remote scanners arrive with
+        # _advertisement = None (see base_scanner.py:657), but
+        # HaScanner.on_advertisement (scanner.py:331) pre-sets it to
+        # bleak's AdvertisementData, so without this invalidation a
+        # local passive scanner whose dispatched view we patch would
+        # still hand bleak callbacks an AdvertisementData with the
+        # original (missing) local_name.
+        if (
+            not service_info.name
+            or service_info.name is service_info.address
+            or service_info.name == service_info.address
+        ):
+            if cached_name is not None:
+                service_info.name = cached_name
+                service_info.device.name = cached_name
+                service_info._advertisement = None
+            return
+        if cached_name is None:
+            self._name_cache[service_info.address] = service_info.name
+            return
+        if cached_name == service_info.name:
+            return
+        self._update_name_cache(service_info.address, service_info.name)
+        cached_name = self._name_cache[service_info.address]
+        if cached_name is not service_info.name and cached_name != service_info.name:
+            service_info.name = cached_name
+            service_info.device.name = cached_name
+            service_info._advertisement = None
+
+    def seed_name_cache(self, address: str, name: str) -> None:
+        """
+        Apply the prefix rule to the cross-scanner name cache.
+
+        Python-visible entry point intended for cold paths such as
+        BaseHaScanner.restore_discovered_devices (called once per scanner
+        at startup). The hot per-advertisement path does not use this
+        method; it inlines the steady-state checks and calls the internal
+        cdef _update_name_cache directly.
+        """
+        self._update_name_cache(address, name)
+
+    def _update_name_cache(self, address: str, name: str) -> None:
+        """
+        Update the cross-scanner name cache for an address.
+
+        Applies the case-folded prefix-extension rule:
+        - identical name -> no-op (fastest path; identity check first)
+        - empty name or name == address -> no-op (never pollute the cache
+          with the address fallback used by base_scanner)
+        - cached is None -> store new
+        - new is a case-folded extension of cached -> store new
+          (e.g. "Onv" -> "Onvis XXX")
+        - cached is a case-folded extension of new -> keep cached
+          (e.g. "Onvis XXX" -> "Onv" is a truncation)
+        - neither is a case-folded prefix of the other -> rename, store new
+          (e.g. "Onv" -> "Donkey")
+
+        Performance note: after the steady-state identity / equality short
+        circuits, length-based dispatch ensures we do at most ONE
+        str.startswith per call (instead of up to two), since a prefix
+        relationship is only possible when the shorter string could be a
+        prefix of the longer. Compares casefolded lengths because casefold
+        can change length for some characters (e.g. German "ß" -> "ss").
+        """
+        cached = self._name_cache.get(address)
+        if cached is name:
+            return
+        if not name or name == address:
+            return
+        if cached is None:
+            self._name_cache[address] = name
+            return
+        if cached == name:
+            return
+        cached_cf = cached.casefold()
+        name_cf = name.casefold()
+        cached_len = len(cached_cf)
+        name_len = len(name_cf)
+        if name_len > cached_len:
+            # New is longer -> only "extension" or "rename" are possible.
+            # Either way the new name wins (extension upgrades, rename replaces).
+            self._name_cache[address] = name
+            return
+        if name_len < cached_len:
+            # New is shorter -> "truncation" (keep cached) or "rename" (replace).
+            if cached_cf.startswith(name_cf):
+                return
+            self._name_cache[address] = name
+            return
+        # Equal casefolded length, raw not equal -> case-only diff or rename.
+        if cached_cf == name_cf:
+            return
+        self._name_cache[address] = name
+
     def scanner_adv_received(self, service_info: BluetoothServiceInfoBleak) -> None:
         """
         Handle a new advertisement from any scanner.
@@ -593,6 +725,18 @@ class BluetoothManager:
                 APPLE_FINDMY_START_BYTE,
             }:
                 return
+
+        # Cross-scanner name cache. Only the steady-state identity check
+        # is inlined here because this code runs on every advertisement
+        # after the Apple pre-filter; the rest is handled in a cdef
+        # helper to keep this method readable. The hot path is a single
+        # dict.get plus a pointer compare; the function call to the
+        # helper only fires when the cached name and the incoming name
+        # are different str objects, which excludes the dominant case of
+        # the same scanner re-broadcasting the same name.
+        cached_name = self._name_cache.get(service_info.address)
+        if cached_name is not service_info.name:
+            self._handle_name_cache_miss(service_info, cached_name)
 
         if service_info.connectable:
             old_connectable_service_info = self._connectable_history.get(
@@ -749,6 +893,7 @@ class BluetoothManager:
         """
         self._all_history.pop(address, None)
         self._connectable_history.pop(address, None)
+        self._name_cache.pop(address, None)
         for scanner in self._sources.values():
             scanner._previous_service_info.pop(address, None)
 

@@ -424,6 +424,12 @@ class BaseHaScanner:
         }
         # Expire anything that is too old
         self._async_expire_devices()
+        # Seed the cross-scanner name cache with each restored entry so that
+        # names learned by an active scanner in a previous run are immediately
+        # available to passive scanners on restart, before any active scanner
+        # has had a chance to re-observe them.
+        for address, info in self._previous_service_info.items():
+            self._manager.seed_name_cache(address, info.name)
 
     def serialize_discovered_devices(
         self,

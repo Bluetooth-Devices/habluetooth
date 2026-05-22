@@ -80,6 +80,7 @@ async def mock_enable_bluetooth(
     yield
     manager._all_history.clear()
     manager._connectable_history.clear()
+    manager._name_cache.clear()
     manager._unavailable_callbacks.clear()
     manager._connectable_unavailable_callbacks.clear()
     manager._bleak_callbacks.clear()
