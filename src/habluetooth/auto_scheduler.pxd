@@ -26,7 +26,7 @@ cdef class _ScannerWorker:
     cdef public double _window_end
     cdef public double _sweep_last_completed
 
-    cpdef void start(self, object loop)
+    cpdef void start(self, object loop, double initial_offset=*)
 
     cpdef void stop(self)
 
@@ -59,7 +59,6 @@ cdef class AutoScanScheduler:
     cdef public dict _requests_by_address
     cdef public dict _needs
     cdef public dict _workers
-    cdef public object _sweep_lock
     cdef public object _loop
     cdef public bint _running
 

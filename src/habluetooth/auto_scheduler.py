@@ -75,10 +75,22 @@ class _ScannerWorker:
         self._window_end: float = 0.0
         self._sweep_last_completed: float = 0.0
 
-    def start(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Start the worker task; first sweep AUTO_INITIAL_SWEEP_DELAY out."""
+    def start(
+        self, loop: asyncio.AbstractEventLoop, initial_offset: float = 0.0
+    ) -> None:
+        """
+        Start the worker task; first sweep AUTO_INITIAL_SWEEP_DELAY out.
+
+        ``initial_offset`` lets the caller stagger first sweeps across
+        concurrently-registered scanners so they don't all flip ACTIVE in
+        the same second; subsequent sweeps stay staggered because each
+        worker advances its own clock from when its prior window finished.
+        """
         self._sweep_last_completed = (
-            loop.time() + _AUTO_INITIAL_SWEEP_DELAY - _AUTO_REDISCOVERY_INTERVAL
+            loop.time()
+            + _AUTO_INITIAL_SWEEP_DELAY
+            + initial_offset
+            - _AUTO_REDISCOVERY_INTERVAL
         )
         self._task = loop.create_task(self._run())
 
@@ -187,15 +199,14 @@ class _ScannerWorker:
         """
         Fire one coalesced window covering due per-device + sweep work.
 
-        Collection is sync; only ``_run_window`` and the optional sweep-lock
-        acquire are awaits. The window duration is the max of every due
-        per-device duration and (if the sweep is due) the configured sweep
-        duration; a single ACTIVE flip on the scanner catches everything
-        visible during the window so back-to-back windows would only churn
-        the radio. The global sweep lock serializes sweeps across scanners,
-        so a contended sweep blocks the per-device portion until the other
-        scanner finishes; contention is rare (once per scanner per
-        ``AUTO_REDISCOVERY_INTERVAL``).
+        Collection is sync; only ``_run_window`` is awaited. The window
+        duration is the max of every due per-device duration and (if the
+        sweep is due) the configured sweep duration; a single ACTIVE flip
+        catches every device the scanner sees during the window so
+        back-to-back windows would only churn the radio. Scanners stagger
+        their first sweep at registration time so concurrent sweeps are
+        unlikely; BLE radios don't actually interfere when more than one
+        is active so the prior design's global sweep lock was over-engineered.
         """
         loop = self._scheduler._loop
         if loop is None:
@@ -205,34 +216,20 @@ class _ScannerWorker:
         self._window_end = 0.0
         now = loop.time()
         due_buckets, all_due = self._collect_due_buckets(now)
-        sweep_lock = self._scheduler._sweep_lock
-        sweep_acquired = False
-        if (
-            now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
-            and sweep_lock is not None
-        ):
-            await sweep_lock.acquire()
-            now = loop.time()
-            # Re-check after the wait; another worker may have moved our
-            # clock forward (unlikely but defensive).
-            if now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL:
-                sweep_acquired = True
-            else:
-                sweep_lock.release()
-        if not all_due and not sweep_acquired:
+        sweep_due = now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
+        if not all_due and not sweep_due:
             return
         duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
-        if sweep_acquired and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
+        if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
             duration = _AUTO_REDISCOVERY_SWEEP_DURATION
         self._window_end = now + duration
         try:
             await self._run_window(duration)
         finally:
-            if sweep_acquired:
+            if sweep_due:
                 # Advance on failure too so a stuck scanner doesn't
                 # busy-loop the worker.
                 self._sweep_last_completed = loop.time()
-                sweep_lock.release()  # type: ignore[union-attr]
             self._advance_due(due_buckets, loop.time())
             self._window_end = 0.0
 
@@ -258,7 +255,6 @@ class AutoScanScheduler:
         "_needs",
         "_requests_by_address",
         "_running",
-        "_sweep_lock",
         "_workers",
     )
 
@@ -268,7 +264,6 @@ class AutoScanScheduler:
         self._requests_by_address: dict[str, set[ActiveScanRequest]] = {}
         self._needs: dict[str, dict[ActiveScanRequest, float]] = {}
         self._workers: dict[str, _ScannerWorker] = {}
-        self._sweep_lock: asyncio.Lock | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
 
@@ -276,7 +271,6 @@ class AutoScanScheduler:
         """Bind to the event loop and spawn one worker per AUTO scanner."""
         self._loop = loop
         self._running = True
-        self._sweep_lock = asyncio.Lock()
         for scanner in self._manager.async_current_scanners():
             if scanner.requested_mode is BluetoothScanningMode.AUTO:
                 self._spawn_worker(scanner)
@@ -305,7 +299,13 @@ class AutoScanScheduler:
     def _spawn_worker(self, scanner: BaseHaScanner) -> None:
         assert self._loop is not None  # noqa: S101
         worker = _ScannerWorker(self, scanner, self._manager)
-        worker.start(self._loop)
+        # Stagger first sweeps so concurrently-registered scanners don't
+        # all flip ACTIVE in the same second. Each new worker's first
+        # sweep is one sweep duration later than the previous one's; the
+        # offset compounds so a tenth scanner registered in the same
+        # batch fires its first sweep ~150s after the first one's.
+        offset = len(self._workers) * _AUTO_REDISCOVERY_SWEEP_DURATION
+        worker.start(self._loop, offset)
         self._workers[scanner.source] = worker
 
     def add_request(self, request: ActiveScanRequest) -> None:

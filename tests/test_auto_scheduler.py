@@ -257,39 +257,43 @@ async def test_global_sweep_runs_on_auto_scanner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_global_sweep_one_scanner_at_a_time() -> None:
-    """Two scanners both due for sweep do not sweep concurrently."""
+async def test_first_sweeps_stagger_across_scanners() -> None:
+    """Concurrently-registered scanners get offset first-sweep times."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
-    blocking = asyncio.Event()
     s1 = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    s1._block_event = blocking
     s2 = _RecordingAutoScanner("AA:BB:CC:DD:EE:11", BluetoothScanningMode.AUTO)
+    s3 = _RecordingAutoScanner("AA:BB:CC:DD:EE:22", BluetoothScanningMode.AUTO)
     c1 = manager.async_register_scanner(s1)
     c2 = manager.async_register_scanner(s2)
+    c3 = manager.async_register_scanner(s3)
     try:
-        w1 = sched._workers[s1.source]
-        w2 = sched._workers[s2.source]
-        w1._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 10
-        w2._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 5
-        # Kick worker 1 into its sweep (it'll block on the asyncio.Event).
-        t1 = asyncio.create_task(w1._tick())
-        await _drain()
-        # While w1's sweep is blocked, w2 attempts its sweep too. It must
-        # wait on the shared _sweep_lock and not fire concurrently.
-        t2 = asyncio.create_task(w2._tick())
-        await _drain()
-        assert s1.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
-        assert s2.active_window_calls == []
-        blocking.set()
-        await t1
-        await t2
-        assert s2.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
+        now = loop.time()
+        sweep_1 = (
+            sched._workers[s1.source]._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        )
+        sweep_2 = (
+            sched._workers[s2.source]._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        )
+        sweep_3 = (
+            sched._workers[s3.source]._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        )
+        # Each subsequent worker's first sweep is one sweep-duration
+        # later than the previous one's (slack for loop.time() advancing
+        # between spawn calls).
+        assert sweep_2 - sweep_1 == pytest.approx(
+            AUTO_REDISCOVERY_SWEEP_DURATION, abs=0.01
+        )
+        assert sweep_3 - sweep_2 == pytest.approx(
+            AUTO_REDISCOVERY_SWEEP_DURATION, abs=0.01
+        )
+        # Roughly the configured initial delay from now.
+        assert sweep_1 - now == pytest.approx(AUTO_INITIAL_SWEEP_DELAY, abs=1.0)
     finally:
-        blocking.set()
         c1()
         c2()
+        c3()
 
 
 @pytest.mark.asyncio
@@ -718,35 +722,6 @@ async def test_tick_skips_when_sweep_not_due_and_no_per_device() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tick_re_checks_sweep_clock_after_acquiring_lock() -> None:
-    """If another worker advances the clock while we wait on the lock, we bail."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    loop = asyncio.get_running_loop()
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        worker = sched._workers[scanner.source]
-        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
-        sweep_lock = sched._sweep_lock
-        assert sweep_lock is not None
-        # Pre-acquire the lock so _tick blocks on it; while it waits,
-        # bump the worker's sweep clock so the post-acquire re-check
-        # decides not to sweep after all.
-        await sweep_lock.acquire()
-        try:
-            task = asyncio.create_task(worker._tick())
-            await asyncio.sleep(0)
-            worker._sweep_last_completed = loop.time()
-        finally:
-            sweep_lock.release()
-        await task
-        assert scanner.active_window_calls == []
-    finally:
-        register_cancel()
-
-
-@pytest.mark.asyncio
 async def test_worker_tick_no_op_when_loop_detached() -> None:
     """Worker tick exits cleanly if the scheduler's loop is None."""
     manager = get_manager()
@@ -767,8 +742,8 @@ async def test_worker_tick_no_op_when_loop_detached() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tick_skips_sweep_when_sweep_lock_missing() -> None:
-    """The sweep portion of _tick is skipped if the scheduler has no lock."""
+async def test_tick_no_op_when_already_inside_window() -> None:
+    """A tick that arrives while a window is in flight returns early."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -776,13 +751,10 @@ async def test_tick_skips_sweep_when_sweep_lock_missing() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         worker = sched._workers[scanner.source]
-        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
-        original_lock = sched._sweep_lock
-        sched._sweep_lock = None
-        try:
-            await worker._tick()
-        finally:
-            sched._sweep_lock = original_lock
+        # Pretend a window is mid-flight; _tick must defer to that
+        # window and not start a new one.
+        worker._window_end = loop.time() + 60.0
+        await worker._tick()
         assert scanner.active_window_calls == []
     finally:
         register_cancel()
