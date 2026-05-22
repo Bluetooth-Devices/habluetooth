@@ -312,15 +312,17 @@ async def test_first_sweeps_stagger_across_scanners() -> None:
         sweep_3 = (
             sched._workers[s3.source]._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
         )
-        # Each subsequent worker's first sweep is one sweep-duration
-        # later than the previous one's (slack for loop.time() advancing
-        # between spawn calls).
-        assert sweep_2 - sweep_1 == pytest.approx(
-            AUTO_REDISCOVERY_SWEEP_DURATION, abs=0.01
-        )
-        assert sweep_3 - sweep_2 == pytest.approx(
-            AUTO_REDISCOVERY_SWEEP_DURATION, abs=0.01
-        )
+        # Each subsequent worker's first sweep is at least one
+        # sweep-duration later than the previous one's. The delta is
+        # `SWEEP_DURATION + (loop.time() drift between spawn calls)`,
+        # so assert the floor rather than equality with a tight
+        # tolerance — CI registrations can take >10ms between
+        # _spawn_worker calls and would otherwise flake.
+        assert sweep_2 - sweep_1 >= AUTO_REDISCOVERY_SWEEP_DURATION
+        assert sweep_3 - sweep_2 >= AUTO_REDISCOVERY_SWEEP_DURATION
+        # And the drift component stays small — well under a second.
+        assert sweep_2 - sweep_1 < AUTO_REDISCOVERY_SWEEP_DURATION + 1.0
+        assert sweep_3 - sweep_2 < AUTO_REDISCOVERY_SWEEP_DURATION + 1.0
         # Roughly the configured initial delay from now.
         assert sweep_1 - now == pytest.approx(AUTO_INITIAL_SWEEP_DELAY, abs=1.0)
     finally:
