@@ -747,9 +747,11 @@ class AutoScanScheduler:
                 return True, None
             if mode is not BluetoothScanningMode.AUTO:
                 continue
-            rssi = device.advertisement.rssi
-            if rssi is None:
-                rssi = NO_RSSI_VALUE
+            # adv_rssi is held as object so a None value doesn't
+            # trip the int conversion that ``rssi=int`` in
+            # @cython.locals would do on direct assignment.
+            adv_rssi = device.advertisement.rssi
+            rssi = NO_RSSI_VALUE if adv_rssi is None else adv_rssi
             if best is None or rssi > best_rssi:
                 best_rssi = rssi
                 best = scanner

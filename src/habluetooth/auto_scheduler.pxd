@@ -113,6 +113,7 @@ cdef class AutoScanScheduler:
     @cython.locals(
         best_rssi=int,
         rssi=int,
+        adv_rssi=object,
         scanner=object,
         mode=object,
     )
