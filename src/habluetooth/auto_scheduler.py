@@ -930,8 +930,7 @@ class AutoScanScheduler:
             await asyncio.sleep(duration)
         finally:
             self._on_demand_sweep_future = None
-            if not future.done():
-                future.set_result(None)
+            future.set_result(None)
 
     def async_diagnostics(self) -> dict[str, Any]:
         """
