@@ -926,7 +926,11 @@ class AutoScanScheduler:
         if in_flight is not None:
             if desired_end - self._on_demand_sweep_end > 1.0:
                 self._on_demand_sweep_end = desired_end
-                await self._flip_scanners_for_sweep(desired_end - now)
+                # asyncio.shield the extension flip so a cancelled
+                # joiner does not leave the shared end pushed out
+                # past a partial re-flip; either all non-busy
+                # scanners receive the longer duration or none do.
+                await asyncio.shield(self._flip_scanners_for_sweep(desired_end - now))
             await asyncio.shield(in_flight)
             return
         future = loop.create_future()

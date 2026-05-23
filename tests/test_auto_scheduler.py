@@ -4633,6 +4633,66 @@ async def test_async_request_active_scan_logs_per_scanner_flip_failures(
 
 
 @pytest.mark.asyncio
+async def test_async_request_active_scan_joiner_cancel_during_extension() -> None:
+    """
+    Joiner cancelled mid-extension still finishes the all-or-nothing re-flip.
+
+    Without ``asyncio.shield`` on the extension flip, a joiner
+    cancelled while extending would leave ``_on_demand_sweep_end``
+    pushed out past a partial re-flip, so the leader (and other
+    joiners) would sleep until the extended end believing every
+    scanner was active when some were not. With the shield, the
+    re-flip runs to completion; the scanner records both the
+    leader's original flip duration and the extension duration
+    even after the joiner is cancelled.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    with freeze_time() as frozen:
+        # Register inside freeze + stop the worker so the worker's
+        # own periodic sweep does not fire and pollute the recorded
+        # active_window_calls.
+        scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+        register_cancel = manager.async_register_scanner(scanner)
+        worker = sched._workers[scanner.source]
+        worker.stop()
+        await asyncio.sleep(0)
+        try:
+            # Block scanner flips so the leader stays in its first
+            # flip await while the joiner extends and is cancelled.
+            scanner._block_event = asyncio.Event()
+            leader = asyncio.create_task(
+                manager.async_request_active_scan(duration=5.0)
+            )
+            for _ in range(3):
+                await asyncio.sleep(0)
+            joiner = asyncio.create_task(
+                manager.async_request_active_scan(duration=20.0)
+            )
+            # Yield enough for the joiner to enter its shielded
+            # extension flip (which is now also blocked on the
+            # scanner's block_event).
+            for _ in range(3):
+                await asyncio.sleep(0)
+            assert len(scanner.active_window_calls) == 2
+            joiner.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await joiner
+            # Release the scanner; leader's flip returns, joiner's
+            # shielded flip also completes as an orphan task.
+            scanner._block_event.set()
+            frozen.tick(20.1)
+            await leader
+            # Both leader's 5s flip and joiner's ~20s extension
+            # recorded despite the cancel.
+            assert scanner.active_window_calls[0] == 5.0
+            assert scanner.active_window_calls[1] == pytest.approx(20.0, abs=1.0)
+            assert sched._on_demand_sweep_future is None
+        finally:
+            register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_async_request_active_scan_joiner_cancel_keeps_siblings() -> None:
     """
     Cancelling one joiner must not cancel the shared future.
