@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import bleak
 import bleak_retry_connector
-from bleak.backends.service import BleakGATTServiceCollection
 
 from .wrappers import HaBleakClientWrapper, HaBleakScannerWrapper
+
+if TYPE_CHECKING:
+    from bleak.backends.service import BleakGATTServiceCollection
 
 ORIGINAL_BLEAK_SCANNER = bleak.BleakScanner
 ORIGINAL_BLEAK_CLIENT = bleak.BleakClient

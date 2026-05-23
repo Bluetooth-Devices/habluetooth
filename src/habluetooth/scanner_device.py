@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
-
 if TYPE_CHECKING:
+    from bleak.backends.device import BLEDevice
+    from bleak.backends.scanner import AdvertisementData
+
     from .base_scanner import BaseHaScanner
 
 

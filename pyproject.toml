@@ -160,6 +160,7 @@ select = [
     "SLOT", # flake8-slots
     "T10",  # flake8-debugger
     "T20",  # flake8-print
+    "TC",   # flake8-type-checking
     "TD",   # flake8-todos
     "UP",   # pyupgrade
     "W",    # pycodestyle

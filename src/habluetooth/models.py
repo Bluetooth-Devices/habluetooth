@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Final, Self
 
-from bleak import BaseBleakClient
-from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bleak_retry_connector import NO_RSSI_VALUE
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from bleak import BaseBleakClient
+    from bleak.backends.device import BLEDevice
+
     from .base_scanner import BaseHaScanner
 
 

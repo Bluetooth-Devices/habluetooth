@@ -7,7 +7,6 @@ import contextlib
 import logging
 import math
 import platform
-from collections.abc import Coroutine, Iterable
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, no_type_check
 
@@ -15,8 +14,6 @@ import async_interrupt
 import bleak
 from bleak import BleakError
 from bleak.assigned_numbers import AdvertisementDataType
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 from bleak_retry_connector import Allocations, restore_discoveries
 from bleak_retry_connector.bluez import stop_discovery
 from bluetooth_adapters import DEFAULT_ADDRESS
@@ -33,6 +30,12 @@ from .const import (
 )
 from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
+
+if TYPE_CHECKING:
+    from collections.abc import Coroutine, Iterable
+
+    from bleak.backends.device import BLEDevice
+    from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 
 int_ = int
 

@@ -5,12 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import warnings
-from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Final, final
 
 from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
 from bleak_retry_connector import NO_RSSI_VALUE, Allocations
 from bluetooth_adapters import adapter_human_name
 from bluetooth_data_tools import monotonic_time_coarse, parse_advertisement_data_bytes
@@ -29,8 +27,14 @@ from .models import (
     HaScannerDetails,
     HaScannerType,
 )
-from .scanner_device import BluetoothScannerDevice
 from .storage import DiscoveredDeviceAdvertisementData
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterable
+
+    from bleak.backends.scanner import AdvertisementData
+
+    from .scanner_device import BluetoothScannerDevice
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)

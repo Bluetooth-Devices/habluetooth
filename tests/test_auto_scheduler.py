@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import pytest
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
 
 from habluetooth import (
     BaseHaScanner,
@@ -26,6 +24,12 @@ from habluetooth.const import (
 )
 
 from . import generate_advertisement_data, generate_ble_device
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from bleak.backends.device import BLEDevice
+    from bleak.backends.scanner import AdvertisementData
 
 
 class _RecordingAutoScanner(BaseHaScanner):
