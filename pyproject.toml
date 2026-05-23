@@ -140,6 +140,7 @@ select = [
     "PTH",  # flake8-use-pathlib
     "Q",    # flake8-quotes
     "RET",  # return
+    "RSE",  # flake8-raise
     "RUF",  # ruff specific
     "S",    # flake8-bandit
     "SIM",  # simplify
