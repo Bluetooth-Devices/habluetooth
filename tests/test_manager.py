@@ -543,6 +543,7 @@ async def test_diagnostics(register_hci0_scanner: None) -> None:
                 "source": "AA:BB:CC:DD:EE:00",
             }
         },
+        "auto_scheduler": ANY,
         "connectable_history": ANY,
         "scanners": [
             {

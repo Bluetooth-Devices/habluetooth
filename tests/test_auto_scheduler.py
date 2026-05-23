@@ -4294,3 +4294,55 @@ async def test_worker_tick_dispatch_samples_time_per_fallback() -> None:
         c_owner()
         c_s()
         c_l()
+
+
+@pytest.mark.asyncio
+async def test_async_diagnostics() -> None:
+    """Diagnostics expose per-worker sweep timing and per-address requests."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel1 = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=5.0
+    )
+    cancel2 = manager.async_register_active_scan(
+        address, scan_interval=240.0, scan_duration=10.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        diagnostics = sched.async_diagnostics()
+        assert diagnostics["running"] is True
+        assert diagnostics["monotonic_time"] == pytest.approx(loop.time(), abs=0.5)
+        workers = diagnostics["workers"]
+        assert set(workers) == {scanner.source}
+        worker_diag = workers[scanner.source]
+        assert worker_diag["name"] == scanner.name
+        assert worker_diag["window_end"] == 0.0
+        assert worker_diag["failed_window"] is False
+        assert worker_diag["warned_no_fallback"] is False
+        assert worker_diag["next_sweep_at"] == pytest.approx(
+            worker_diag["sweep_last_completed"] + AUTO_REDISCOVERY_INTERVAL
+        )
+        assert worker_diag["next_event_at"] > 0.0
+        requests = diagnostics["requests"]
+        assert set(requests) == {address}
+        entries = requests[address]
+        assert len(entries) == 2
+        pairs = sorted(
+            (entry["scan_interval"], entry["scan_duration"]) for entry in entries
+        )
+        assert pairs == [(120.0, 5.0), (240.0, 10.0)]
+        for entry in entries:
+            assert entry["owner_source"] == scanner.source
+            assert entry["next_due"] is not None
+            assert entry["next_due"] > loop.time()
+    finally:
+        cancel1()
+        cancel2()
+        register_cancel()
+    # After cancellation the address falls out of both indexes.
+    post = sched.async_diagnostics()
+    assert post["requests"] == {}

@@ -281,6 +281,7 @@ class BluetoothManager:
                 service_info.as_dict() for service_info in self._all_history.values()
             ],
             "advertisement_tracker": self._advertisement_tracker.async_diagnostics(),
+            "auto_scheduler": self._auto_scheduler.async_diagnostics(),
         }
 
     def _find_adapter_by_address(self, address: str) -> str | None:
