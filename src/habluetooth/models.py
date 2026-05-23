@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Final, TypeVar
+from typing import TYPE_CHECKING, Any, Final, Self
 
 from bleak import BaseBleakClient
 from bleak.backends.device import BLEDevice
@@ -15,13 +15,7 @@ from bleak_retry_connector import NO_RSSI_VALUE
 if TYPE_CHECKING:
     from .base_scanner import BaseHaScanner
 
-_BluetoothServiceInfoSelfT = TypeVar(
-    "_BluetoothServiceInfoSelfT", bound="BluetoothServiceInfo"
-)
 
-_BluetoothServiceInfoBleakSelfT = TypeVar(
-    "_BluetoothServiceInfoBleakSelfT", bound="BluetoothServiceInfoBleak"
-)
 SOURCE_LOCAL: Final = "local"
 TUPLE_NEW: Final = tuple.__new__
 
@@ -139,11 +133,11 @@ class BluetoothServiceInfo:
 
     @classmethod
     def from_advertisement(
-        cls: type[_BluetoothServiceInfoSelfT],
+        cls,
         device: BLEDevice,
         advertisement_data: AdvertisementData,
         source: str,
-    ) -> _BluetoothServiceInfoSelfT:
+    ) -> Self:
         """Create a BluetoothServiceInfo from an advertisement."""
         return cls(
             advertisement_data.local_name or device.name or device.address,
@@ -286,13 +280,13 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
 
     @classmethod
     def from_scan(
-        cls: type[_BluetoothServiceInfoBleakSelfT],
+        cls,
         source: str,
         device: BLEDevice,
         advertisement_data: AdvertisementData,
         monotonic_time: _float,
         connectable: bool,
-    ) -> _BluetoothServiceInfoBleakSelfT:
+    ) -> Self:
         """Create a BluetoothServiceInfoBleak from a scanner."""
         return cls(
             advertisement_data.local_name or device.name or device.address,
@@ -311,13 +305,13 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
 
     @classmethod
     def from_device_and_advertisement_data(
-        cls: type[_BluetoothServiceInfoBleakSelfT],
+        cls,
         device: BLEDevice,
         advertisement_data: AdvertisementData,
         source: str,
         time: _float,
         connectable: bool,
-    ) -> _BluetoothServiceInfoBleakSelfT:
+    ) -> Self:
         """Create a BluetoothServiceInfoBleak from a device and advertisement."""
         return cls(
             advertisement_data.local_name or device.name or device.address,
