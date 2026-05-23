@@ -1151,8 +1151,8 @@ class BluetoothManager:
 
     def _unregister_source_callback(
         self,
-        callbacks_dict: dict[str | None, set[Callable[..., None]]],
-        source: str | None,
+        callbacks_dict: dict[Any, set[Callable[..., None]]],
+        source: object,
         callback: Callable[..., None],
     ) -> None:
         """Unregister a source-keyed callback."""
@@ -1163,8 +1163,8 @@ class BluetoothManager:
 
     def _dispatch_source_callbacks(
         self,
-        callbacks_dict: dict[str | None, set[Callable[..., None]]],
-        source: str | None,
+        callbacks_dict: dict[Any, set[Callable[..., None]]],
+        source: object,
         payload: object,
         label: str,
     ) -> None:
