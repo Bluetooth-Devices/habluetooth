@@ -597,6 +597,7 @@ class AutoScanScheduler:
         "_loop",
         "_manager",
         "_needs",
+        "_on_demand_sweep_end",
         "_on_demand_sweep_future",
         "_requests_by_address",
         "_running",
@@ -612,6 +613,7 @@ class AutoScanScheduler:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._on_demand_sweep_future: asyncio.Future[None] | None = None
+        self._on_demand_sweep_end: float = 0.0
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """
@@ -843,6 +845,55 @@ class AutoScanScheduler:
             )
         )
 
+    async def _flip_scanners_for_sweep(self, duration: float) -> None:
+        """
+        Flip every non-busy AUTO scanner into a ``duration``-second window.
+
+        Iterates the workers, calls ``note_window_dispatched`` to
+        reset the per-worker sweep cadence, and gathers the radio
+        flips with ``return_exceptions=True`` so one stuck adapter
+        cannot abort the bus-wide sweep. Per-scanner flip failures
+        are logged one-line-per-scanner so a persistently broken
+        adapter is observable instead of silently swallowed.
+
+        Scanners with a connect in progress are skipped; the
+        on-demand sweep is best-effort and does not route around
+        them (the periodic ``_tick`` path handles fallback).
+        Called both on initial sweep start and on joiner-extension,
+        so a re-flip with a longer duration extends the radio's
+        open window in place (per
+        ``BaseHaScanner.async_request_active_window``).
+
+        Callers must guard on ``self._loop is not None`` before
+        invoking; the type-checking assert below documents that
+        invariant.
+        """
+        if TYPE_CHECKING:
+            assert self._loop is not None
+        now = self._loop.time()
+        window_end = now + duration
+        targets: list[BaseHaScanner] = []
+        for worker in self._workers.values():
+            scanner = worker._scanner
+            if scanner._connections_in_progress() > 0:
+                continue
+            worker.note_window_dispatched(window_end, now)
+            targets.append(scanner)
+        if not targets:
+            return
+        results = await asyncio.gather(
+            *(scanner.async_request_active_window(duration) for scanner in targets),
+            return_exceptions=True,
+        )
+        for scanner, result in zip(targets, results, strict=True):
+            if isinstance(result, BaseException):
+                _LOGGER.warning(
+                    "%s: error running on-demand active window of %.1fs: %s",
+                    scanner.name,
+                    duration,
+                    result,
+                )
+
     async def async_request_sweep(self, duration: float) -> None:
         """
         Flip every AUTO scanner to ACTIVE for ``duration`` seconds.
@@ -860,76 +911,72 @@ class AutoScanScheduler:
         check-and-set on the future is synchronous (no ``await``
         before it) so it is atomic under cooperative scheduling.
 
-        Per-scanner flip failures are gathered with
-        ``return_exceptions=True`` and logged one-line-per-scanner;
-        a stuck adapter never aborts the bus-wide sweep, but its
-        failure is observable rather than silently swallowed.
+        A joiner whose requested end-time exceeds the current
+        ``_on_demand_sweep_end`` extends the in-flight window: it
+        re-flips the scanners with the longer remaining duration
+        (``BaseHaScanner.async_request_active_window`` natively
+        extends an open window) and updates
+        ``_on_demand_sweep_end``. The leader's sleep loop re-reads
+        ``_on_demand_sweep_end`` after each wake, so an extension
+        causes the leader to sleep again. For four callers
+        requesting (10, 15, 5, 20) — whichever order they arrive —
+        the radio runs until the latest desired end (T0+20s), every
+        caller awaits until that end, and the 20s caller gets a
+        full 20s of fresh advertisements rather than being clipped
+        to whoever-won-the-race's duration.
 
-        Skips scanners whose radio is busy with a connect attempt;
-        adjacent scanners cover those devices. Unlike the periodic
-        ``_tick`` path this does not route a busy scanner's
-        coverage to a fallback; the on-demand sweep is best-effort
-        and the next ``_tick`` will pick the device up at its
-        normal cadence.
+        Per-scanner flip failures are logged via
+        ``_flip_scanners_for_sweep``; see that method for
+        busy-scanner and failure semantics.
 
         Advances each flipped worker's ``_sweep_last_completed`` and
         ``_window_end`` via ``note_window_dispatched`` so the next
         periodic sweep is deferred and the worker's own ``_tick``
-        suppresses itself during the on-demand window. Always awaits
-        the full ``duration`` for the leader so the caller can read
-        advertisements collected during the window before this
-        returns.
+        suppresses itself during the on-demand window.
 
-        Caveats:
-
-        * A late joiner that arrives near the end of an in-flight
-          window returns as soon as the leader finishes — its own
-          ``duration`` is not honored. For the typical
-          single-caller config-flow case this never trips; if
-          multiple flows race, joiners share the leader's window.
-        * If the leader is cancelled mid-sleep the future still
-          resolves to ``None`` (joiners do not see a propagated
-          ``CancelledError``); joiners benefit from whatever radio
-          activity already happened. The leader's own cancellation
-          propagates as usual.
+        If the leader is cancelled mid-sleep the future still
+        resolves to ``None`` (joiners do not see a propagated
+        ``CancelledError``); joiners benefit from whatever radio
+        activity already happened. The leader's own cancellation
+        propagates as usual.
         """
-        if (in_flight := self._on_demand_sweep_future) is not None:
-            await in_flight
-            return
         if self._loop is None:
             return
         duration = _clamp_window_duration(duration)
+        now = self._loop.time()
+        desired_end = now + duration
+        in_flight = self._on_demand_sweep_future
+        if in_flight is not None:
+            # Use a 1s slop on the extension threshold so concurrent
+            # same-duration callers (whose desired_end differs only
+            # by task-start jitter, microseconds) don't trigger
+            # bogus extensions. The 1s floor matches the resolution
+            # at which callers actually request durations.
+            if desired_end - self._on_demand_sweep_end > 1.0:
+                self._on_demand_sweep_end = desired_end
+                # Re-flip every non-busy scanner so the radio stays
+                # active until the new end; async_request_active_window
+                # extends an open window in place when called with a
+                # longer remaining duration.
+                await self._flip_scanners_for_sweep(desired_end - now)
+            await in_flight
+            return
         future = self._loop.create_future()
         self._on_demand_sweep_future = future
+        self._on_demand_sweep_end = desired_end
         try:
-            now = self._loop.time()
-            window_end = now + duration
-            targets: list[BaseHaScanner] = []
-            for worker in self._workers.values():
-                scanner = worker._scanner
-                if scanner._connections_in_progress() > 0:
-                    continue
-                worker.note_window_dispatched(window_end, now)
-                targets.append(scanner)
-            if targets:
-                results = await asyncio.gather(
-                    *(
-                        scanner.async_request_active_window(duration)
-                        for scanner in targets
-                    ),
-                    return_exceptions=True,
-                )
-                for scanner, result in zip(targets, results, strict=True):
-                    if isinstance(result, BaseException):
-                        _LOGGER.warning(
-                            "%s: error running on-demand active window of %.1fs: %s",
-                            scanner.name,
-                            duration,
-                            result,
-                        )
-            await asyncio.sleep(duration)
+            await self._flip_scanners_for_sweep(duration)
+            # Sleep until the window end, re-checking each wake so a
+            # joiner extension simply pushes the end out and we sleep
+            # again.
+            while True:
+                remaining = self._on_demand_sweep_end - self._loop.time()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(remaining)
         finally:
             self._on_demand_sweep_future = None
+            self._on_demand_sweep_end = 0.0
             future.set_result(None)
 
     def async_diagnostics(self) -> dict[str, Any]:

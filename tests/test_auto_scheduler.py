@@ -4354,17 +4354,30 @@ async def test_async_diagnostics() -> None:
 @contextlib.asynccontextmanager
 async def _no_real_sleep():
     """
-    Replace ``asyncio.sleep`` with an immediate no-op for sweep tests.
+    Replace ``asyncio.sleep`` with an immediate fake-time advance.
 
     Sweeps clamp duration to AUTO_WINDOW_MIN_DURATION (5s); stubbing
     the sleep keeps tests fast while preserving the call shape so we
-    can still observe what duration was requested.
+    can still observe what duration was requested. Each mocked sleep
+    also advances ``loop.time()`` by ``duration`` so the on-demand
+    sweep's sleep-until-end loop (which re-reads
+    ``_on_demand_sweep_end`` on each wake) terminates instead of
+    spinning forever against a frozen clock.
     """
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    fake_advance = [0.0]
 
     async def _instant(duration: float) -> None:
-        return None
+        fake_advance[0] += duration
 
-    with patch("asyncio.sleep", new=_instant):
+    def _fake_time() -> float:
+        return real_time() + fake_advance[0]
+
+    with (
+        patch("asyncio.sleep", new=_instant),
+        patch.object(loop, "time", _fake_time),
+    ):
         yield
 
 
@@ -4423,6 +4436,43 @@ async def test_async_request_sweep_resets_next_sweep_time() -> None:
             await manager.async_request_sweep(duration=5.0)
         assert worker._sweep_last_completed >= before
         assert worker._sweep_last_completed <= loop.time() + 0.1
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_mixed_durations_extends_to_longest() -> None:
+    """
+    Concurrent callers asking for (10, 15, 5, 20) all wait until T0+20.
+
+    The first caller to win the check-and-set runs a 10s sweep; the 15s
+    and 20s callers extend the in-flight window (re-flipping the radio
+    with the longer remaining duration); the 5s caller fits within the
+    already-extended end and does not flip again. The scanner records
+    each flip's duration so we can verify the extension chain.
+    """
+    manager = get_manager()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        async with _no_real_sleep():
+            await asyncio.gather(
+                manager.async_request_sweep(duration=10.0),
+                manager.async_request_sweep(duration=15.0),
+                manager.async_request_sweep(duration=5.0),
+                manager.async_request_sweep(duration=20.0),
+            )
+        # Exactly three flip durations: leader's 10s + two extensions
+        # (~15s and ~20s, with sub-second drift from task-start
+        # jitter — assert the floor and the order).
+        assert len(scanner.active_window_calls) == 3
+        assert scanner.active_window_calls[0] == 10.0
+        # The two extensions are increasing and approach 15 and 20.
+        assert 14.0 <= scanner.active_window_calls[1] <= 15.0
+        assert 19.0 <= scanner.active_window_calls[2] <= 20.0
+        # The future and end are cleared once the leader finishes.
+        assert manager._auto_scheduler._on_demand_sweep_future is None
+        assert manager._auto_scheduler._on_demand_sweep_end == 0.0
     finally:
         register_cancel()
 

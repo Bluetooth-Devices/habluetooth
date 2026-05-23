@@ -80,6 +80,7 @@ cdef class AutoScanScheduler:
     cdef public object _loop
     cdef public bint _running
     cdef public object _on_demand_sweep_future
+    cdef public double _on_demand_sweep_end
 
     @cython.locals(
         existing=dict,
