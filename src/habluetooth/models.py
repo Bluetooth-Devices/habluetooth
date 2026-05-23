@@ -241,7 +241,12 @@ class BluetoothServiceInfoBleak(BluetoothServiceInfo):
             self._advertisement = TUPLE_NEW(
                 AdvertisementData,
                 (
-                    None if self.name == "" or self.name == self.address else self.name,
+                    # The ``in`` form (PLR1714) makes cython emit an extra
+                    # INCREF/DECREF on self.name in this hot path; the
+                    # explicit ``or`` short-circuits without aliasing.
+                    None
+                    if self.name == "" or self.name == self.address  # noqa: PLR1714
+                    else self.name,
                     self.manufacturer_data,
                     self.service_data,
                     self.service_uuids,

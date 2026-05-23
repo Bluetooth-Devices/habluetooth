@@ -120,6 +120,11 @@ ignore = [
     "D401",    # First line of docstring should be in imperative mood
     "ASYNC109", # ``timeout`` is part of our bleak-compatible public API
     "TRY003",  # too many to fix; long messages outside the exception class
+    "PLR0911", # too many return statements (matches aioesphomeapi)
+    "PLR0912", # too many branches (matches aioesphomeapi)
+    "PLR0913", # too many arguments (matches aioesphomeapi)
+    "PLR0915", # too many statements (matches aioesphomeapi)
+    "PLR2004", # magic value in comparison (matches aioesphomeapi)
 ]
 select = [
     "A",    # flake8-builtins
@@ -150,6 +155,7 @@ select = [
     "PERF", # Perflint
     "PGH",  # pygrep-hooks
     "PIE",  # flake8-pie
+    "PLR",  # pylint refactor
     "PLW",  # pylint warnings
     "PT",   # flake8-pytest-style
     "PTH",  # flake8-use-pathlib

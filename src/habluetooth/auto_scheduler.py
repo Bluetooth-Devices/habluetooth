@@ -232,8 +232,7 @@ class _ScannerWorker:
             if history is None or history.source != source:
                 continue
             earliest = min(entries.values())
-            if earliest < next_at:
-                next_at = earliest
+            next_at = min(next_at, earliest)
         return next_at
 
     async def _run(self) -> None:

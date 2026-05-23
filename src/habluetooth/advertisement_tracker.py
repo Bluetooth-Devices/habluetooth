@@ -59,8 +59,9 @@ class AdvertisementTracker:
         max_time_between_advertisements = timings[1] - timings[0]
         for i in range(2, len(timings)):
             time_between_advertisements = timings[i] - timings[i - 1]
-            if time_between_advertisements > max_time_between_advertisements:
-                max_time_between_advertisements = time_between_advertisements
+            max_time_between_advertisements = max(
+                max_time_between_advertisements, time_between_advertisements
+            )
 
         # We now know the maximum time between advertisements
         self.intervals[service_info.address] = max_time_between_advertisements
