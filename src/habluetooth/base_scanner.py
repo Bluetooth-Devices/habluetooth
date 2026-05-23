@@ -604,7 +604,7 @@ class BaseHaScanner:
                 info.name = prev_name
             else:
                 info.device.name = local_name
-                info.name = local_name if local_name else address
+                info.name = local_name or address
 
             has_service_uuids = bool(service_uuids)
             if (

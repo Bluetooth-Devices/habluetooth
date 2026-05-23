@@ -132,6 +132,7 @@ select = [
     "FA",   # flake8-future-annotations
     "FIX",  # flake8-fixme
     "FLY",  # flynt
+    "FURB", # refurb
     "G",    # flake8-logging-format
     "I",    # isort
     "ICN",  # flake8-import-conventions
