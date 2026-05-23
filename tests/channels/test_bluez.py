@@ -144,10 +144,10 @@ def test_data_received_device_found(
         future, scanners, on_connection_lost, is_shutting_down, mock_sock
     )
 
-    # Create a DEVICE_FOUND event (event_code 0x0012)
-    # Header: event_code (2), controller_idx (2), param_len (2)
-    # Params: address (6), address_type (1), rssi (1), flags (4),
-    # ad_data_len (2), ad_data
+    # Create a DEVICE_FOUND event (event_code 0x0012). Header layout is
+    # event_code (2), controller_idx (2), param_len (2); params layout
+    # is address (6), address_type (1), rssi (1), flags (4),
+    # ad_data_len (2), then ad_data.
     ad_data = b"\x02\x01\x06"  # Simple advertisement data
     param_len = 6 + 1 + 1 + 4 + 2 + len(ad_data)
 

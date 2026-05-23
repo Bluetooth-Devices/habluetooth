@@ -407,7 +407,7 @@ class HaBleakClientWrapper(BleakClient):
         """
         return None if callback is None else partial(callback, self)
 
-    async def connect(self, **kwargs: Any) -> None:
+    async def connect(self, **kwargs: Any) -> None:  # noqa: C901
         """Connect to the specified GATT server."""
         if self.is_connected:
             return

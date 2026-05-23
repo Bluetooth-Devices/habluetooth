@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "habluetooth"
-version = "6.3.0"
+version = "6.3.1"
 license = "Apache-2.0"
 description = "High availability Bluetooth"
 authors = [{ name = "J. Nick Koston", email = "bluetooth@koston.org" }]
@@ -126,9 +126,11 @@ select = [
     "B",    # flake8-bugbear
     "BLE",  # flake8-blind-except
     "C4",   # flake8-comprehensions
+    "C90",  # mccabe complexity
     "D",    # flake8-docstrings
     "DTZ",  # flake8-datetimez
     "E",    # pycodestyle
+    "ERA",  # eradicate
     "EXE",  # flake8-executable
     "F",    # pyflake
     "FA",   # flake8-future-annotations
