@@ -1,5 +1,31 @@
 # Changelog
 
+## v6.3.1 (2026-05-23)
+
+### Bug fixes
+
+
+- Narrow deserialize exception so shape mismatches don't hide bugs ([`89197d6`](https://github.com/Bluetooth-Devices/habluetooth/commit/89197d69bef50ea4b082900c5647a9ba65e39e80))
+
+
+### Refactoring
+
+
+- Extract _should_keep_previous_adv from hot path ([`c4c862f`](https://github.com/Bluetooth-Devices/habluetooth/commit/c4c862f39154f3d2fb79a0438bcecffcce9942de))
+
+
+- Dedup source-keyed callback register/dispatch trios ([`d8df7b3`](https://github.com/Bluetooth-Devices/habluetooth/commit/d8df7b3fe6355833bfcfed98008b273cea25cbac))
+
+
+### Testing
+
+
+- Factor inline mockbleakscanner classes into a shared base ([`6c590d6`](https://github.com/Bluetooth-Devices/habluetooth/commit/6c590d6d0efcc2e6c36135d8200afc5c06371e01))
+
+
+- Cover the lines codecov flagged on the auto-scan-mode merge ([`a561579`](https://github.com/Bluetooth-Devices/habluetooth/commit/a561579c4ed0fa630b447241e9ecf8adfafbd688))
+
+
 ## v6.3.0 (2026-05-22)
 
 ### Features
