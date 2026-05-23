@@ -524,6 +524,26 @@ class BluetoothManager:
         This method is intended to be overridden by subclasses.
         """
 
+    def _should_keep_previous_adv(
+        self,
+        old_info: BluetoothServiceInfoBleak,
+        new_info: BluetoothServiceInfoBleak,
+    ) -> bool:
+        """
+        Return True when ``old_info`` should win over ``new_info``.
+
+        Only relevant when ``old_info`` came from a different still-scanning
+        source. The ``is not / !=`` ordering is a PyObject_RichCompare
+        short-circuit that dominates this hot path; keep it intact.
+        """
+        return (
+            new_info.source is not old_info.source
+            and new_info.source != old_info.source
+            and (scanner := self._sources.get(old_info.source)) is not None
+            and scanner.scanning
+            and self._prefer_previous_adv_from_different_source(old_info, new_info)
+        )
+
     def _prefer_previous_adv_from_different_source(
         self,
         old: BluetoothServiceInfoBleak,
@@ -771,42 +791,22 @@ class BluetoothManager:
         #                       connectable scanner
         #
         if (
-            (old_service_info := self._all_history.get(service_info.address))
-            is not None
-            and service_info.source is not old_service_info.source
-            and service_info.source != old_service_info.source
-            and (scanner := self._sources.get(old_service_info.source)) is not None
-            and scanner.scanning
-            and self._prefer_previous_adv_from_different_source(
-                old_service_info, service_info
-            )
+            old_service_info := self._all_history.get(service_info.address)
+        ) is not None and self._should_keep_previous_adv(
+            old_service_info, service_info
         ):
             # If we are rejecting the new advertisement and the device is connectable
             # but not in the connectable history or the connectable source is the same
             # as the new source, we need to add it to the connectable history
             if service_info.connectable:
                 if old_connectable_service_info is not None and (
-                    # If its the same as the preferred source, we are done
-                    # as we know we prefer the old advertisement
-                    # from the check above
-                    (old_connectable_service_info is old_service_info)
-                    # If the old connectable source is different from the preferred
-                    # source, we need to check it as well to see if we prefer
-                    # the old connectable advertisement
-                    or (
-                        old_connectable_service_info.source is not service_info.source
-                        and old_connectable_service_info.source != service_info.source
-                        and (
-                            connectable_scanner := self._sources.get(
-                                old_connectable_service_info.source
-                            )
-                        )
-                        is not None
-                        and connectable_scanner.scanning
-                        and self._prefer_previous_adv_from_different_source(
-                            old_connectable_service_info,
-                            service_info,
-                        )
+                    # If it's the same as the preferred source, we're done; we know
+                    # we prefer the old advertisement from the check above.
+                    old_connectable_service_info is old_service_info
+                    # Otherwise the old connectable came from a different source;
+                    # re-run the predicate against the connectable history entry.
+                    or self._should_keep_previous_adv(
+                        old_connectable_service_info, service_info
                     )
                 ):
                     return

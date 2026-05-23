@@ -84,6 +84,13 @@ cdef class BluetoothManager:
         BluetoothServiceInfoBleak new
     )
 
+    @cython.locals(scanner=BaseHaScanner)
+    cdef bint _should_keep_previous_adv(
+        self,
+        BluetoothServiceInfoBleak old_info,
+        BluetoothServiceInfoBleak new_info
+    )
+
     @cython.locals(
         cached=str,
         cached_cf=str,
@@ -106,8 +113,6 @@ cdef class BluetoothManager:
         old_connectable_service_info=BluetoothServiceInfoBleak,
         source=str,
         connectable=bint,
-        scanner=BaseHaScanner,
-        connectable_scanner=BaseHaScanner,
         apple_cstr="const unsigned char *",
         bleak_callback=BleakCallback,
         cached_name=str,
