@@ -182,10 +182,13 @@ def test_from_device_and_advertisement_data():
 
 
 def test_pyobjc_compat():
-    class pyobjc_str(str):
+    # pyobjc-style snake_case names intentionally mirror the runtime
+    # types we receive from CoreBluetooth so the coercion paths are
+    # exercised with realistic class identities.
+    class pyobjc_str(str):  # noqa: N801
         __slots__ = ()
 
-    class pyobjc_int(int):
+    class pyobjc_int(int):  # noqa: N801
         __slots__ = ()
 
     name = pyobjc_str("wohand")
