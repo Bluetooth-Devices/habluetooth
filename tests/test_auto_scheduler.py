@@ -3683,3 +3683,204 @@ async def test_worker_tick_dispatch_does_not_shrink_existing_fallback_window() -
         cancel()
         c_owner()
         c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_three_addresses_same_fallback_coalesce_to_max() -> None:
+    """
+    Three due addresses with distinct durations on one fallback coalesce to max.
+
+    Confirms per-fallback coalescing picks the max
+    ``scan_duration`` over all grouped requests, not the first.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_a = "11:22:33:44:55:2B"
+    addr_b = "11:22:33:44:55:2C"
+    addr_c = "11:22:33:44:55:2D"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=120.0, scan_duration=11.0
+    )
+    c3 = manager.async_register_active_scan(
+        addr_c, scan_interval=120.0, scan_duration=8.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:2B:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:2B:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        for addr in (addr_a, addr_b, addr_c):
+            _inject_with_rssi(owner, addr, rssi=-50)
+            fb.add_discovered(addr, rssi=-60)
+        owner._add_connecting(addr_a)
+        for addr in (addr_a, addr_b, addr_c):
+            _make_due(sched, addr)
+        await _run_worker_tick(sched, owner.source)
+        # Single call to the shared fallback at max(6, 11, 8) = 11.
+        assert fb.active_window_calls == [11.0]
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        c1()
+        c2()
+        c3()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_three_addresses_three_fallbacks_each_own_duration() -> None:
+    """Three due addresses on three fallbacks, each call uses its own duration."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_a = "11:22:33:44:55:2E"
+    addr_b = "11:22:33:44:55:2F"
+    addr_c = "11:22:33:44:55:30"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=180.0, scan_duration=9.0
+    )
+    c3 = manager.async_register_active_scan(
+        addr_c, scan_interval=240.0, scan_duration=12.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:2E:01", BluetoothScanningMode.AUTO)
+    fb_a = _DiscoverableAutoScanner("AA:00:00:00:2E:02", BluetoothScanningMode.AUTO)
+    fb_b = _DiscoverableAutoScanner("AA:00:00:00:2E:03", BluetoothScanningMode.AUTO)
+    fb_c = _DiscoverableAutoScanner("AA:00:00:00:2E:04", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_a = manager.async_register_scanner(fb_a)
+    c_b = manager.async_register_scanner(fb_b)
+    c_c = manager.async_register_scanner(fb_c)
+    try:
+        _inject_with_rssi(owner, addr_a, rssi=-50)
+        _inject_with_rssi(owner, addr_b, rssi=-50)
+        _inject_with_rssi(owner, addr_c, rssi=-50)
+        fb_a.add_discovered(addr_a, rssi=-60)
+        fb_b.add_discovered(addr_b, rssi=-60)
+        fb_c.add_discovered(addr_c, rssi=-60)
+        owner._add_connecting(addr_a)
+        for addr in (addr_a, addr_b, addr_c):
+            _make_due(sched, addr)
+        await _run_worker_tick(sched, owner.source)
+        assert fb_a.active_window_calls == [6.0]
+        assert fb_b.active_window_calls == [9.0]
+        assert fb_c.active_window_calls == [12.0]
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        c1()
+        c2()
+        c3()
+        c_owner()
+        c_a()
+        c_b()
+        c_c()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_three_addresses_no_fallback_advance_by_defer() -> None:
+    """
+    No-fallback advance uses ``_AUTO_CONNECTING_DEFER``, not scan_interval.
+
+    Three addresses with very different ``scan_interval``s
+    (120/600/3600s) must all be advanced to ~now + 30s so the next
+    tick retries shortly after the connect completes.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_a = "11:22:33:44:55:31"
+    addr_b = "11:22:33:44:55:32"
+    addr_c = "11:22:33:44:55:33"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=600.0, scan_duration=9.0
+    )
+    c3 = manager.async_register_active_scan(
+        addr_c, scan_interval=3600.0, scan_duration=12.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:31:01", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    try:
+        for addr in (addr_a, addr_b, addr_c):
+            _inject_with_rssi(owner, addr, rssi=-50)
+            _make_due(sched, addr)
+        owner._add_connecting(addr_a)
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        for addr in (addr_a, addr_b, addr_c):
+            entries = sched._needs[addr]
+            for due in entries.values():
+                assert due == pytest.approx(before + 30.0, abs=0.5)
+                assert due < before + 60.0
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        c1()
+        c2()
+        c3()
+        c_owner()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_three_addresses_mixed_outcomes_advance_correctly() -> None:
+    """
+    Three addresses, three outcomes, each advanced per its outcome.
+
+    covered (ACTIVE) -> ``scan_interval`` (full cadence).
+    AUTO fallback   -> ``scan_interval`` (full cadence).
+    no fallback     -> ``_AUTO_CONNECTING_DEFER`` (short retry).
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_covered = "11:22:33:44:55:34"
+    addr_flipped = "11:22:33:44:55:35"
+    addr_orphan = "11:22:33:44:55:36"
+    c1 = manager.async_register_active_scan(
+        addr_covered, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_flipped, scan_interval=240.0, scan_duration=9.0
+    )
+    c3 = manager.async_register_active_scan(
+        addr_orphan, scan_interval=600.0, scan_duration=12.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:34:01", BluetoothScanningMode.AUTO)
+    active = _DiscoverableAutoScanner("AA:00:00:00:34:02", BluetoothScanningMode.ACTIVE)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:34:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_active = manager.async_register_scanner(active)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        for addr in (addr_covered, addr_flipped, addr_orphan):
+            _inject_with_rssi(owner, addr, rssi=-50)
+            _make_due(sched, addr)
+        active.add_discovered(addr_covered, rssi=-60)
+        fb.add_discovered(addr_flipped, rssi=-60)
+        owner._add_connecting(addr_covered)
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        for due in sched._needs[addr_covered].values():
+            assert due == pytest.approx(before + 120.0, abs=0.5)
+        for due in sched._needs[addr_flipped].values():
+            assert due == pytest.approx(before + 240.0, abs=0.5)
+        for due in sched._needs[addr_orphan].values():
+            assert due == pytest.approx(before + 30.0, abs=0.5)
+        assert fb.active_window_calls == [9.0]
+        assert active.active_window_calls == []
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(addr_covered, connected=False)
+        c1()
+        c2()
+        c3()
+        c_owner()
+        c_active()
+        c_fb()
