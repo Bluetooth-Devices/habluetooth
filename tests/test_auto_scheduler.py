@@ -4489,6 +4489,24 @@ async def test_async_request_sweep_rejects_invalid_duration() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_request_sweep_no_op_when_scheduler_stopped() -> None:
+    """After stop() the scheduler has no loop; the sweep returns immediately."""
+    manager = get_manager()
+    manager._auto_scheduler.stop()
+    await manager.async_request_sweep(duration=5.0)
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_no_op_without_auto_scanners() -> None:
+    """With no AUTO workers the sweep still completes its sleep cleanly."""
+    manager = get_manager()
+    # No scanners registered; targets is empty but the sleep still runs.
+    async with _no_real_sleep():
+        await manager.async_request_sweep(duration=5.0)
+    assert manager._auto_scheduler._on_demand_sweep_future is None
+
+
+@pytest.mark.asyncio
 async def test_async_request_sweep_awaits_the_full_duration() -> None:
     """
     The sweep awaits ``duration`` so the caller can read advertisements.
