@@ -338,7 +338,7 @@ def test_expire_future_discovered_device_advertisement_data(
 
 
 def test_discovered_device_advertisement_data_from_dict_corrupt(caplog):
-    """Test discovered_device_advertisement_data_from_dict with corrupt data."""
+    """Shape mismatches log a WARNING and discard the cache without a traceback."""
     now = time.time()
     result = discovered_device_advertisement_data_from_dict(
         {
@@ -364,7 +364,45 @@ def test_discovered_device_advertisement_data_from_dict_corrupt(caplog):
         }
     )
     assert result is None
-    assert "Error deserializing discovered_device_advertisement_data" in caplog.text
+    assert "Discovery cache shape mismatch" in caplog.text
+    # The shape-mismatch path is logged at WARNING without a traceback so
+    # operators can distinguish it from genuinely unexpected failures.
+    records = [
+        r for r in caplog.records if "Discovery cache shape mismatch" in r.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelname == "WARNING"
+    assert records[0].exc_info is None
+
+
+def test_discovered_device_advertisement_data_from_dict_unexpected_error(
+    caplog, monkeypatch
+):
+    """Unexpected errors keep the full traceback and are logged at ERROR."""
+
+    def boom(_data):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "habluetooth.storage._deserialize_discovered_device_advertisement_datas",
+        boom,
+    )
+    result = discovered_device_advertisement_data_from_dict(
+        {
+            "connectable": True,
+            "discovered_device_advertisement_datas": {},
+            "discovered_device_timestamps": {},
+            "expire_seconds": 100,
+            "discovered_device_raw": {},
+        }
+    )
+    assert result is None
+    records = [
+        r for r in caplog.records if "Unexpected error deserializing" in r.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelname == "ERROR"
+    assert records[0].exc_info is not None
 
 
 def test_backward_compatibility_rssi_in_device_dict():
