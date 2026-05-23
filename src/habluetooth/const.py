@@ -57,7 +57,7 @@ UNAVAILABLE_TRACK_SECONDS: Final = 60 * 5
 # AUTO scanning mode: each scanner gets its first sweep
 # AUTO_INITIAL_SWEEP_DELAY after joining, then every
 # AUTO_REDISCOVERY_INTERVAL, serialized across scanners.
-AUTO_INITIAL_SWEEP_DELAY: Final = 60 * 10
+AUTO_INITIAL_SWEEP_DELAY: Final = 60 * 4
 AUTO_REDISCOVERY_INTERVAL: Final = 60 * 60 * 12
 AUTO_REDISCOVERY_SWEEP_DURATION: Final = 15.0
 
