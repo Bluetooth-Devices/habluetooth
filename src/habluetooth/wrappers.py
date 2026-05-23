@@ -426,7 +426,8 @@ class HaBleakClientWrapper(BleakClient):
 
         manager = self.__manager
         if manager.shutdown:
-            raise BleakError("Bluetooth is already shutdown")
+            msg = "Bluetooth is already shutdown"
+            raise BleakError(msg)
         if debug_logging := _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("%s: Looking for backend to connect", self.__address)
         wrapped_backend = self._async_get_best_available_backend_and_device(manager)
@@ -639,17 +640,19 @@ class HaBleakClientWrapper(BleakClient):
 
             if not has_active_capable_scanner:
                 scanner_names = [scanner.name for scanner in scanners]
-                raise BleakError(
+                msg = (
                     f"{address}: No connectable Bluetooth adapters. "
                     f"Shelly devices are passive-only and cannot connect. "
                     f"Need local Bluetooth adapter or ESPHome proxy. "
                     f"Available: {', '.join(scanner_names)}"
                 )
+                raise BleakError(msg)
 
-        raise BleakError(
+        msg = (
             "No backend with an available connection slot that can reach address"
             f" {address} was found"
         )
+        raise BleakError(msg)
 
     async def disconnect(self) -> None:
         """Disconnect from the device."""

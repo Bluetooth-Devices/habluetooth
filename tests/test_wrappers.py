@@ -113,7 +113,8 @@ class FakeBleakClientRaisesOnConnect(BaseFakeBleakClient):
 
     async def connect(self, *args, **kwargs):
         """Connect."""
-        raise ConnectionError("Test exception")
+        msg = "Test exception"
+        raise ConnectionError(msg)
 
 
 class FakeBleakClientCancelledOnConnect(BaseFakeBleakClient):
@@ -483,7 +484,8 @@ async def test_switch_adapters_on_failure(
             """Connect."""
             assert isinstance(self._device, BLEDevice)
             if "/hci0/" in self._device.details["path"]:
-                raise BleakError("Failed to connect on hci0")
+                msg = "Failed to connect on hci0"
+                raise BleakError(msg)
 
         @property
         def is_connected(self) -> bool:
@@ -496,7 +498,8 @@ async def test_switch_adapters_on_failure(
             """Connect."""
             assert isinstance(self._device, BLEDevice)
             if "/hci1/" in self._device.details["path"]:
-                raise BleakError("Failed to connect on hci1")
+                msg = "Failed to connect on hci1"
+                raise BleakError(msg)
 
         @property
         def is_connected(self) -> bool:
@@ -1713,7 +1716,8 @@ async def test_connection_path_scoring_with_slots_and_logging(
 
         async def connect(self, *args, **kwargs):
             """Don't actually connect."""
-            raise BleakError("Test - connection not needed")
+            msg = "Test - connection not needed"
+            raise BleakError(msg)
 
     # Create fake connectors
     fake_connector_1 = HaBluetoothConnector(
@@ -1854,7 +1858,8 @@ async def test_connection_path_scoring_no_slots_available(
 
         async def connect(self, *args, **kwargs):
             """Don't actually connect."""
-            raise BleakError("Test - connection not needed")
+            msg = "Test - connection not needed"
+            raise BleakError(msg)
 
     # Create fake connectors
     fake_connector_1 = HaBluetoothConnector(

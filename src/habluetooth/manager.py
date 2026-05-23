@@ -1096,7 +1096,8 @@ class BluetoothManager:
         ignore the request. Returns a cancel callable.
         """
         if not address:
-            raise ValueError("address must be a non-empty string")
+            msg = "address must be a non-empty string"
+            raise ValueError(msg)
         if scan_interval is None:
             scan_interval = DEFAULT_ACTIVE_SCAN_INTERVAL
         if scan_duration is None:
@@ -1106,15 +1107,17 @@ class BluetoothManager:
         # checks below and end up in _needs and call_later as a NaN
         # due-time / duration, busy-looping the worker.
         if not math.isfinite(scan_interval) or scan_interval < MIN_ACTIVE_SCAN_INTERVAL:
-            raise ValueError(
+            msg = (
                 f"scan_interval must be a finite number >= "
                 f"{MIN_ACTIVE_SCAN_INTERVAL:.0f}s"
             )
+            raise ValueError(msg)
         if not math.isfinite(scan_duration) or scan_duration < MIN_ACTIVE_SCAN_DURATION:
-            raise ValueError(
+            msg = (
                 f"scan_duration must be a finite number >= "
                 f"{MIN_ACTIVE_SCAN_DURATION:.0f}s"
             )
+            raise ValueError(msg)
         # MAC addresses (colon-form) get upper-cased to match BlueZ /
         # ESPHome conventions; UUIDs (macOS CoreBluetooth) pass
         # through as-is.

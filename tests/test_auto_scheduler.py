@@ -830,7 +830,8 @@ async def test_run_window_swallows_scanner_exception() -> None:
 
     class _FailingScanner(_RecordingAutoScanner):
         async def async_request_active_window(self, duration: float) -> bool:
-            raise RuntimeError("boom")
+            msg = "boom"
+            raise RuntimeError(msg)
 
     scanner = _FailingScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
@@ -864,7 +865,8 @@ async def test_repeated_window_failures_log_only_first_traceback(
 
     class _FailingScanner(_RecordingAutoScanner):
         async def async_request_active_window(self, duration: float) -> bool:
-            raise RuntimeError("boom")
+            msg = "boom"
+            raise RuntimeError(msg)
 
     scanner = _FailingScanner("AA:BB:CC:DD:EE:11", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
@@ -913,7 +915,8 @@ async def test_tick_sync_phase_exception_is_logged_and_worker_survives(
         original = manager.async_last_service_info
 
         def _boom(_addr: str, _conn: bool) -> None:
-            raise RuntimeError("boom in last_service_info")
+            msg = "boom in last_service_info"
+            raise RuntimeError(msg)
 
         manager.async_last_service_info = _boom  # type: ignore[assignment,method-assign]
         try:

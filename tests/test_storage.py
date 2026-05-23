@@ -381,7 +381,8 @@ def test_discovered_device_advertisement_data_from_dict_unexpected_error(
     """Unexpected errors keep the full traceback and are logged at ERROR."""
 
     def boom(_data):
-        raise RuntimeError("boom")
+        msg = "boom"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr(
         "habluetooth.storage._deserialize_discovered_device_advertisement_datas",
