@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.7.0 (2026-05-23)
+
+### Features
+
+
+- Expose async_request_active_scan for on-demand discovery ([`96d9153`](https://github.com/Bluetooth-Devices/habluetooth/commit/96d9153ec47bcb3161b3f57d01758be2bf84a951))
+
+
 ## v6.6.1 (2026-05-23)
 
 ### Bug fixes
