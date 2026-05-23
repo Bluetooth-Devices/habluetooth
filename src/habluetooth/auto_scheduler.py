@@ -228,6 +228,27 @@ class _ScannerWorker:
         delegated window, and ``_sweep_last_completed`` so the window
         counts as this worker's sweep. Both use ``max`` to preserve a
         longer pre-existing value.
+
+        Known best-effort caveats; revisit if profiling shows they
+        matter:
+
+        * If this worker is mid-``_tick`` when we set ``_window_end``,
+          its ``finally`` resets ``_window_end`` to 0 on exit, wiping
+          our bump. The optimization is then skipped: this worker
+          ticks normally during the delegated window. Correctness is
+          preserved (scanner-level ``_active_window_handle`` extends
+          the radio window idempotently; ``_needs`` is advanced
+          per-address by each worker on its own tick), only the
+          intended "skip your own ticks during my window" hint is
+          lost. ``_sweep_last_completed`` lives outside the
+          ``finally`` and survives.
+        * Advancing ``_sweep_last_completed`` by a full
+          ``AUTO_REDISCOVERY_INTERVAL`` (12 h) even when the
+          delegated ``window_end - now`` is shorter than
+          ``AUTO_REDISCOVERY_SWEEP_DURATION`` (15 s) treats a short
+          per-device window as a full sweep. Worst case: the
+          fallback's next sweep is delayed by up to 12 h. Acceptable
+          for rediscovery cadence; not a correctness issue.
         """
         if self._window_end < window_end:
             self._window_end = window_end
