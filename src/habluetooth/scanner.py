@@ -62,14 +62,17 @@ if IS_LINUX:
     class HaAdvertisementMonitor(AdvertisementMonitor):
         """Implementation of the org.bluez.AdvertisementMonitor1 D-Bus interface."""
 
+        # Method names are dictated by the BlueZ AdvertisementMonitor1
+        # D-Bus interface; ``dbus_fast`` matches the Python attribute
+        # name against the interface, so the CamelCase form is required.
         @method()
         @no_type_check
-        def DeviceFound(self, device: o):  # noqa: F821
+        def DeviceFound(self, device: o):  # noqa: F821, N802
             """Device found."""
 
         @method()
         @no_type_check
-        def DeviceLost(self, device: o):  # noqa: F821
+        def DeviceLost(self, device: o):  # noqa: F821, N802
             """Device lost."""
 
     AdvertisementMonitor.DeviceFound = HaAdvertisementMonitor.DeviceFound

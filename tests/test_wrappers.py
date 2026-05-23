@@ -15,7 +15,7 @@ from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bleak.exc import BleakError
 from bleak_retry_connector import Allocations
-from bluetooth_data_tools import monotonic_time_coarse as MONOTONIC_TIME
+from bluetooth_data_tools import monotonic_time_coarse
 
 from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector
 from habluetooth import get_manager as _get_manager
@@ -74,7 +74,7 @@ class FakeScanner(BaseHaRemoteScanner):
             advertisement_data.manufacturer_data,
             advertisement_data.tx_power,
             device.details | {"scanner_specific_data": "test"},
-            MONOTONIC_TIME(),
+            monotonic_time_coarse(),
         )
 
 
