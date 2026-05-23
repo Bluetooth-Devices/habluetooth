@@ -18,7 +18,6 @@ from habluetooth import scanner as bluetooth_scanner
 
 
 class FakeBluetoothAdapters(BluetoothAdapters):
-
     @property
     def adapters(self) -> dict[str, AdapterDetails]:
         return {}
@@ -242,9 +241,9 @@ class MockBluetoothManagerWithCallbacks(BluetoothManager):
 
 
 @pytest.fixture
-def mock_manager_with_scanner_callbacks() -> (
-    Generator[MockBluetoothManagerWithCallbacks, None, None]
-):
+def mock_manager_with_scanner_callbacks() -> Generator[
+    MockBluetoothManagerWithCallbacks, None, None
+]:
     """Provide a mock BluetoothManager that tracks scanner start callbacks."""
     mock_bluetooth_adapters = FakeBluetoothAdapters()
     manager = MockBluetoothManagerWithCallbacks(
@@ -266,9 +265,9 @@ def mock_manager_with_scanner_callbacks() -> (
 
 
 @pytest_asyncio.fixture
-async def async_mock_manager_with_scanner_callbacks() -> (
-    AsyncGenerator[MockBluetoothManagerWithCallbacks, None]
-):
+async def async_mock_manager_with_scanner_callbacks() -> AsyncGenerator[
+    MockBluetoothManagerWithCallbacks, None
+]:
     """Provide an async mock BluetoothManager that tracks scanner start callbacks."""
     mock_bluetooth_adapters = FakeBluetoothAdapters()
     manager = MockBluetoothManagerWithCallbacks(

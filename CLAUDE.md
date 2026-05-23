@@ -121,7 +121,7 @@ poetry run pytest tests/test_manager.py    # single file
 poetry run pytest -k allocation            # by keyword
 ```
 
-Lint / format (pre-commit covers ruff, black, mypy, codespell, prettier,
+Lint / format (pre-commit covers ruff, ruff-format, mypy, codespell, prettier,
 poetry-check):
 
 ```bash

@@ -148,7 +148,6 @@ async def test_inject_100_different_advertisements(benchmark: BenchmarkFixture) 
     )
     advs: list[AdvertisementData] = []
     for i in range(100):
-
         switchbot_device_adv = generate_advertisement_data(
             local_name="wohand",
             service_uuids=["050a021a-0000-1000-8000-00805f9b34fb"],
@@ -208,7 +207,6 @@ async def test_inject_100_different_manufacturer_data(
     )
     advs: list[AdvertisementData] = []
     for i in range(100):
-
         switchbot_device_adv = generate_advertisement_data(
             local_name="wohand",
             service_uuids=["050a021a-0000-1000-8000-00805f9b34fb"],
@@ -268,7 +266,6 @@ async def test_inject_100_different_service_data(
     )
     advs: list[AdvertisementData] = []
     for i in range(100):
-
         switchbot_device_adv = generate_advertisement_data(
             local_name="wohand",
             service_uuids=["050a021a-0000-1000-8000-00805f9b34fb"],
@@ -612,7 +609,6 @@ async def test_inject_100_rotating_manufacturer_data(
 
     advs: list[AdvertisementData] = []
     for i in range(100):
-
         sensorpush_device_adv = generate_advertisement_data(
             local_name="",
             service_uuids=["ef090000-11d6-42ba-93b8-9dd7ec090ab0"],

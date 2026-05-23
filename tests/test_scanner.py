@@ -978,7 +978,6 @@ async def test_scanner_with_bluez_mgmt_side_channel(mock_btmgmt_socket: Mock) ->
     """Test scanner receiving advertisements via BlueZ management side channel."""
     # Mock capability check for the entire test
     with patch.object(MGMTBluetoothCtl, "_check_capabilities", return_value=True):
-
         # Create a custom manager that tracks discovered devices
         class TestBluetoothManager(BluetoothManager):
             def __init__(self, *args, **kwargs):
@@ -1153,7 +1152,6 @@ async def test_bluez_mgmt_protocol_data_flow(mock_btmgmt_socket: Mock) -> None:
     """Test data flow from BlueZ protocol through manager to scanner."""
     # Mock capability check for the entire test
     with patch.object(MGMTBluetoothCtl, "_check_capabilities", return_value=True):
-
         # Create manager
         class TestBluetoothManager(BluetoothManager):
             def __init__(self, *args, **kwargs):

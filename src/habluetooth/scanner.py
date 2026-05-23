@@ -614,10 +614,7 @@ class HaScanner(BaseHaScanner):
             ex,
             exc_info=True,
         )
-        msg = (
-            f"{self.name}: Invalid DBus message received: {ex}; "
-            "try restarting `dbus`"
-        )
+        msg = f"{self.name}: Invalid DBus message received: {ex}; try restarting `dbus`"
         raise ScannerStartError(msg) from ex
 
     def _async_scanner_watchdog(self) -> None:
