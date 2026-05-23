@@ -628,6 +628,27 @@ class HaScanner(BaseHaScanner):
         msg = f"{self.name}: Invalid DBus message received: {ex}; try restarting `dbus`"
         raise ScannerStartError(msg) from ex
 
+    def _describe_side_channel_state(self) -> str:
+        """Summarize where this scanner expects advertisements to come from."""
+        manager = self._manager
+        idx = self.adapter_idx
+        if idx is None:
+            return "no adapter_idx; bleak detection_callback path"
+        if not manager.has_advertising_side_channel:
+            return "MGMT side channel unavailable; bleak detection_callback path"
+        registered = manager._side_channel_scanners.get(idx)
+        if registered is None:
+            return f"MGMT side channel up but hci{idx} unregistered"
+        if registered is not self:
+            return f"MGMT side channel at hci{idx} bound to a different scanner"
+        mgmt_ctl = manager._mgmt_ctl
+        protocol = getattr(mgmt_ctl, "protocol", None) if mgmt_ctl else None
+        if protocol is None:
+            return f"MGMT side channel registered at hci{idx} but protocol down"
+        if protocol.transport is None:
+            return f"MGMT side channel registered at hci{idx} but transport closed"
+        return f"MGMT side channel feeding hci{idx}"
+
     def _async_scanner_watchdog(self) -> None:
         """Check if the scanner is running."""
         if not self._async_watchdog_triggered():
@@ -639,9 +660,10 @@ class HaScanner(BaseHaScanner):
             )
             return
         _LOGGER.debug(
-            "%s: Bluetooth scanner has gone quiet for %ss, restarting",
+            "%s: Bluetooth scanner has gone quiet for %ss (%s), restarting",
             self.name,
             self.time_since_last_detection(),
+            self._describe_side_channel_state(),
         )
         # Immediately mark the scanner as not scanning
         # since the restart task will have to wait for the lock
