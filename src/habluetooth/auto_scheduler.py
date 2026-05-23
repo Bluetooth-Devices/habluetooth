@@ -242,13 +242,16 @@ class _ScannerWorker:
           intended "skip your own ticks during my window" hint is
           lost. ``_sweep_last_completed`` lives outside the
           ``finally`` and survives.
-        * Advancing ``_sweep_last_completed`` by a full
-          ``AUTO_REDISCOVERY_INTERVAL`` (12 h) even when the
-          delegated ``window_end - now`` is shorter than
-          ``AUTO_REDISCOVERY_SWEEP_DURATION`` (15 s) treats a short
-          per-device window as a full sweep. Worst case: the
-          fallback's next sweep is delayed by up to 12 h. Acceptable
-          for rediscovery cadence; not a correctness issue.
+        * Advancing ``_sweep_last_completed`` to ``now`` on every
+          delegation pushes the fallback's next rediscovery sweep
+          out by a full ``AUTO_REDISCOVERY_INTERVAL`` (12 h). A
+          fallback delegated to often (next to a busy-connecting
+          owner) can have its rediscovery perpetually deferred.
+          Acceptable here because sweep is an enrichment pass for
+          ``SCAN_RSP`` data; passive scanning on the fallback and
+          per-device active windows on every scanner continue
+          normally, so devices callers actually requested are still
+          scanned on cadence. The owner's own sweep is untouched.
         """
         if self._window_end < window_end:
             self._window_end = window_end
