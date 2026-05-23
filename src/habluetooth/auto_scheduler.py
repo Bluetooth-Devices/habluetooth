@@ -12,8 +12,12 @@ whichever scanner the manager currently considers the device's owner
 AUTO scanners can also see the device, they stay PASSIVE for that
 window. Ownership can flip across scanners over time as RSSI changes;
 the next-due window then fires on the new owner (see "Migration"
-below). Sweeps are different and run on every AUTO scanner
-independently, since their job is to find devices not yet in history.
+below). The rediscovery sweep is a floor for AUTO scanners that
+haven't active-scanned in ``AUTO_REDISCOVERY_INTERVAL`` (12 h); any
+active window — per-device, sweep, or a window delegated to this
+scanner by the connecting-fallback path — advances
+``_sweep_last_completed``, so the sweep only fires on scanners that
+would otherwise stay idle.
 
 
 Flow
@@ -50,12 +54,17 @@ Flow
                   |       (last_service_info.source) is      |
                   |       not this scanner                   |
                   |    2. sweep_due = sweep cadence elapsed  |
-                  |    3. duration = max(due durations,      |
+                  |    3. if owner has connect in progress:  |
+                  |          dispatch per-address to a       |
+                  |          fallback scanner; return        |
+                  |    4. duration = max(due durations,      |
                   |       SWEEP_DURATION if sweep_due)       |
-                  |    4. _advance_due (pre-await) so the    |
+                  |    5. _advance_due (pre-await) so the    |
                   |       new owner of any of these          |
-                  |       addresses can't double-fire        |
-                  |    5. ONE await:                         |
+                  |       addresses can't double-fire;       |
+                  |       _sweep_last_completed = now (any   |
+                  |       active scan satisfies the floor)   |
+                  |    6. ONE await:                         |
                   |       scanner.async_request_active_window|
                   +------------------------------------------+
 
@@ -77,8 +86,35 @@ up the new owner without any address-level rescheduling:
    ``last_service_info(addr).source`` and sees B; the entry is
    collected and dispatched. A's worker on its own next tick sees
    ``last_service_info(addr).source != A`` and skips.
-4. The pre-await ``_advance_due`` in step 4 of ``_tick`` prevents A
+4. The pre-await ``_advance_due`` in step 5 of ``_tick`` prevents A
    from double-firing if the flip lands mid-window.
+
+
+Connecting fallback
+===================
+
+A scanner mid-connect can't service the active-window mode flip
+(the radio is busy). At tick time, if
+``scanner._connections_in_progress() > 0``, the owner's worker
+routes each due address via
+``AutoScanScheduler._resolve_fallback_for_address``:
+
+* A non-connecting ACTIVE scanner that sees the address is treated
+  as "covered" — the device is already being actively scanned, no
+  flip needed.
+* Otherwise, the highest-RSSI non-connecting AUTO scanner that
+  sees the address is picked as a fallback. Calls are coalesced
+  per fallback so each scanner receives at most one
+  ``async_request_active_window`` per tick.
+* No usable fallback: warn (rate-limited), advance the address by
+  ``_AUTO_CONNECTING_DEFER`` so the next tick retries soon after
+  the connect typically completes.
+
+``_ScannerWorker.note_window_dispatched`` is called on the fallback
+worker before the await to mark its radio as currently active —
+this advances both ``_window_end`` (suppressing the fallback's own
+ticks during the delegated window) and ``_sweep_last_completed``
+(any active window satisfies the sweep floor).
 
 
 Invariants
@@ -89,10 +125,10 @@ Invariants
 * Per-device windows fire only on the scanner whose ``source`` matches
   the device's most recent advertisement source; other scanners that
   see the same device skip it.
-* Global rediscovery sweeps fire on every AUTO scanner at their own
-  cadence (first sweep at ``AUTO_INITIAL_SWEEP_DELAY`` + a staggered
-  offset assigned at registration, every
-  ``AUTO_REDISCOVERY_INTERVAL`` afterwards).
+* Any active window (per-device, sweep, or delegated) advances the
+  scanner's ``_sweep_last_completed`` to ``now``. The rediscovery
+  sweep therefore fires only on AUTO scanners that haven't had
+  *any* active scan in ``AUTO_REDISCOVERY_INTERVAL`` (12 h).
 * A registration kick-starts tracking immediately; ``on_advertisement``
   is the fallback that re-creates the entry if the worker pruned it
   because the device's history was missing at tick time.
@@ -242,16 +278,15 @@ class _ScannerWorker:
           intended "skip your own ticks during my window" hint is
           lost. ``_sweep_last_completed`` lives outside the
           ``finally`` and survives.
-        * Advancing ``_sweep_last_completed`` to ``now`` on every
-          delegation pushes the fallback's next rediscovery sweep
-          out by a full ``AUTO_REDISCOVERY_INTERVAL`` (12 h). A
-          fallback delegated to often (next to a busy-connecting
-          owner) can have its rediscovery perpetually deferred.
-          Acceptable here because sweep is an enrichment pass for
-          ``SCAN_RSP`` data; passive scanning on the fallback and
-          per-device active windows on every scanner continue
-          normally, so devices callers actually requested are still
-          scanned on cadence. The owner's own sweep is untouched.
+        * The rediscovery sweep only exists to give AUTO scanners
+          that never see an active window a periodic active-scan
+          floor. A fallback the dispatcher delegates to *is*
+          actively scanning, so it doesn't need the floor —
+          ``_sweep_last_completed`` is bumped to ``now`` on every
+          delegation so its separately-scheduled 12 h sweep stays
+          deferred while delegated windows are happening, which is
+          the right answer regardless of how short the delegated
+          window is.
         """
         if self._window_end < window_end:
             self._window_end = window_end
@@ -358,7 +393,7 @@ class _ScannerWorker:
             for request in due:
                 entries[request] = from_time + request.scan_interval
 
-    async def _tick(self) -> None:  # noqa: C901
+    async def _tick(self) -> None:
         """
         Fire one coalesced window covering due per-device + sweep work.
 
@@ -402,8 +437,12 @@ class _ScannerWorker:
             # RSSI flip would let the new owner fire a duplicate
             # window.
             self._advance_due(due_buckets, now)
-            if sweep_due:
-                self._sweep_last_completed = now
+            # Any active window is functionally a sweep — the
+            # rediscovery sweep exists only to give AUTO scanners
+            # that haven't actively scanned in 12 h a floor, so
+            # there's no point in scheduling a separate one when
+            # the radio is about to scan anyway.
+            self._sweep_last_completed = now
             try:
                 await self._scanner.async_request_active_window(duration)
             except Exception as ex:  # pylint: disable=broad-except
