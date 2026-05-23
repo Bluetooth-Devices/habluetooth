@@ -2210,3 +2210,2087 @@ async def test_stop_clears_needs_so_restart_does_not_reuse_stale_due_times() -> 
     finally:
         cancel()
         register_cancel()
+
+
+class _DiscoverableAutoScanner(_RecordingAutoScanner):
+    """Recording scanner that reports a configurable discovered set."""
+
+    __slots__ = ("_discovered",)
+
+    def __init__(
+        self,
+        source: str,
+        mode: BluetoothScanningMode | None,
+        connectable: bool = True,
+    ) -> None:
+        super().__init__(source, mode, connectable)
+        self._discovered: dict[str, tuple[BLEDevice, AdvertisementData]] = {}
+
+    def add_discovered(self, address: str, rssi: int | None = -60) -> None:
+        """Mark ``address`` as currently discovered by this scanner."""
+        device = generate_ble_device(address, "x")
+        adv = generate_advertisement_data(local_name="x", rssi=rssi)
+        self._discovered[address] = (device, adv)
+
+    def get_discovered_device_advertisement_data(
+        self, address: str
+    ) -> tuple[BLEDevice, AdvertisementData] | None:
+        return self._discovered.get(address)
+
+
+def _make_due(sched: object, address: str) -> None:
+    """Make every tracked request for ``address`` due immediately."""
+    entries = sched._needs[address]  # type: ignore[attr-defined]
+    loop = asyncio.get_running_loop()
+    for req in list(entries):
+        entries[req] = loop.time() - 1.0
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_delegates_to_fallback_when_owner_is_connecting() -> None:
+    """
+    Owner mid-connect dispatches the active-window scan to fallback.
+
+    Owner scanner is in the connect-attempt phase
+    (``_connections_in_progress() > 0``) so its radio can't service
+    the active-window flip. A second AUTO scanner also sees the
+    device. The worker for the owner must call
+    ``async_request_active_window`` on the fallback, not on the owner.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:01"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:01:01", BluetoothScanningMode.AUTO)
+    fallback = _DiscoverableAutoScanner("AA:00:00:00:01:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fallback = manager.async_register_scanner(fallback)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        info = manager.async_last_service_info(address, False)
+        assert info is not None
+        assert info.source == owner.source
+        fallback.add_discovered(address, rssi=-70)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        # Owner can't service the flip; fallback gets the call.
+        assert owner.active_window_calls == []
+        assert fallback.active_window_calls == [7.0]
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fallback()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_warns_when_no_fallback_available(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No fallback emits a single WARNING; owner is not flipped."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:02"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:02:01", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert any(
+            "no fallback scanner" in record.message and address in record.message
+            for record in caplog.records
+        )
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_no_fallback_warning_is_rate_limited(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A second connecting tick with no fallback does not re-warn."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:03"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:03:01", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+            count_after_first = sum(
+                1
+                for record in caplog.records
+                if "no fallback scanner" in record.message
+            )
+            assert count_after_first == 1
+            _make_due(sched, address)
+            await _run_worker_tick(sched, owner.source)
+            count_after_second = sum(
+                1
+                for record in caplog.records
+                if "no fallback scanner" in record.message
+            )
+            assert count_after_second == 1
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_no_fallback_flag_resets_after_recovery(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Successful fallback dispatch re-arms the no-fallback warning."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:04"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:04:01", BluetoothScanningMode.AUTO)
+    fallback = _DiscoverableAutoScanner("AA:00:00:00:04:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fallback = manager.async_register_scanner(fallback)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            # No fallback -> warning.
+            await _run_worker_tick(sched, owner.source)
+            assert sched._workers[owner.source]._warned_no_fallback is True
+            # Fallback appears, dispatch succeeds -> flag clears.
+            fallback.add_discovered(address, rssi=-70)
+            _make_due(sched, address)
+            await _run_worker_tick(sched, owner.source)
+            assert fallback.active_window_calls == [6.0]
+            assert sched._workers[owner.source]._warned_no_fallback is False
+            # Fallback disappears again -> warning fires once more.
+            fallback._discovered.clear()
+            _make_due(sched, address)
+            caplog.clear()
+            await _run_worker_tick(sched, owner.source)
+            assert any(
+                "no fallback scanner" in record.message for record in caplog.records
+            )
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fallback()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_active_scanner_covers_address_no_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    ACTIVE-mode scanner seeing the address counts as scan done.
+
+    The owner is mid-connect, so it can't service the active-window
+    flip. Another scanner has ``requested_mode is ACTIVE`` and sees
+    the address — by definition that scanner is already actively
+    scanning. The dispatch must drop the request silently: no
+    warning, no ``async_request_active_window`` call on the ACTIVE
+    scanner (which would no-op anyway via the ``requested_mode``
+    guard in ``HaScanner.async_request_active_window``).
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:05"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:05:01", BluetoothScanningMode.AUTO)
+    active = _DiscoverableAutoScanner("AA:00:00:00:05:03", BluetoothScanningMode.ACTIVE)
+    c_owner = manager.async_register_scanner(owner)
+    c_active = manager.async_register_scanner(active)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        active.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert active.active_window_calls == []
+        assert not any(
+            "no fallback scanner" in record.message for record in caplog.records
+        )
+        assert sched._workers[owner.source]._warned_no_fallback is False
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_active()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_active_coverage_preferred_over_auto_fallback() -> None:
+    """When ACTIVE covers, no AUTO-fallback flip is needed either."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:0C"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:0C:01", BluetoothScanningMode.AUTO)
+    auto_fb = _DiscoverableAutoScanner("AA:00:00:00:0C:02", BluetoothScanningMode.AUTO)
+    active = _DiscoverableAutoScanner("AA:00:00:00:0C:03", BluetoothScanningMode.ACTIVE)
+    c_owner = manager.async_register_scanner(owner)
+    c_auto = manager.async_register_scanner(auto_fb)
+    c_active = manager.async_register_scanner(active)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        auto_fb.add_discovered(address, rssi=-55)
+        active.add_discovered(address, rssi=-70)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        # Covered by ACTIVE: no flip needed on AUTO fallback either.
+        assert owner.active_window_calls == []
+        assert auto_fb.active_window_calls == []
+        assert active.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_auto()
+        c_active()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_passive_only_fallback_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Only PASSIVE scanners around: no flip possible, must warn.
+
+    A PASSIVE scanner refuses
+    ``async_request_active_window`` and isn't actively scanning, so
+    the active scan is truly deferred until the owner's connect
+    completes — the warning must fire.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:0D"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:0D:01", BluetoothScanningMode.AUTO)
+    passive = _DiscoverableAutoScanner(
+        "AA:00:00:00:0D:02", BluetoothScanningMode.PASSIVE
+    )
+    c_owner = manager.async_register_scanner(owner)
+    c_passive = manager.async_register_scanner(passive)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        passive.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert passive.active_window_calls == []
+        assert any(
+            "no fallback scanner" in record.message and address in record.message
+            for record in caplog.records
+        )
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_passive()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_dispatch_never_calls_same_fallback_twice() -> None:
+    """
+    Per-tick dispatch never calls the same fallback more than once.
+
+    Same-tick coalescing guarantees we don't simultaneously trigger
+    ``async_request_active_window`` twice on one scanner from a
+    single owner's tick. (Cross-tick concurrency between distinct
+    owner workers delegating to the same fallback is handled inside
+    the scanner: ``HaScanner.async_request_active_window`` extends an
+    open active-window timer instead of stopping and restarting the
+    radio, and the actual stop/start is serialized by
+    ``_start_stop_lock``.)
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addresses = ("11:22:33:44:55:0E", "11:22:33:44:55:0F", "11:22:33:44:55:10")
+    cancels = [
+        manager.async_register_active_scan(addr, scan_interval=120.0, scan_duration=6.0)
+        for addr in addresses
+    ]
+    owner = _DiscoverableAutoScanner("AA:00:00:00:0E:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:0E:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        for addr in addresses:
+            _inject_with_rssi(owner, addr, rssi=-50)
+            fb.add_discovered(addr, rssi=-60)
+        owner._add_connecting(addresses[0])
+        for addr in addresses:
+            _make_due(sched, addr)
+        await _run_worker_tick(sched, owner.source)
+        # One coalesced call regardless of how many addresses route to fb.
+        assert len(fb.active_window_calls) == 1
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(addresses[0], connected=False)
+        for cancel in cancels:
+            cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_active_covers_one_address_warns_for_other(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Per-address classification: covered for one, warn for another.
+
+    Owner is mid-connect with two due addresses. Address A is covered
+    by an ACTIVE scanner; address B has no fallback. We expect:
+    silent skip for A, warning for B that names only B.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_covered = "11:22:33:44:55:11"
+    addr_orphan = "11:22:33:44:55:12"
+    c1 = manager.async_register_active_scan(
+        addr_covered, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_orphan, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:11:01", BluetoothScanningMode.AUTO)
+    active = _DiscoverableAutoScanner("AA:00:00:00:11:02", BluetoothScanningMode.ACTIVE)
+    c_owner = manager.async_register_scanner(owner)
+    c_active = manager.async_register_scanner(active)
+    try:
+        _inject_with_rssi(owner, addr_covered, rssi=-50)
+        _inject_with_rssi(owner, addr_orphan, rssi=-50)
+        active.add_discovered(addr_covered, rssi=-60)
+        # Note: ACTIVE scanner does NOT see addr_orphan.
+        owner._add_connecting(addr_covered)
+        _make_due(sched, addr_covered)
+        _make_due(sched, addr_orphan)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+        warnings_for_orphan = [
+            record
+            for record in caplog.records
+            if "no fallback scanner" in record.message and addr_orphan in record.message
+        ]
+        assert len(warnings_for_orphan) == 1
+        # The covered address must not appear in any no-fallback
+        # warning text.
+        assert not any(
+            "no fallback scanner" in record.message and addr_covered in record.message
+            for record in caplog.records
+        )
+        assert active.active_window_calls == []
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(addr_covered, connected=False)
+        c1()
+        c2()
+        c_owner()
+        c_active()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_skips_fallback_that_is_also_connecting() -> None:
+    """A candidate fallback that's mid-connect is also excluded."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:06"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:06:01", BluetoothScanningMode.AUTO)
+    busy_fb = _DiscoverableAutoScanner("AA:00:00:00:06:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_busy = manager.async_register_scanner(busy_fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        busy_fb.add_discovered(address, rssi=-55)
+        owner._add_connecting(address)
+        busy_fb._add_connecting("AA:BB:CC:DD:EE:FF")
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert busy_fb.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        busy_fb._finished_connecting("AA:BB:CC:DD:EE:FF", connected=False)
+        cancel()
+        c_owner()
+        c_busy()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_fallback_picks_highest_rssi() -> None:
+    """When multiple AUTO fallbacks see the device, highest RSSI wins."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:07"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:07:01", BluetoothScanningMode.AUTO)
+    weak = _DiscoverableAutoScanner("AA:00:00:00:07:02", BluetoothScanningMode.AUTO)
+    strong = _DiscoverableAutoScanner("AA:00:00:00:07:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_weak = manager.async_register_scanner(weak)
+    c_strong = manager.async_register_scanner(strong)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        weak.add_discovered(address, rssi=-90)
+        strong.add_discovered(address, rssi=-40)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        assert strong.active_window_calls == [6.0]
+        assert weak.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_weak()
+        c_strong()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_groups_addresses_by_fallback() -> None:
+    """Two due addresses sharing one fallback coalesce to one call."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_a = "11:22:33:44:55:08"
+    addr_b = "11:22:33:44:55:09"
+    cancel_a = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    cancel_b = manager.async_register_active_scan(
+        addr_b, scan_interval=120.0, scan_duration=11.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:08:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:08:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, addr_a, rssi=-50)
+        _inject_with_rssi(owner, addr_b, rssi=-50)
+        fb.add_discovered(addr_a, rssi=-60)
+        fb.add_discovered(addr_b, rssi=-60)
+        owner._add_connecting(addr_a)
+        _make_due(sched, addr_a)
+        _make_due(sched, addr_b)
+        await _run_worker_tick(sched, owner.source)
+        # One coalesced call to the shared fallback with the max duration.
+        assert fb.active_window_calls == [11.0]
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        cancel_a()
+        cancel_b()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_defers_sweep_when_owner_is_connecting() -> None:
+    """
+    Sweep is per-scanner; defer when connecting rather than spinning.
+
+    With no per-device buckets but sweep_due True, the connecting
+    branch must not call ``async_request_active_window`` on the owner.
+    It must also advance ``_sweep_last_completed`` so the next worker
+    tick re-evaluates in roughly ``_AUTO_CONNECTING_DEFER`` seconds
+    rather than firing immediately.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    owner = _DiscoverableAutoScanner("AA:00:00:00:09:01", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    try:
+        worker = sched._workers[owner.source]
+        # Force sweep due: place _sweep_last_completed safely in the
+        # past so now > _sweep_last_completed + AUTO_REDISCOVERY_INTERVAL.
+        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        owner._add_connecting("11:22:33:44:55:0A")
+        before = loop.time()
+        await worker._tick()
+        assert owner.active_window_calls == []
+        # Next-due time should be roughly now + _AUTO_CONNECTING_DEFER,
+        # i.e. _sweep_last_completed + AUTO_REDISCOVERY_INTERVAL >=
+        # before + (_AUTO_CONNECTING_DEFER - epsilon).
+        next_sweep_due = worker._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        assert next_sweep_due >= before + 25.0
+        assert next_sweep_due <= loop.time() + 60.0
+    finally:
+        owner._finished_connecting("11:22:33:44:55:0A", connected=False)
+        c_owner()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_skips_fallback_when_owner_is_connected_not_connecting() -> (
+    None
+):
+    """A fully-connected (not connecting) owner still fires its own window."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:0B"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:0B:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:0B:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        # No _add_connecting on the owner: connect has either not
+        # started or has already completed. The owner is responsible
+        # for the window; fallback stays silent.
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == [6.0]
+        assert fb.active_window_calls == []
+    finally:
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_fallback_exception_does_not_block_others(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    A raising fallback gets logged; remaining fallbacks still run.
+
+    Two due addresses route to two different fallbacks. The first
+    fallback's ``async_request_active_window`` raises. The dispatch
+    must still call the second fallback and the worker must remain
+    alive.
+    """
+
+    class _RaisingScanner(_DiscoverableAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            self.active_window_calls.append(duration)
+            msg = "boom"
+            raise RuntimeError(msg)
+
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_a = "11:22:33:44:55:13"
+    addr_b = "11:22:33:44:55:14"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:13:01", BluetoothScanningMode.AUTO)
+    fb_bad = _RaisingScanner("AA:00:00:00:13:02", BluetoothScanningMode.AUTO)
+    fb_good = _DiscoverableAutoScanner("AA:00:00:00:13:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_bad = manager.async_register_scanner(fb_bad)
+    c_good = manager.async_register_scanner(fb_good)
+    try:
+        _inject_with_rssi(owner, addr_a, rssi=-50)
+        _inject_with_rssi(owner, addr_b, rssi=-50)
+        # Only fb_bad sees addr_a; only fb_good sees addr_b. So each
+        # address routes to a different fallback.
+        fb_bad.add_discovered(addr_a, rssi=-60)
+        fb_good.add_discovered(addr_b, rssi=-60)
+        owner._add_connecting(addr_a)
+        _make_due(sched, addr_a)
+        _make_due(sched, addr_b)
+        with caplog.at_level(logging.ERROR, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+        assert fb_bad.active_window_calls == [6.0]
+        assert fb_good.active_window_calls == [6.0]
+        assert any(
+            "error dispatching fallback active window" in record.message
+            and fb_bad.name in record.message
+            for record in caplog.records
+        )
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        c1()
+        c2()
+        c_owner()
+        c_bad()
+        c_good()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_sweep_and_per_device_both_handled_when_connecting() -> None:
+    """
+    Mixed tick: per-device dispatched to fallback AND sweep deferred.
+
+    Sweep is due AND a per-device window is due AND the owner is
+    mid-connect. The per-device flip lands on the fallback; the sweep
+    is deferred (no flip on the owner) — both behaviors coexist.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:15"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:15:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:15:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        worker = sched._workers[owner.source]
+        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        _make_due(sched, address)
+        before = loop.time()
+        await worker._tick()
+        # Per-device went to fallback.
+        assert fb.active_window_calls == [6.0]
+        assert owner.active_window_calls == []
+        # Sweep was deferred (next due roughly now + _AUTO_CONNECTING_DEFER).
+        next_sweep_due = worker._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        assert next_sweep_due >= before + 25.0
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_two_different_fallbacks_both_dispatched() -> None:
+    """
+    Two due addresses with distinct fallbacks → both get called.
+
+    Confirms that the per-fallback grouping does *not* collapse
+    different fallbacks into one — each fallback receives its own
+    coalesced ``async_request_active_window`` call.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_a = "11:22:33:44:55:16"
+    addr_b = "11:22:33:44:55:17"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=120.0, scan_duration=8.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:16:01", BluetoothScanningMode.AUTO)
+    fb_a = _DiscoverableAutoScanner("AA:00:00:00:16:02", BluetoothScanningMode.AUTO)
+    fb_b = _DiscoverableAutoScanner("AA:00:00:00:16:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_a = manager.async_register_scanner(fb_a)
+    c_b = manager.async_register_scanner(fb_b)
+    try:
+        _inject_with_rssi(owner, addr_a, rssi=-50)
+        _inject_with_rssi(owner, addr_b, rssi=-50)
+        fb_a.add_discovered(addr_a, rssi=-60)
+        fb_b.add_discovered(addr_b, rssi=-60)
+        owner._add_connecting(addr_a)
+        _make_due(sched, addr_a)
+        _make_due(sched, addr_b)
+        await _run_worker_tick(sched, owner.source)
+        assert fb_a.active_window_calls == [6.0]
+        assert fb_b.active_window_calls == [8.0]
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        c1()
+        c2()
+        c_owner()
+        c_a()
+        c_b()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_advance_pre_dispatch_blocks_double_fire() -> None:
+    """
+    Per-address ``_needs`` entries are advanced before the dispatch.
+
+    The pre-dispatch advance protects against an in-flight ownership
+    flip causing a duplicate window on a different worker (same
+    reasoning as the non-connecting path's pre-await advance).
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:18"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=90.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:18:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:18:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        entries = sched._needs[address]
+        for due in entries.values():
+            # Advanced to roughly before + 90s, NOT before - 1.0.
+            assert due == pytest.approx(before + 90.0, abs=0.5)
+            assert due > loop.time()
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_passive_plus_auto_uses_auto(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    PASSIVE + AUTO mix: AUTO is used, PASSIVE ignored, no warning.
+
+    Confirms that a PASSIVE scanner alongside a viable AUTO fallback
+    doesn't poison the result — we ignore PASSIVE and flip the AUTO.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:19"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:19:01", BluetoothScanningMode.AUTO)
+    passive = _DiscoverableAutoScanner(
+        "AA:00:00:00:19:02", BluetoothScanningMode.PASSIVE
+    )
+    auto_fb = _DiscoverableAutoScanner("AA:00:00:00:19:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_pass = manager.async_register_scanner(passive)
+    c_auto = manager.async_register_scanner(auto_fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        # Passive has a much stronger RSSI to confirm we still ignore it.
+        passive.add_discovered(address, rssi=-30)
+        auto_fb.add_discovered(address, rssi=-70)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert passive.active_window_calls == []
+        assert auto_fb.active_window_calls == [6.0]
+        assert not any(
+            "no fallback scanner" in record.message for record in caplog.records
+        )
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_pass()
+        c_auto()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_passive_plus_active_active_covers(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    PASSIVE + ACTIVE mix: ACTIVE covers, PASSIVE ignored, no warning.
+
+    No AUTO fallback exists, but an ACTIVE scanner sees the address —
+    that's enough for "scan already in progress". The PASSIVE scanner
+    is irrelevant.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:1A"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:1A:01", BluetoothScanningMode.AUTO)
+    passive = _DiscoverableAutoScanner(
+        "AA:00:00:00:1A:02", BluetoothScanningMode.PASSIVE
+    )
+    active = _DiscoverableAutoScanner("AA:00:00:00:1A:03", BluetoothScanningMode.ACTIVE)
+    c_owner = manager.async_register_scanner(owner)
+    c_pass = manager.async_register_scanner(passive)
+    c_active = manager.async_register_scanner(active)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        passive.add_discovered(address, rssi=-40)
+        active.add_discovered(address, rssi=-70)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert passive.active_window_calls == []
+        assert active.active_window_calls == []
+        assert not any(
+            "no fallback scanner" in record.message for record in caplog.records
+        )
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_pass()
+        c_active()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_all_three_modes_active_wins(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    PASSIVE + ACTIVE + AUTO all present: ACTIVE covers, no flip needed.
+
+    The dispatch must short-circuit on the ACTIVE coverage even when
+    an AUTO fallback is also available. PASSIVE is ignored.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:1B"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:1B:01", BluetoothScanningMode.AUTO)
+    passive = _DiscoverableAutoScanner(
+        "AA:00:00:00:1B:02", BluetoothScanningMode.PASSIVE
+    )
+    active = _DiscoverableAutoScanner("AA:00:00:00:1B:03", BluetoothScanningMode.ACTIVE)
+    auto_fb = _DiscoverableAutoScanner("AA:00:00:00:1B:04", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_pass = manager.async_register_scanner(passive)
+    c_active = manager.async_register_scanner(active)
+    c_auto = manager.async_register_scanner(auto_fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        passive.add_discovered(address, rssi=-40)
+        active.add_discovered(address, rssi=-70)
+        auto_fb.add_discovered(address, rssi=-55)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+        # ACTIVE covers → no flip on anyone.
+        assert owner.active_window_calls == []
+        assert passive.active_window_calls == []
+        assert active.active_window_calls == []
+        assert auto_fb.active_window_calls == []
+        assert not any(
+            "no fallback scanner" in record.message for record in caplog.records
+        )
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_pass()
+        c_active()
+        c_auto()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_three_way_mix_per_address(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Three addresses, three outcomes in one tick: covered, flipped, warned.
+
+    * addr_covered: only ACTIVE sees → covered, no flip, no warning.
+    * addr_flipped: only AUTO sees → flipped on AUTO fallback.
+    * addr_orphan: no fallback at all → single warning naming addr_orphan.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_covered = "11:22:33:44:55:1C"
+    addr_flipped = "11:22:33:44:55:1D"
+    addr_orphan = "11:22:33:44:55:1E"
+    c1 = manager.async_register_active_scan(
+        addr_covered, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_flipped, scan_interval=120.0, scan_duration=6.0
+    )
+    c3 = manager.async_register_active_scan(
+        addr_orphan, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:1C:01", BluetoothScanningMode.AUTO)
+    active = _DiscoverableAutoScanner("AA:00:00:00:1C:02", BluetoothScanningMode.ACTIVE)
+    auto_fb = _DiscoverableAutoScanner("AA:00:00:00:1C:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_active = manager.async_register_scanner(active)
+    c_auto = manager.async_register_scanner(auto_fb)
+    try:
+        for addr in (addr_covered, addr_flipped, addr_orphan):
+            _inject_with_rssi(owner, addr, rssi=-50)
+        active.add_discovered(addr_covered, rssi=-60)
+        auto_fb.add_discovered(addr_flipped, rssi=-60)
+        owner._add_connecting(addr_covered)
+        for addr in (addr_covered, addr_flipped, addr_orphan):
+            _make_due(sched, addr)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert active.active_window_calls == []
+        assert auto_fb.active_window_calls == [6.0]
+        warnings_for_orphan = [
+            record
+            for record in caplog.records
+            if "no fallback scanner" in record.message and addr_orphan in record.message
+        ]
+        assert len(warnings_for_orphan) == 1
+        # Covered/flipped addresses must not appear in any no-fallback warning.
+        assert not any(
+            "no fallback scanner" in record.message and addr_covered in record.message
+            for record in caplog.records
+        )
+        assert not any(
+            "no fallback scanner" in record.message and addr_flipped in record.message
+            for record in caplog.records
+        )
+    finally:
+        owner._finished_connecting(addr_covered, connected=False)
+        c1()
+        c2()
+        c3()
+        c_owner()
+        c_active()
+        c_auto()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_owner_connecting_different_address_still_delegates() -> None:
+    """
+    The connecting-phase signal is per-scanner, not per-address.
+
+    The owner is in a connect attempt to address X, while the due
+    per-device window is for address Y. The owner's radio is still
+    busy with X's connect, so Y must be delegated to a fallback too.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_due = "11:22:33:44:55:1F"
+    addr_connecting = "AA:BB:CC:DD:EE:99"
+    cancel = manager.async_register_active_scan(
+        addr_due, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:1F:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:1F:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, addr_due, rssi=-50)
+        fb.add_discovered(addr_due, rssi=-60)
+        # Connect-in-progress is for a different address.
+        owner._add_connecting(addr_connecting)
+        _make_due(sched, addr_due)
+        await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert fb.active_window_calls == [6.0]
+    finally:
+        owner._finished_connecting(addr_connecting, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_fallback_returning_false_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    A fallback returning False from async_request_active_window is silent.
+
+    The helper's contract is "True = window armed/extended,
+    False = refused" — both are terminal answers. We consume the
+    call without raising and without warning, consistent with the
+    non-connecting path that also ignores the return value.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:20"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:20:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:20:02", BluetoothScanningMode.AUTO)
+    fb._return_value = False
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            await _run_worker_tick(sched, owner.source)
+        # Call was made, no warning, no exception escaped.
+        assert fb.active_window_calls == [6.0]
+        assert owner.active_window_calls == []
+        assert not any(
+            "no fallback scanner" in record.message for record in caplog.records
+        )
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_non_connectable_auto_fallback_is_eligible() -> None:
+    """
+    A non-connectable AUTO scanner is a valid fallback for scanning.
+
+    Fallback selection is about *scanning*, not connecting — a
+    non-connectable scanner that can see the device is just as good
+    for an active-window flip as a connectable one.
+    ``async_scanner_devices_by_address(address, False)`` is called
+    with ``connectable=False`` so both lists are considered.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:21"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:21:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner(
+        "AA:00:00:00:21:02", BluetoothScanningMode.AUTO, connectable=False
+    )
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert fb.active_window_calls == [6.0]
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_connect_starting_after_check_still_runs_locally() -> None:
+    """
+    Race: a connect that starts AFTER the connecting check still hits the owner.
+
+    The connecting-state snapshot is taken once at the top of
+    ``_tick``. If a connect begins between that check and the
+    ``async_request_active_window`` await on the owner, the call has
+    already been committed — we do not re-check mid-dispatch. The
+    test pins this contract: ``_add_connecting`` after the call has
+    started must not flip dispatch to a fallback for THIS tick.
+    The next tick will see the new connecting state.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:22"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:22:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:22:02", BluetoothScanningMode.AUTO)
+    owner._block_event = asyncio.Event()
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        # Owner NOT connecting at tick start.
+        _make_due(sched, address)
+        tick_task = asyncio.create_task(_run_worker_tick(sched, owner.source))
+        # Yield so the worker enters its await on owner.async_request_active_window
+        # (which is blocked on owner._block_event).
+        await asyncio.sleep(0)
+        assert owner.active_window_calls == [6.0]
+        # Race window: connect starts after the check, while the
+        # owner call is in flight. The mid-flight call must not be
+        # diverted; the fallback must not be called for THIS tick.
+        owner._add_connecting(address)
+        owner._block_event.set()
+        await tick_task
+        assert fb.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_connect_finish_during_dispatch_keeps_dispatch() -> None:
+    """
+    Race: owner finishes connecting WHILE the fallback dispatch is awaiting.
+
+    The connecting state was True at tick start, so we entered the
+    fallback branch and already advanced ``_needs``. The connect
+    completing mid-await must not cancel the in-flight fallback call
+    nor cause a duplicate window on the owner.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:23"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:23:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:23:02", BluetoothScanningMode.AUTO)
+    fb._block_event = asyncio.Event()
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        tick_task = asyncio.create_task(_run_worker_tick(sched, owner.source))
+        # Yield so the worker enters its await on the blocked fallback.
+        await asyncio.sleep(0)
+        assert fb.active_window_calls == [6.0]
+        # Connect finishes mid-dispatch.
+        owner._finished_connecting(address, connected=True)
+        assert owner._connections_in_progress() == 0
+        # Unblock the fallback so the dispatch can complete.
+        fb._block_event.set()
+        await tick_task
+        # Dispatch completed on the fallback only; owner stayed
+        # untouched for this tick.
+        assert fb.active_window_calls == [6.0]
+        assert owner.active_window_calls == []
+    finally:
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_two_owners_delegate_to_same_fallback_concurrently() -> None:
+    """
+    Cross-tick: two owner workers concurrently delegate to one fallback.
+
+    The auto_scheduler doesn't serialize across workers — both
+    deliveries go through. The scanner-level
+    ``_active_window_handle`` / ``_start_stop_lock`` extend-if-extends
+    logic is what guarantees the radio doesn't double-flip. Here we
+    verify the auto_scheduler delivers both calls cleanly without
+    deadlock or exception.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_a = "11:22:33:44:55:24"
+    addr_b = "11:22:33:44:55:25"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=120.0, scan_duration=8.0
+    )
+    owner_a = _DiscoverableAutoScanner("AA:00:00:00:24:01", BluetoothScanningMode.AUTO)
+    owner_b = _DiscoverableAutoScanner("AA:00:00:00:24:02", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:24:03", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(owner_a)
+    c_b = manager.async_register_scanner(owner_b)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner_a, addr_a, rssi=-50)
+        _inject_with_rssi(owner_b, addr_b, rssi=-50)
+        fb.add_discovered(addr_a, rssi=-60)
+        fb.add_discovered(addr_b, rssi=-60)
+        owner_a._add_connecting(addr_a)
+        owner_b._add_connecting(addr_b)
+        _make_due(sched, addr_a)
+        _make_due(sched, addr_b)
+        await asyncio.gather(
+            _run_worker_tick(sched, owner_a.source),
+            _run_worker_tick(sched, owner_b.source),
+        )
+        # Both owners delegated to fb; both calls were delivered.
+        assert sorted(fb.active_window_calls) == [6.0, 8.0]
+        assert owner_a.active_window_calls == []
+        assert owner_b.active_window_calls == []
+    finally:
+        owner_a._finished_connecting(addr_a, connected=False)
+        owner_b._finished_connecting(addr_b, connected=False)
+        c1()
+        c2()
+        c_a()
+        c_b()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_ownership_flip_during_dispatch_no_double_fire() -> None:
+    """
+    Race: ownership flips from owner to fallback during the dispatch.
+
+    Same protection as the non-connecting migration test: the
+    pre-await ``_advance_due`` updates ``_needs`` to ``now +
+    scan_interval`` before the fallback await, so if RSSI causes
+    ownership to shift to the fallback mid-dispatch, the fallback's
+    own next tick sees a future due time and skips — no duplicate
+    window fires on the new owner.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:26"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=90.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:26:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:26:02", BluetoothScanningMode.AUTO)
+    fb._block_event = asyncio.Event()
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-80)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        before = loop.time()
+        tick_task = asyncio.create_task(_run_worker_tick(sched, owner.source))
+        await asyncio.sleep(0)
+        # Confirm fallback call is in flight and entries advanced.
+        assert fb.active_window_calls == [6.0]
+        entries = sched._needs[address]
+        for due in entries.values():
+            assert due == pytest.approx(before + 90.0, abs=0.5)
+        # Ownership flips to fb mid-dispatch (much stronger RSSI).
+        _inject_with_rssi(fb, address, rssi=-30)
+        info = manager.async_last_service_info(address, False)
+        assert info is not None
+        assert info.source == fb.source
+        # fb's own next tick must skip because entries are already advanced.
+        fb._block_event.set()
+        await tick_task
+        await sched._workers[fb.source]._tick()
+        # Only one call landed on fb; no double-fire.
+        assert fb.active_window_calls == [6.0]
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_resolver_excludes_owner_when_owner_self_reports() -> None:
+    """
+    The owner's own source is skipped even if it appears in the scanner list.
+
+    If the owner's ``get_discovered_device_advertisement_data`` returns
+    non-None for the address (so the manager lists it among the
+    scanner-devices), the resolver must still skip it via the
+    ``scanner.source == exclude_source`` guard rather than picking the
+    busy owner as its own fallback.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:27"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:27:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:27:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        # Owner self-reports: would normally be sorted as the highest-RSSI
+        # candidate, but the resolver must exclude itself.
+        owner.add_discovered(address, rssi=-30)
+        fb.add_discovered(address, rssi=-70)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        # Owner skipped despite self-reporting; weaker fallback wins.
+        assert owner.active_window_calls == []
+        assert fb.active_window_calls == [6.0]
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_dispatch_advances_fallback_sweep_clock() -> None:
+    """
+    Delegating an active window to a fallback advances its sweep clock.
+
+    The fallback's radio is actively scanning for ``duration`` seconds,
+    which subsumes the work its own rediscovery sweep would do. We
+    bump ``_sweep_last_completed = now`` so the fallback doesn't
+    immediately schedule another sweep window on top of the one we
+    just triggered.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:28"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:28:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:28:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        # Make fb's own sweep imminent so we can detect the advance.
+        fb_worker = sched._workers[fb.source]
+        fb_worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        sweep_before = fb_worker._sweep_last_completed
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        assert fb.active_window_calls == [6.0]
+        # Sweep clock advanced to ~now so fb won't immediately resweep.
+        assert fb_worker._sweep_last_completed > sweep_before
+        assert fb_worker._sweep_last_completed >= before
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_dispatch_sets_fallback_window_end() -> None:
+    """
+    Delegation marks the fallback worker as in-window for ``duration``.
+
+    With ``fb._window_end > now``, the fallback's own ``_tick`` and
+    ``_next_event_at`` short-circuit during the delegated window so
+    the fallback doesn't redundantly tick on its own due work for the
+    duration of the active scan it is already running.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:29"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:29:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:29:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        fb_worker = sched._workers[fb.source]
+        # Window-end bumped roughly to before + duration.
+        assert fb_worker._window_end >= before + 5.0
+        assert fb_worker._window_end <= loop.time() + 7.0
+        # A fb tick while _window_end > now must short-circuit
+        # (no async_request_active_window call recorded).
+        calls_before = list(fb.active_window_calls)
+        await fb_worker._tick()
+        assert fb.active_window_calls == calls_before
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_dispatch_does_not_shrink_existing_fallback_window() -> None:
+    """
+    A larger pre-existing ``_window_end`` on the fallback is preserved.
+
+    If the fallback is already running a longer window when we
+    delegate (e.g., a much earlier delegation from another owner
+    extended its own ``_window_end``), our shorter delegation must
+    not shrink it back.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:2A"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=5.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:2A:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:2A:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        fb_worker = sched._workers[fb.source]
+        # Pre-seed a longer pending window on the fallback.
+        existing_window_end = loop.time() + 60.0
+        fb_worker._window_end = existing_window_end
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        # The shorter (5s) delegation must not have shrunk the
+        # existing 60s window.
+        assert fb_worker._window_end == existing_window_end
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_three_addresses_same_fallback_coalesce_to_max() -> None:
+    """
+    Three due addresses with distinct durations on one fallback coalesce to max.
+
+    Confirms per-fallback coalescing picks the max
+    ``scan_duration`` over all grouped requests, not the first.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_a = "11:22:33:44:55:2B"
+    addr_b = "11:22:33:44:55:2C"
+    addr_c = "11:22:33:44:55:2D"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=120.0, scan_duration=11.0
+    )
+    c3 = manager.async_register_active_scan(
+        addr_c, scan_interval=120.0, scan_duration=8.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:2B:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:2B:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        for addr in (addr_a, addr_b, addr_c):
+            _inject_with_rssi(owner, addr, rssi=-50)
+            fb.add_discovered(addr, rssi=-60)
+        owner._add_connecting(addr_a)
+        for addr in (addr_a, addr_b, addr_c):
+            _make_due(sched, addr)
+        await _run_worker_tick(sched, owner.source)
+        # Single call to the shared fallback at max(6, 11, 8) = 11.
+        assert fb.active_window_calls == [11.0]
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        c1()
+        c2()
+        c3()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_three_addresses_three_fallbacks_each_own_duration() -> None:
+    """Three due addresses on three fallbacks, each call uses its own duration."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    addr_a = "11:22:33:44:55:2E"
+    addr_b = "11:22:33:44:55:2F"
+    addr_c = "11:22:33:44:55:30"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=180.0, scan_duration=9.0
+    )
+    c3 = manager.async_register_active_scan(
+        addr_c, scan_interval=240.0, scan_duration=12.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:2E:01", BluetoothScanningMode.AUTO)
+    fb_a = _DiscoverableAutoScanner("AA:00:00:00:2E:02", BluetoothScanningMode.AUTO)
+    fb_b = _DiscoverableAutoScanner("AA:00:00:00:2E:03", BluetoothScanningMode.AUTO)
+    fb_c = _DiscoverableAutoScanner("AA:00:00:00:2E:04", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_a = manager.async_register_scanner(fb_a)
+    c_b = manager.async_register_scanner(fb_b)
+    c_c = manager.async_register_scanner(fb_c)
+    try:
+        _inject_with_rssi(owner, addr_a, rssi=-50)
+        _inject_with_rssi(owner, addr_b, rssi=-50)
+        _inject_with_rssi(owner, addr_c, rssi=-50)
+        fb_a.add_discovered(addr_a, rssi=-60)
+        fb_b.add_discovered(addr_b, rssi=-60)
+        fb_c.add_discovered(addr_c, rssi=-60)
+        owner._add_connecting(addr_a)
+        for addr in (addr_a, addr_b, addr_c):
+            _make_due(sched, addr)
+        await _run_worker_tick(sched, owner.source)
+        assert fb_a.active_window_calls == [6.0]
+        assert fb_b.active_window_calls == [9.0]
+        assert fb_c.active_window_calls == [12.0]
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        c1()
+        c2()
+        c3()
+        c_owner()
+        c_a()
+        c_b()
+        c_c()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_three_addresses_no_fallback_advance_by_defer() -> None:
+    """
+    No-fallback advance uses ``_AUTO_CONNECTING_DEFER``, not scan_interval.
+
+    Three addresses with very different ``scan_interval``s
+    (120/600/3600s) must all be advanced to ~now + 30s so the next
+    tick retries shortly after the connect completes.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_a = "11:22:33:44:55:31"
+    addr_b = "11:22:33:44:55:32"
+    addr_c = "11:22:33:44:55:33"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=600.0, scan_duration=9.0
+    )
+    c3 = manager.async_register_active_scan(
+        addr_c, scan_interval=3600.0, scan_duration=12.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:31:01", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    try:
+        for addr in (addr_a, addr_b, addr_c):
+            _inject_with_rssi(owner, addr, rssi=-50)
+            _make_due(sched, addr)
+        owner._add_connecting(addr_a)
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        for addr in (addr_a, addr_b, addr_c):
+            entries = sched._needs[addr]
+            for due in entries.values():
+                assert due == pytest.approx(before + 30.0, abs=0.5)
+                assert due < before + 60.0
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        c1()
+        c2()
+        c3()
+        c_owner()
+
+
+@pytest.mark.asyncio
+async def test_note_window_dispatched_preserves_more_recent_sweep() -> None:
+    """
+    ``note_window_dispatched`` does not move ``_sweep_last_completed`` backwards.
+
+    Covers the False branch of ``if self._sweep_last_completed < now``
+    when the fallback's sweep clock is already further in the future
+    than the ``now`` we're passing in.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:38"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:38:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:38:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        fb_worker = sched._workers[fb.source]
+        future_sweep = loop.time() + 600.0
+        fb_worker._sweep_last_completed = future_sweep
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        # Sweep clock not moved backwards by our note_window_dispatched.
+        assert fb_worker._sweep_last_completed == future_sweep
+        assert fb.active_window_calls == [6.0]
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_dispatch_handles_missing_fallback_worker() -> None:
+    """
+    Dispatch tolerates ``workers.get(fb.source) is None``.
+
+    Covers the False branch of ``if fb_worker is not None``. Reachable
+    when a fallback scanner is unregistered between resolution and the
+    per-fallback iteration (sim: drop the worker entry between
+    registration and tick to force the lookup miss). The dispatch
+    should still call ``async_request_active_window`` on the fallback
+    even with no worker available to receive ``note_window_dispatched``.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:37"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:37:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:37:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        # Drop fb's worker so workers.get(fb.source) is None during dispatch.
+        # The fb scanner is still registered (so resolve still picks it)
+        # and async_scanner_devices_by_address still returns it.
+        sched._workers.pop(fb.source)
+        await _run_worker_tick(sched, owner.source)
+        # Dispatch still happened on the fallback's scanner even though
+        # we couldn't notify the worker.
+        assert fb.active_window_calls == [6.0]
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_three_addresses_mixed_outcomes_advance_correctly() -> None:
+    """
+    Three addresses, three outcomes, each advanced per its outcome.
+
+    covered (ACTIVE) -> ``scan_interval`` (full cadence).
+    AUTO fallback   -> ``scan_interval`` (full cadence).
+    no fallback     -> ``_AUTO_CONNECTING_DEFER`` (short retry).
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_covered = "11:22:33:44:55:34"
+    addr_flipped = "11:22:33:44:55:35"
+    addr_orphan = "11:22:33:44:55:36"
+    c1 = manager.async_register_active_scan(
+        addr_covered, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_flipped, scan_interval=240.0, scan_duration=9.0
+    )
+    c3 = manager.async_register_active_scan(
+        addr_orphan, scan_interval=600.0, scan_duration=12.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:34:01", BluetoothScanningMode.AUTO)
+    active = _DiscoverableAutoScanner("AA:00:00:00:34:02", BluetoothScanningMode.ACTIVE)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:34:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_active = manager.async_register_scanner(active)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        for addr in (addr_covered, addr_flipped, addr_orphan):
+            _inject_with_rssi(owner, addr, rssi=-50)
+            _make_due(sched, addr)
+        active.add_discovered(addr_covered, rssi=-60)
+        fb.add_discovered(addr_flipped, rssi=-60)
+        owner._add_connecting(addr_covered)
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        for due in sched._needs[addr_covered].values():
+            assert due == pytest.approx(before + 120.0, abs=0.5)
+        for due in sched._needs[addr_flipped].values():
+            assert due == pytest.approx(before + 240.0, abs=0.5)
+        for due in sched._needs[addr_orphan].values():
+            assert due == pytest.approx(before + 30.0, abs=0.5)
+        assert fb.active_window_calls == [9.0]
+        assert active.active_window_calls == []
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(addr_covered, connected=False)
+        c1()
+        c2()
+        c3()
+        c_owner()
+        c_active()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_fallback_with_none_rssi_is_still_dispatched() -> None:
+    """
+    A fallback whose last advertisement has ``rssi is None`` is usable.
+
+    Pins Kōan blocker #1: ``_resolve_fallback_for_address`` must not
+    crash on ``None`` RSSI (would raise ``TypeError`` on ``None >
+    -10_000``). The defensive ``rssi or NO_RSSI_VALUE`` normalization
+    keeps the scanner in the candidate pool with the sentinel score.
+    Here the single fallback has ``rssi=None`` and the dispatch must
+    still fire on it.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:39"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:39:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:39:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=None)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert fb.active_window_calls == [6.0]
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_fallback_with_rssi_loses_to_better_fallback() -> None:
+    """
+    A ``None``-RSSI fallback loses to a fallback with a real RSSI.
+
+    With ``None`` normalized to ``NO_RSSI_VALUE`` (-127), any
+    real-world RSSI beats it, so the ``None``-RSSI scanner is only
+    picked when nothing else is available.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:3A"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:3A:01", BluetoothScanningMode.AUTO)
+    fb_none = _DiscoverableAutoScanner("AA:00:00:00:3A:02", BluetoothScanningMode.AUTO)
+    fb_real = _DiscoverableAutoScanner("AA:00:00:00:3A:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_n = manager.async_register_scanner(fb_none)
+    c_r = manager.async_register_scanner(fb_real)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb_none.add_discovered(address, rssi=None)
+        fb_real.add_discovered(address, rssi=-90)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        # Real RSSI (-90) beats the normalized None (-127).
+        assert fb_real.active_window_calls == [6.0]
+        assert fb_none.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_n()
+        c_r()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_failed_fallback_advances_entries_by_full_interval() -> None:
+    """
+    Failed fallback dispatch still advances entries by ``scan_interval``.
+
+    Pins Kōan suggestion #2 / the documented "advance on failure"
+    semantics: when ``fb.async_request_active_window`` raises, the
+    per-address entries have already been advanced by ``scan_interval``
+    (NOT reset to ``retry_at``) and the fallback worker's
+    ``_window_end`` / ``_sweep_last_completed`` bumps from
+    ``note_window_dispatched`` are preserved. A failing fallback is
+    treated like a successful one to avoid busy-looping on a stuck
+    scanner.
+    """
+
+    class _RaisingScanner(_DiscoverableAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            self.active_window_calls.append(duration)
+            msg = "boom"
+            raise RuntimeError(msg)
+
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:3B"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:3B:01", BluetoothScanningMode.AUTO)
+    fb = _RaisingScanner("AA:00:00:00:3B:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        fb_worker = sched._workers[fb.source]
+        sweep_before = fb_worker._sweep_last_completed
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        # Entries advanced by full scan_interval, NOT retry_at.
+        for due in sched._needs[address].values():
+            assert due == pytest.approx(before + 120.0, abs=0.5)
+            assert due > before + 60.0  # well past the 30s retry_at
+        # fb_worker bumps from note_window_dispatched are preserved.
+        assert fb_worker._sweep_last_completed > sweep_before
+        assert fb_worker._sweep_last_completed >= before
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_fallback_with_rssi_zero_is_strongest() -> None:
+    """
+    A fallback with ``rssi == 0`` beats a fallback with negative RSSI.
+
+    Pins the explicit ``rssi is None`` check (rather than ``rssi or
+    NO_RSSI_VALUE``): an RSSI of 0 is a valid very-strong signal and
+    must not be coerced to the missing-RSSI sentinel via ``0 or X``
+    falsiness.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:3D"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:3D:01", BluetoothScanningMode.AUTO)
+    fb_zero = _DiscoverableAutoScanner("AA:00:00:00:3D:02", BluetoothScanningMode.AUTO)
+    fb_neg = _DiscoverableAutoScanner("AA:00:00:00:3D:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_zero = manager.async_register_scanner(fb_zero)
+    c_neg = manager.async_register_scanner(fb_neg)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb_zero.add_discovered(address, rssi=0)
+        fb_neg.add_discovered(address, rssi=-50)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        # rssi=0 beats rssi=-50; the falsy-or pattern would have
+        # incorrectly normalised 0 to NO_RSSI_VALUE and lost.
+        assert fb_zero.active_window_calls == [6.0]
+        assert fb_neg.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_zero()
+        c_neg()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_dispatch_short_window_still_resets_full_sweep() -> None:
+    """
+    A 5s delegated window resets the fallback's full 12h sweep cadence.
+
+    Pins the documented best-effort caveat: ``note_window_dispatched``
+    advances ``_sweep_last_completed`` to ``now`` regardless of how
+    short the delegated window is. With min duration (5s, well below
+    ``AUTO_REDISCOVERY_SWEEP_DURATION`` of 15s), the next sweep is
+    still pushed out a full ``AUTO_REDISCOVERY_INTERVAL`` (12h).
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:3C"
+    # Request duration well under MIN; coalesce_duration clamps to
+    # _AUTO_WINDOW_MIN_DURATION (5.0).
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=5.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:3C:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:3C:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        # Place fb's sweep clock far in the past so we can see the bump.
+        fb_worker = sched._workers[fb.source]
+        fb_worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL / 2
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        # Delegated window was 5s; fb's next sweep was pushed to
+        # roughly now + 12h regardless of the short window.
+        next_sweep_due = fb_worker._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        assert next_sweep_due == pytest.approx(
+            before + AUTO_REDISCOVERY_INTERVAL, abs=1
+        )
+        assert fb.active_window_calls == [5.0]
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_per_device_window_satisfies_sweep_floor() -> None:
+    """
+    A per-device active window advances ``_sweep_last_completed``.
+
+    The rediscovery sweep is a floor: scanners that haven't
+    active-scanned in 12 h get a 15 s sweep. A scanner that just ran
+    a per-device active window has already actively scanned, so its
+    next sweep is pushed out a full ``AUTO_REDISCOVERY_INTERVAL``
+    even when ``sweep_due`` was False at tick time.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:3E"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    scanner = _DiscoverableAutoScanner("AA:00:00:00:3E:01", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject_with_rssi(scanner, address, rssi=-50)
+        worker = sched._workers[scanner.source]
+        # Place sweep clock recent enough that sweep is NOT due — we
+        # want to prove the per-device window still advances it.
+        recent_sweep = loop.time() - 60.0
+        worker._sweep_last_completed = recent_sweep
+        _make_due(sched, address)
+        before = loop.time()
+        await _run_worker_tick(sched, scanner.source)
+        assert scanner.active_window_calls == [6.0]
+        # Per-device window pushed sweep clock from "60s ago" to "now",
+        # demonstrating any active scan satisfies the sweep floor.
+        assert worker._sweep_last_completed > recent_sweep
+        assert worker._sweep_last_completed >= before
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_dispatch_samples_time_per_fallback() -> None:
+    """
+    Each fallback's ``window_end`` is anchored to its dispatch time.
+
+    Each ``await fb.async_request_active_window(duration)`` can take
+    seconds in production (scanner stop/restart on Linux). Reusing
+    the owner's tick-start ``now`` for every fallback's
+    ``note_window_dispatched`` would leave later fallbacks'
+    ``_window_end`` in the past — defeating the suppression. Use a
+    first fallback that ``asyncio.sleep``s during its dispatch so the
+    second fallback's ``loop.time()`` is strictly later than the
+    owner's tick-start ``now``, then verify the second fallback's
+    ``_window_end`` reflects its own dispatch time.
+    """
+
+    class _SlowScanner(_DiscoverableAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            self.active_window_calls.append(duration)
+            await asyncio.sleep(0.1)
+            return self._return_value
+
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_a = "11:22:33:44:55:3F"
+    addr_b = "11:22:33:44:55:40"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:3F:01", BluetoothScanningMode.AUTO)
+    fb_slow = _SlowScanner("AA:00:00:00:3F:02", BluetoothScanningMode.AUTO)
+    fb_late = _DiscoverableAutoScanner("AA:00:00:00:3F:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_s = manager.async_register_scanner(fb_slow)
+    c_l = manager.async_register_scanner(fb_late)
+    try:
+        _inject_with_rssi(owner, addr_a, rssi=-50)
+        _inject_with_rssi(owner, addr_b, rssi=-50)
+        fb_slow.add_discovered(addr_a, rssi=-60)
+        fb_late.add_discovered(addr_b, rssi=-60)
+        owner._add_connecting(addr_a)
+        _make_due(sched, addr_a)
+        _make_due(sched, addr_b)
+        tick_start = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        # Both fallbacks were called.
+        assert fb_slow.active_window_calls == [6.0]
+        assert fb_late.active_window_calls == [6.0]
+        # fb_late was dispatched AFTER fb_slow's 0.1s sleep, so its
+        # _window_end is anchored to dispatch_now ≈ tick_start + 0.1,
+        # i.e. > tick_start + duration (6.0). The owner's tick-start
+        # ``now`` would have given tick_start + 6.0 ≈ tick_start + 6.0
+        # exactly, which is < tick_start + 6.0 + 0.05.
+        fb_late_worker = sched._workers[fb_late.source]
+        assert fb_late_worker._window_end > tick_start + 6.0 + 0.05
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        c1()
+        c2()
+        c_owner()
+        c_s()
+        c_l()
