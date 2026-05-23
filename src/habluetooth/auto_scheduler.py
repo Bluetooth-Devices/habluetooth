@@ -130,6 +130,12 @@ _AUTO_REDISCOVERY_SWEEP_DURATION = AUTO_REDISCOVERY_SWEEP_DURATION
 _AUTO_WINDOW_MAX_DURATION = AUTO_WINDOW_MAX_DURATION
 _AUTO_WINDOW_MIN_DURATION = AUTO_WINDOW_MIN_DURATION
 
+# When the owner scanner is busy with a connect attempt and a sweep is
+# due, defer the sweep by this many seconds so the worker retries soon
+# (typical connect attempts complete in ~10s) without spinning the
+# event loop.
+_AUTO_CONNECTING_DEFER = 30.0
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -167,6 +173,7 @@ class _ScannerWorker:
         "_sweep_last_completed",
         "_task",
         "_wake",
+        "_warned_no_fallback",
         "_window_end",
     )
 
@@ -184,6 +191,7 @@ class _ScannerWorker:
         self._window_end: float = 0.0
         self._sweep_last_completed: float = 0.0
         self._failed_window: bool = False
+        self._warned_no_fallback: bool = False
 
     def start(
         self, loop: asyncio.AbstractEventLoop, initial_offset: float = 0.0
@@ -256,22 +264,25 @@ class _ScannerWorker:
     def _collect_due_buckets(
         self, now: float
     ) -> tuple[
-        list[tuple[dict[ActiveScanRequest, float], list[ActiveScanRequest]]],
+        list[tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]],
         list[ActiveScanRequest],
     ]:
         """
         Return (due_buckets, all_due) for addresses this scanner owns.
 
-        ``due_buckets`` is the (entries, due) pairs to advance after
-        the window; ``all_due`` is the flattened list used to coalesce
-        the window duration. Prunes orphan ``_needs`` entries
-        (history None) in passing.
+        ``due_buckets`` is the (address, entries, due) triples to
+        advance after the window; ``all_due`` is the flattened list
+        used to coalesce the window duration. The address is carried
+        in each tuple so the connecting-fallback path in ``_tick`` can
+        look up an alternate scanner per address without re-walking
+        ``_needs``. Prunes orphan ``_needs`` entries (history None) in
+        passing.
         """
         source = self._scanner.source
         needs = self._scheduler._needs
         last_service_info = self._manager.async_last_service_info
         due_buckets: list[
-            tuple[dict[ActiveScanRequest, float], list[ActiveScanRequest]]
+            tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]
         ] = []
         all_due: list[ActiveScanRequest] = []
         for address in list(needs):
@@ -287,14 +298,14 @@ class _ScannerWorker:
             due = [r for r, t in entries.items() if t <= now]
             if not due:
                 continue
-            due_buckets.append((entries, due))
+            due_buckets.append((address, entries, due))
             all_due.extend(due)
         return due_buckets, all_due
 
     def _advance_due(
         self,
         due_buckets: list[
-            tuple[dict[ActiveScanRequest, float], list[ActiveScanRequest]]
+            tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]
         ],
         from_time: float,
     ) -> None:
@@ -307,11 +318,11 @@ class _ScannerWorker:
         nothing has yielded since ``_collect_due_buckets`` populated
         the buckets, so no membership re-check is needed.
         """
-        for entries, due in due_buckets:
+        for _address, entries, due in due_buckets:
             for request in due:
                 entries[request] = from_time + request.scan_interval
 
-    async def _tick(self) -> None:
+    async def _tick(self) -> None:  # noqa: C901
         """
         Fire one coalesced window covering due per-device + sweep work.
 
@@ -325,6 +336,12 @@ class _ScannerWorker:
         scanner can't busy-loop the worker. An outer except keeps
         the worker alive if the sync-phase (``_collect_due_buckets``,
         ``_advance_due``) raises unexpectedly.
+
+        If the owner scanner is in a connect attempt at tick time, the
+        radio can't service the active-window flip; we dispatch each
+        due address to the best alternate scanner via
+        ``_dispatch_to_fallback`` and defer any due sweep so the next
+        tick retries after the connect completes.
         """
         loop = self._scheduler._loop
         if loop is None:
@@ -340,6 +357,16 @@ class _ScannerWorker:
             due_buckets, all_due = self._collect_due_buckets(now)
             sweep_due = now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
             if not all_due and not sweep_due:
+                return
+            if self._scanner._connections_in_progress() > 0:
+                # Connect attempt in progress: this scanner's radio
+                # can't service the flip. Advance the due entries
+                # pre-dispatch (same reasoning as the normal path: a
+                # mid-dispatch ownership flip must not let another
+                # worker double-fire) and route per-address windows
+                # to alternate scanners.
+                self._advance_due(due_buckets, now)
+                await self._dispatch_to_fallback(due_buckets, sweep_due, now)
                 return
             duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
             if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
@@ -384,6 +411,101 @@ class _ScannerWorker:
             )
         finally:
             self._window_end = 0.0
+
+    async def _dispatch_to_fallback(  # noqa: C901
+        self,
+        due_buckets: list[
+            tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]
+        ],
+        sweep_due: bool,
+        now: float,
+    ) -> None:
+        """
+        Route per-address windows to alternate scanners, defer sweep.
+
+        For each due address, classify via
+        ``_resolve_fallback_for_address``:
+
+        * If any non-connecting ACTIVE scanner sees the address, the
+          device is already being scanned right now: drop the request
+          silently (no warning, no fallback flip — the user's
+          requested behavior of "consider the scan done").
+        * Otherwise, if an AUTO fallback is available, group the due
+          requests by fallback so a fallback that covers multiple
+          addresses gets exactly one ``async_request_active_window``
+          call per tick with the coalesced duration (this is what
+          prevents same-scanner same-tick double-fire; concurrent
+          calls across ticks are handled by the scanner's own
+          ``_start_stop_lock`` / ``_active_window_handle`` extend
+          logic).
+        * Otherwise, warn (rate-limited via ``_warned_no_fallback``).
+
+        Sweep is per-scanner; if due, advance ``_sweep_last_completed``
+        by ``_AUTO_CONNECTING_DEFER`` so the next sweep retry fires
+        after the typical connect-attempt completes rather than
+        spinning the event loop.
+        """
+        fallback_groups: dict[str, tuple[BaseHaScanner, list[ActiveScanRequest]]] = {}
+        no_fallback_addresses: list[str] = []
+        resolve = self._scheduler._resolve_fallback_for_address
+        exclude_source = self._scanner.source
+        had_any_progress = False
+        for address, _entries, due in due_buckets:
+            covered, fallback = resolve(address, exclude_source)
+            if covered:
+                # An ACTIVE-mode scanner is already scanning this
+                # address — consider the scan handled.
+                had_any_progress = True
+                continue
+            if fallback is None:
+                no_fallback_addresses.append(address)
+                continue
+            had_any_progress = True
+            existing = fallback_groups.get(fallback.source)
+            if existing is None:
+                fallback_groups[fallback.source] = (fallback, list(due))
+            else:
+                existing[1].extend(due)
+        if no_fallback_addresses:
+            if not self._warned_no_fallback:
+                self._warned_no_fallback = True
+                _LOGGER.warning(
+                    (
+                        "%s: connect attempt in progress and no fallback "
+                        "scanner is available for active-window scan of "
+                        "%s; active scan deferred until connect completes"
+                    ),
+                    self._scanner.name,
+                    ", ".join(no_fallback_addresses),
+                )
+        elif had_any_progress:
+            self._warned_no_fallback = False
+        if sweep_due:
+            # Defer sweep so the next tick retries after the
+            # connect completes; advancing _sweep_last_completed
+            # places the next due time at ``now + _AUTO_CONNECTING_DEFER``
+            # rather than ``now``, avoiding a busy retry loop.
+            self._sweep_last_completed = (
+                now - _AUTO_REDISCOVERY_INTERVAL + _AUTO_CONNECTING_DEFER
+            )
+            _LOGGER.debug(
+                "%s: deferring rediscovery sweep while connect "
+                "attempt is in progress; retrying in %.1fs",
+                self._scanner.name,
+                _AUTO_CONNECTING_DEFER,
+            )
+        coalesce_duration = self._scheduler._coalesce_duration
+        for fb, fb_due in fallback_groups.values():
+            duration = coalesce_duration(fb_due)
+            try:
+                await fb.async_request_active_window(duration)
+            except Exception:
+                _LOGGER.exception(
+                    "%s: error dispatching fallback active window of %.1fs to %s",
+                    self._scanner.name,
+                    duration,
+                    fb.name,
+                )
 
 
 class AutoScanScheduler:
@@ -585,6 +707,50 @@ class AutoScanScheduler:
         """Wake the worker for ``source`` if one is registered."""
         if (worker := self._workers.get(source)) is not None:
             worker.wake()
+
+    def _resolve_fallback_for_address(
+        self, address: str, exclude_source: str
+    ) -> tuple[bool, BaseHaScanner | None]:
+        """
+        Decide how this address is serviced when the owner is mid-connect.
+
+        Returns ``(covered, best_auto_fallback)``:
+
+        * ``covered`` is True if some non-connecting scanner has
+          ``requested_mode is ACTIVE``. ACTIVE scanners are always
+          actively scanning, so the device is already being scanned
+          right now: the caller should drop the request silently — no
+          fallback flip, no warning.
+        * ``best_auto_fallback`` is the AUTO scanner with the highest
+          current advertisement RSSI for the address, excluding the
+          owner and any scanner that is itself in a connect attempt.
+          PASSIVE scanners are never valid fallbacks because
+          ``async_request_active_window`` refuses to flip them.
+        """
+        covered = False
+        best: BaseHaScanner | None = None
+        best_rssi = -10_000
+        for device in self._manager.async_scanner_devices_by_address(address, False):
+            scanner = device.scanner
+            if scanner.source == exclude_source:
+                continue
+            if scanner._connections_in_progress() > 0:
+                continue
+            mode = scanner.requested_mode
+            if mode is BluetoothScanningMode.ACTIVE:
+                # Already scanning actively: device is covered, no
+                # flip needed. Keep iterating so the caller still
+                # sees an AUTO fallback if one exists (the caller
+                # short-circuits on ``covered`` first anyway).
+                covered = True
+                continue
+            if mode is not BluetoothScanningMode.AUTO:
+                continue
+            rssi = device.advertisement.rssi
+            if rssi > best_rssi:
+                best_rssi = rssi
+                best = scanner
+        return covered, best
 
     def _coalesce_duration(self, entries: list[ActiveScanRequest]) -> float:
         """
