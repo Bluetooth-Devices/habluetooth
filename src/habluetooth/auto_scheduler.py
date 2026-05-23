@@ -860,14 +860,38 @@ class AutoScanScheduler:
         check-and-set on the future is synchronous (no ``await``
         before it) so it is atomic under cooperative scheduling.
 
+        Per-scanner flip failures are gathered with
+        ``return_exceptions=True`` and logged one-line-per-scanner;
+        a stuck adapter never aborts the bus-wide sweep, but its
+        failure is observable rather than silently swallowed.
+
         Skips scanners whose radio is busy with a connect attempt;
-        adjacent scanners cover those devices. Advances each flipped
-        worker's ``_sweep_last_completed`` and ``_window_end`` via
-        ``note_window_dispatched`` so the next periodic sweep is
-        deferred and the worker's own ``_tick`` suppresses itself
-        during the on-demand window. Always awaits the full
-        ``duration`` so the caller can read advertisements collected
-        during the window before this returns.
+        adjacent scanners cover those devices. Unlike the periodic
+        ``_tick`` path this does not route a busy scanner's
+        coverage to a fallback; the on-demand sweep is best-effort
+        and the next ``_tick`` will pick the device up at its
+        normal cadence.
+
+        Advances each flipped worker's ``_sweep_last_completed`` and
+        ``_window_end`` via ``note_window_dispatched`` so the next
+        periodic sweep is deferred and the worker's own ``_tick``
+        suppresses itself during the on-demand window. Always awaits
+        the full ``duration`` for the leader so the caller can read
+        advertisements collected during the window before this
+        returns.
+
+        Caveats:
+
+        * A late joiner that arrives near the end of an in-flight
+          window returns as soon as the leader finishes — its own
+          ``duration`` is not honored. For the typical
+          single-caller config-flow case this never trips; if
+          multiple flows race, joiners share the leader's window.
+        * If the leader is cancelled mid-sleep the future still
+          resolves to ``None`` (joiners do not see a propagated
+          ``CancelledError``); joiners benefit from whatever radio
+          activity already happened. The leader's own cancellation
+          propagates as usual.
         """
         if (in_flight := self._on_demand_sweep_future) is not None:
             await in_flight
@@ -888,17 +912,26 @@ class AutoScanScheduler:
                 worker.note_window_dispatched(window_end, now)
                 targets.append(scanner)
             if targets:
-                await asyncio.gather(
+                results = await asyncio.gather(
                     *(
                         scanner.async_request_active_window(duration)
                         for scanner in targets
                     ),
                     return_exceptions=True,
                 )
+                for scanner, result in zip(targets, results, strict=True):
+                    if isinstance(result, BaseException):
+                        _LOGGER.warning(
+                            "%s: error running on-demand active window of %.1fs: %s",
+                            scanner.name,
+                            duration,
+                            result,
+                        )
             await asyncio.sleep(duration)
         finally:
             self._on_demand_sweep_future = None
-            future.set_result(None)
+            if not future.done():
+                future.set_result(None)
 
     def async_diagnostics(self) -> dict[str, Any]:
         """

@@ -4540,3 +4540,73 @@ async def test_async_request_sweep_awaits_the_full_duration() -> None:
             assert task.done()
         finally:
             register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_logs_per_scanner_flip_failures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A scanner whose flip raises is logged; the sweep still completes."""
+    manager = get_manager()
+
+    class _FailingScanner(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            msg = "boom"
+            raise RuntimeError(msg)
+
+    bad = _FailingScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    good = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+    c_bad = manager.async_register_scanner(bad)
+    c_good = manager.async_register_scanner(good)
+    try:
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            async with _no_real_sleep():
+                await manager.async_request_sweep(duration=5.0)
+        assert good.active_window_calls == [5.0]
+        assert any(
+            "on-demand active window" in record.message and "boom" in record.message
+            for record in caplog.records
+        )
+    finally:
+        c_bad()
+        c_good()
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_leader_cancellation_releases_joiners() -> None:
+    """
+    Cancelling the leader still resolves the future so joiners do not hang.
+
+    Joiners see ``None`` (no propagated ``CancelledError``) and benefit
+    from whatever radio activity already happened; a subsequent sweep can
+    run because ``_on_demand_sweep_future`` is cleared.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        with freeze_time():
+            # Block the leader inside its scanner-flip await so we know
+            # we're past the gather and inside the leader's sleep when
+            # we cancel.
+            scanner._block_event = asyncio.Event()
+            leader = asyncio.create_task(manager.async_request_sweep(duration=5.0))
+            joiner = asyncio.create_task(manager.async_request_sweep(duration=5.0))
+            for _ in range(5):
+                await asyncio.sleep(0)
+            # Both tasks are now waiting; joiner has latched onto the
+            # leader's future.
+            assert not leader.done()
+            assert not joiner.done()
+            scanner._block_event.set()
+            leader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await leader
+            # Joiner completes normally with no exception.
+            await joiner
+            assert joiner.result() is None
+            # Future is cleared so a fresh sweep can start.
+            assert sched._on_demand_sweep_future is None
+    finally:
+        register_cancel()
