@@ -1972,7 +1972,7 @@ async def test_connection_path_scoring_no_slots_available(
 
 
 @pytest.mark.asyncio
-async def test_thundering_herd_connection_slots() -> None:
+async def test_thundering_herd_connection_slots() -> None:  # noqa: C901
     """
     Test thundering herd scenario with limited connection slots.
 

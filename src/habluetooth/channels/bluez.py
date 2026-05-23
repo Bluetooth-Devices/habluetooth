@@ -180,7 +180,7 @@ class BluetoothMGMTProtocol:
         # since Cython will stop at any '\0' character if we don't
         self._buffer = cstr[end_of_frame_pos : self._buffer_len + end_of_frame_pos]
 
-    def data_received(self, data: _bytes) -> None:
+    def data_received(self, data: _bytes) -> None:  # noqa: C901
         """Handle data received."""
         self._add_to_buffer(data)
         while self._buffer_len >= 6:
