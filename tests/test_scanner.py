@@ -607,7 +607,8 @@ async def test_adapter_scanner_fails_to_start_first_time() -> None:
             if called_start == 1:
                 return
             if called_start < 4:
-                raise BleakError("Failed to start")
+                msg = "Failed to start"
+                raise BleakError(msg)
 
         async def stop(self, *args: object, **kwargs: object) -> None:
             nonlocal called_stop
@@ -716,11 +717,14 @@ async def test_adapter_fails_to_start_and_takes_a_bit_to_init(
             nonlocal called_start
             called_start += 1
             if called_start == 1:
-                raise BleakError("org.freedesktop.DBus.Error.UnknownObject")
+                msg = "org.freedesktop.DBus.Error.UnknownObject"
+                raise BleakError(msg)
             if called_start == 2:
-                raise BleakError("org.bluez.Error.InProgress")
+                msg = "org.bluez.Error.InProgress"
+                raise BleakError(msg)
             if called_start == 3:
-                raise BleakError("org.bluez.Error.InProgress")
+                msg = "org.bluez.Error.InProgress"
+                raise BleakError(msg)
 
         async def stop(self, *args: object, **kwargs: object) -> None:
             nonlocal called_stop
@@ -869,11 +873,14 @@ async def test_adapter_init_fails_fallback_to_passive(
             nonlocal called_start
             called_start += 1
             if called_start == 1:
-                raise BleakError("org.freedesktop.DBus.Error.UnknownObject")
+                msg = "org.freedesktop.DBus.Error.UnknownObject"
+                raise BleakError(msg)
             if called_start == 2:
-                raise BleakError("org.bluez.Error.InProgress")
+                msg = "org.bluez.Error.InProgress"
+                raise BleakError(msg)
             if called_start == 3:
-                raise BleakError("org.bluez.Error.InProgress")
+                msg = "org.bluez.Error.InProgress"
+                raise BleakError(msg)
 
         async def stop(self, *args: object, **kwargs: object) -> None:
             nonlocal called_stop
@@ -1794,7 +1801,8 @@ async def test_async_toggle_active_window_mode_returns_false_on_stop_error() -> 
 
     class StopErrorMockBleakScanner(MockBleakScanner):
         async def stop(self) -> None:
-            raise BleakError("simulated stop failure")
+            msg = "simulated stop failure"
+            raise BleakError(msg)
 
     with patch_bleak_scanner_factory(StopErrorMockBleakScanner):
         scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -1829,7 +1837,8 @@ async def test_async_toggle_active_window_mode_marks_not_scanning_on_start_error
             # First start (initial async_start) succeeds; the
             # post-flip start (second call) raises.
             if starts > 1:
-                raise BleakError("simulated start failure")
+                msg = "simulated start failure"
+                raise BleakError(msg)
 
     with patch_bleak_scanner_factory(StartErrorMockBleakScanner):
         scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -1860,11 +1869,13 @@ async def test_async_toggle_active_window_mode_attribute_error_marks_not_scannin
     class MockBackend:
         @property
         def _scanning_mode(self) -> str:
-            raise AttributeError("simulated bleak refactor — attribute removed")
+            msg = "simulated bleak refactor — attribute removed"
+            raise AttributeError(msg)
 
         @_scanning_mode.setter
         def _scanning_mode(self, value: str) -> None:
-            raise AttributeError("simulated bleak refactor — attribute removed")
+            msg = "simulated bleak refactor — attribute removed"
+            raise AttributeError(msg)
 
     class AttrErrorMockBleakScanner(MockBleakScanner):
         def __init__(self) -> None:
@@ -2148,7 +2159,8 @@ async def test_async_request_active_window_recovers_on_start_failure() -> None:
             nonlocal call_count
             call_count += 1
             if call_count <= fail_until:
-                raise BleakError("simulated start failure")
+                msg = "simulated start failure"
+                raise BleakError(msg)
 
     with patch_bleak_scanner_factory(_CountingFailScanner):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -2191,7 +2203,8 @@ async def test_async_request_active_window_clears_override_on_unexpected_error()
             # raises a non-ScannerStartError so we exercise the
             # broad-except cleanup path.
             if start_count > 1:
-                raise RuntimeError("simulated unexpected error")
+                msg = "simulated unexpected error"
+                raise RuntimeError(msg)
 
     with patch_bleak_scanner_factory(_UnexpectedErrorAfterFirstScanner):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -2304,7 +2317,8 @@ async def test_async_request_active_window_passive_fallback_on_linux() -> None:
             # Fail the first three attempts so the 4th-attempt PASSIVE
             # fallback inside _async_start_attempt kicks in.
             if 2 <= starts <= 4:
-                raise BleakError("simulated active failure")
+                msg = "simulated active failure"
+                raise BleakError(msg)
 
     with (
         patch("habluetooth.scanner.IS_LINUX", True),
@@ -2337,7 +2351,8 @@ async def test_async_end_active_window_handles_start_error(
             nonlocal starts
             starts += 1
             if starts <= fail_until:
-                raise BleakError("simulated end-window failure")
+                msg = "simulated end-window failure"
+                raise BleakError(msg)
 
     with patch_bleak_scanner_factory(_FailUntilThresholdScanner):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -2538,7 +2553,8 @@ async def test_start_attempt_timeout_resets_then_raises_on_exhaustion(
 
     class TimeoutMockBleakScanner(MockBleakScanner):
         async def start(self) -> None:
-            raise TimeoutError("simulated start timeout")
+            msg = "simulated start timeout"
+            raise TimeoutError(msg)
 
     with patch_bleak_scanner_factory(TimeoutMockBleakScanner):
         ha_scanner = _RecordingResetScanner(
@@ -2570,7 +2586,8 @@ async def test_async_restart_scanner_logs_when_start_raises(
 
     class _RaisingRestartScanner(HaScanner):
         async def _async_start(self) -> None:
-            raise ScannerStartError("simulated restart failure")
+            msg = "simulated restart failure"
+            raise ScannerStartError(msg)
 
         async def _async_stop_scanner(self) -> None:
             pass
@@ -2636,7 +2653,8 @@ async def test_async_request_active_window_restart_path_scanner_start_error() ->
             # restart attempt exhaust, raising ScannerStartError,
             # which the abort path then suppresses.
             if starts > 1:
-                raise BleakError("simulated start failure")
+                msg = "simulated start failure"
+                raise BleakError(msg)
 
     class _NoResetScanner(HaScanner):
         async def _async_reset_adapter(self, gone_silent: bool) -> None:
@@ -2673,7 +2691,8 @@ async def test_async_request_active_window_restart_path_unexpected_error() -> No
     class _MaybeRaiseRestartScanner(HaScanner):
         async def _async_stop_then_start_under_lock(self) -> None:
             if raise_on_restart:
-                raise RuntimeError("simulated unexpected error")
+                msg = "simulated unexpected error"
+                raise RuntimeError(msg)
 
     with patch_bleak_scanner_factory(MockBleakScanner):
         ha_scanner = _MaybeRaiseRestartScanner(

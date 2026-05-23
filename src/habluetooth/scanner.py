@@ -182,7 +182,8 @@ def create_bleak_scanner(
     try:
         return OriginalBleakScanner(**scanner_kwargs)
     except (FileNotFoundError, BleakError) as ex:
-        raise RuntimeError(f"Failed to initialize Bluetooth: {ex}") from ex
+        msg = f"Failed to initialize Bluetooth: {ex}"
+        raise RuntimeError(msg) from ex
 
 
 def _error_indicates_reset_needed(error_str: str) -> bool:
@@ -475,11 +476,12 @@ class HaScanner(BaseHaScanner):
             if attempt < START_ATTEMPTS:
                 self._log_start_timeout(attempt)
                 return False
-            raise ScannerStartError(
+            msg = (
                 f"{self.name}: Timed out starting Bluetooth after"
                 f" {START_TIMEOUT} seconds; "
                 "Try power cycling the Bluetooth hardware."
-            ) from ex
+            )
+            raise ScannerStartError(msg) from ex
         except BleakError as ex:
             await self._async_stop_scanner()
             error_str = str(ex)
@@ -499,10 +501,11 @@ class HaScanner(BaseHaScanner):
             if attempt < START_ATTEMPTS:
                 self._log_start_failed(ex, attempt)
                 return False
-            raise ScannerStartError(
+            msg = (
                 f"{self.name}: Failed to start Bluetooth: {ex}; "
                 "Try power cycling the Bluetooth hardware."
-            ) from ex
+            )
+            raise ScannerStartError(msg) from ex
         except BaseException:
             await self._async_stop_scanner()
             raise
@@ -588,14 +591,16 @@ class HaScanner(BaseHaScanner):
             exc_info=ex,
         )
         if is_docker_env():
-            raise ScannerStartError(
+            msg = (
                 f"{self.name}: DBus service not found; docker config may "
                 "be missing `-v /run/dbus:/run/dbus:ro`: {ex}"
-            ) from ex
-        raise ScannerStartError(
+            )
+            raise ScannerStartError(msg) from ex
+        msg = (
             f"{self.name}: DBus service not found; make sure the DBus socket "
             f"is available: {ex}"
-        ) from ex
+        )
+        raise ScannerStartError(msg) from ex
 
     def _raise_for_broken_pipe_error(self, ex: BrokenPipeError) -> None:
         """Raise a ScannerStartError for a BrokenPipeError."""

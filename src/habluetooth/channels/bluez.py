@@ -447,9 +447,8 @@ class MGMTBluetoothCtl:
             if self.protocol and self.protocol.transport:
                 self.protocol.transport.close()
             btmgmt_socket.close(self.sock)
-            raise PermissionError(
-                "Missing NET_ADMIN/NET_RAW capabilities for Bluetooth management"
-            )
+            msg = "Missing NET_ADMIN/NET_RAW capabilities for Bluetooth management"
+            raise PermissionError(msg)
 
         self._reconnect_task = asyncio.create_task(self.reconnect_task())
 

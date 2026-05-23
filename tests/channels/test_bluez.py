@@ -1126,7 +1126,8 @@ async def test_reconnect_task() -> None:
             ctl._on_connection_lost_future = asyncio.get_running_loop().create_future()
         elif establish_count == 2:
             # Second call fails
-            raise BluetoothSocketError("Test error")
+            msg = "Test error"
+            raise BluetoothSocketError(msg)
         else:
             # Stop the test
             raise asyncio.CancelledError
@@ -1157,7 +1158,8 @@ async def test_reconnect_task_timeout() -> None:
     """Test reconnect_task with connection timeout."""
 
     async def mock_establish_connection() -> None:
-        raise TimeoutError("Connection timeout")
+        msg = "Connection timeout"
+        raise TimeoutError(msg)
 
     ctl = MGMTBluetoothCtl(5.0, {})
     ctl._on_connection_lost_future = None
@@ -1187,7 +1189,8 @@ async def test_reconnect_task_shutdown() -> None:
         nonlocal establish_called
         establish_called = True
         # Should not be called since we're shutting down
-        raise Exception("Should not be called")
+        msg = "Should not be called"
+        raise Exception(msg)
 
     with patch.object(
         ctl, "_establish_connection", side_effect=mock_establish_connection
@@ -1273,7 +1276,8 @@ async def test_command_response_cleanup_on_exception() -> None:
     async def _raise_inside_command_response() -> None:
         async with protocol.command_response(opcode) as response_future:
             assert response_future is not None
-            raise ValueError("Test exception")
+            msg = "Test exception"
+            raise ValueError(msg)
 
     with pytest.raises(ValueError, match="Test exception"):
         await _raise_inside_command_response()

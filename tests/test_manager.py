@@ -187,7 +187,8 @@ async def test_async_register_disappeared_callback(
     def _failing_callback(_address: str) -> None:
         """Failing callback."""
         failed_disappeared.append(_address)
-        raise ValueError("This is a test")
+        msg = "This is a test"
+        raise ValueError(msg)
 
     ok_disappeared: list[str] = []
 
@@ -258,7 +259,8 @@ async def test_async_register_allocation_callback(
     def _failing_callback(allocations: HaBluetoothSlotAllocations) -> None:
         """Failing callback."""
         failed_allocations.append(allocations)
-        raise ValueError("This is a test")
+        msg = "This is a test"
+        raise ValueError(msg)
 
     ok_allocations: list[HaBluetoothSlotAllocations] = []
 
@@ -380,7 +382,8 @@ async def test_async_register_scanner_registration_callback(
     def _failing_callback(scanner_registration: HaScannerRegistration) -> None:
         """Failing callback."""
         failed_scanner_callbacks.append(scanner_registration)
-        raise ValueError("This is a test")
+        msg = "This is a test"
+        raise ValueError(msg)
 
     ok_scanner_callbacks: list[HaScannerRegistration] = []
 
@@ -435,7 +438,8 @@ async def test_async_register_scanner_mode_change_callback(
     def _failing_callback(mode_change: HaScannerModeChange) -> None:
         """Failing callback."""
         failed_mode_callbacks.append(mode_change)
-        raise ValueError("This is a test")
+        msg = "This is a test"
+        raise ValueError(msg)
 
     ok_mode_callbacks: list[HaScannerModeChange] = []
 
