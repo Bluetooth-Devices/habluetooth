@@ -219,6 +219,31 @@ class _ScannerWorker:
         """Interrupt the worker's sleep so it re-evaluates pending work."""
         self._wake.set()
 
+    def note_window_dispatched(self, window_end: float, now: float) -> None:
+        """
+        Record that this worker's scanner is mid-window via another worker.
+
+        Called by ``_dispatch_to_fallback`` after delegating an active
+        window of duration ``window_end - now`` to this worker's
+        scanner. We bump ``_window_end`` so the worker's own
+        ``_tick`` / ``_next_event_at`` short-circuit during the
+        delegated window (no redundant per-device or sweep ticks),
+        and we bump ``_sweep_last_completed`` to ``now`` so the
+        worker doesn't immediately schedule a sweep on top of the
+        one our delegation already covers. Both moves are bounded by
+        ``max`` so a longer pre-existing window/sweep cadence isn't
+        shortened.
+
+        Safe to call synchronously from another worker's tick: the
+        target worker can only mutate these fields from inside its
+        own ``_tick``, and the single-loop scheduler guarantees we
+        aren't racing it.
+        """
+        if self._window_end < window_end:
+            self._window_end = window_end
+        if self._sweep_last_completed < now:
+            self._sweep_last_completed = now
+
     def _next_event_at(self, now: float) -> float:
         """
         Return the earliest loop-time at which this worker has work.
@@ -495,8 +520,20 @@ class _ScannerWorker:
                 _AUTO_CONNECTING_DEFER,
             )
         coalesce_duration = self._scheduler._coalesce_duration
+        workers = self._scheduler._workers
+        fb_worker: _ScannerWorker | None
         for fb, fb_due in fallback_groups.values():
             duration = coalesce_duration(fb_due)
+            # The fallback is about to actively scan for ``duration``
+            # seconds, which covers the same ground as its own
+            # periodic sweep and any of its own per-device dispatches
+            # that would fire during this window. Suppress redundant
+            # ticks on the fallback worker for the duration via
+            # ``note_window_dispatched``. Safe to call sync from this
+            # worker's tick.
+            fb_worker = workers.get(fb.source)
+            if fb_worker is not None:
+                fb_worker.note_window_dispatched(now + duration, now)
             try:
                 await fb.async_request_active_window(duration)
             except Exception:

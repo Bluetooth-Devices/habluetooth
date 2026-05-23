@@ -35,6 +35,8 @@ cdef class _ScannerWorker:
 
     cpdef void wake(self)
 
+    cpdef void note_window_dispatched(self, double window_end, double now)
+
     @cython.locals(
         source=str,
         needs=dict,
