@@ -3829,6 +3829,88 @@ async def test_worker_tick_three_addresses_no_fallback_advance_by_defer() -> Non
 
 
 @pytest.mark.asyncio
+async def test_note_window_dispatched_preserves_more_recent_sweep() -> None:
+    """
+    ``note_window_dispatched`` does not move ``_sweep_last_completed`` backwards.
+
+    Covers the False branch of ``if self._sweep_last_completed < now``
+    when the fallback's sweep clock is already further in the future
+    than the ``now`` we're passing in.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:38"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:38:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:38:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        fb_worker = sched._workers[fb.source]
+        future_sweep = loop.time() + 600.0
+        fb_worker._sweep_last_completed = future_sweep
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        # Sweep clock not moved backwards by our note_window_dispatched.
+        assert fb_worker._sweep_last_completed == future_sweep
+        assert fb.active_window_calls == [6.0]
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_dispatch_handles_missing_fallback_worker() -> None:
+    """
+    Dispatch tolerates ``workers.get(fb.source) is None``.
+
+    Covers the False branch of ``if fb_worker is not None``. Reachable
+    when a fallback scanner is unregistered between resolution and the
+    per-fallback iteration (sim: drop the worker entry between
+    registration and tick to force the lookup miss). The dispatch
+    should still call ``async_request_active_window`` on the fallback
+    even with no worker available to receive ``note_window_dispatched``.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:37"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:37:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:37:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        # Drop fb's worker so workers.get(fb.source) is None during dispatch.
+        # The fb scanner is still registered (so resolve still picks it)
+        # and async_scanner_devices_by_address still returns it.
+        sched._workers.pop(fb.source)
+        await _run_worker_tick(sched, owner.source)
+        # Dispatch still happened on the fallback's scanner even though
+        # we couldn't notify the worker.
+        assert fb.active_window_calls == [6.0]
+        assert owner.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
 async def test_worker_tick_three_addresses_mixed_outcomes_advance_correctly() -> None:
     """
     Three addresses, three outcomes, each advanced per its outcome.

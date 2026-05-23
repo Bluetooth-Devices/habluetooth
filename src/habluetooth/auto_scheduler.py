@@ -108,6 +108,8 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING
 
+from bleak_retry_connector import NO_RSSI_VALUE
+
 from .const import (
     AUTO_INITIAL_SWEEP_DELAY,
     AUTO_REDISCOVERY_INTERVAL,
@@ -436,18 +438,14 @@ class _ScannerWorker:
         """
         fallback_groups: dict[str, tuple[BaseHaScanner, list[ActiveScanRequest]]] = {}
         no_fallback_addresses: list[str] = []
-        resolve = self._scheduler._resolve_fallback_for_address
         exclude_source = self._scanner.source
         had_any_progress = False
         retry_at = now + _AUTO_CONNECTING_DEFER
         for address, entries, due in due_buckets:
-            covered, fallback = resolve(address, exclude_source)
-            if covered:
-                for request in due:
-                    entries[request] = now + request.scan_interval
-                had_any_progress = True
-                continue
-            if fallback is None:
+            covered, fallback = self._scheduler._resolve_fallback_for_address(
+                address, exclude_source
+            )
+            if not covered and fallback is None:
                 for request in due:
                     entries[request] = retry_at
                 no_fallback_addresses.append(address)
@@ -455,6 +453,8 @@ class _ScannerWorker:
             for request in due:
                 entries[request] = now + request.scan_interval
             had_any_progress = True
+            if fallback is None:
+                continue
             existing = fallback_groups.get(fallback.source)
             if existing is None:
                 fallback_groups[fallback.source] = (fallback, list(due))
@@ -473,17 +473,13 @@ class _ScannerWorker:
         elif had_any_progress:
             self._warned_no_fallback = False
         if sweep_due:
-            # Place next sweep due time at now + _AUTO_CONNECTING_DEFER.
             self._sweep_last_completed = (
                 now - _AUTO_REDISCOVERY_INTERVAL + _AUTO_CONNECTING_DEFER
             )
-        coalesce_duration = self._scheduler._coalesce_duration
         workers = self._scheduler._workers
         fb_worker: _ScannerWorker | None
         for fb, fb_due in fallback_groups.values():
-            duration = coalesce_duration(fb_due)
-            # Suppress redundant ticks on the fallback worker while
-            # its scanner is actively scanning on our behalf.
+            duration = self._scheduler._coalesce_duration(fb_due)
             fb_worker = workers.get(fb.source)
             if fb_worker is not None:
                 fb_worker.note_window_dispatched(now + duration, now)
@@ -705,15 +701,14 @@ class AutoScanScheduler:
         Return ``(covered, best_auto_fallback)`` for a due address.
 
         ``covered``: a non-connecting ACTIVE scanner sees the
-        address, so it's already being actively scanned (caller
-        drops the request silently).
+        address (already actively scanned; caller drops silently).
         ``best_auto_fallback``: highest-RSSI non-connecting AUTO
-        scanner that sees the address, excluding the owner. PASSIVE
-        scanners are never valid (the helper refuses to flip them).
+        scanner seeing the address, excluding the owner. PASSIVE is
+        never a valid fallback. Early-returns on the first ACTIVE
+        coverage since the caller short-circuits on ``covered``.
         """
-        covered = False
         best: BaseHaScanner | None = None
-        best_rssi = -10_000
+        best_rssi = NO_RSSI_VALUE
         for device in self._manager.async_scanner_devices_by_address(address, False):
             scanner = device.scanner
             if scanner.source == exclude_source:
@@ -722,19 +717,14 @@ class AutoScanScheduler:
                 continue
             mode = scanner.requested_mode
             if mode is BluetoothScanningMode.ACTIVE:
-                # Already scanning actively: device is covered, no
-                # flip needed. Keep iterating so the caller still
-                # sees an AUTO fallback if one exists (the caller
-                # short-circuits on ``covered`` first anyway).
-                covered = True
-                continue
+                return True, None
             if mode is not BluetoothScanningMode.AUTO:
                 continue
-            rssi = device.advertisement.rssi
+            rssi = device.advertisement.rssi or NO_RSSI_VALUE
             if rssi > best_rssi:
                 best_rssi = rssi
                 best = scanner
-        return covered, best
+        return False, best
 
     def _coalesce_duration(self, entries: list[ActiveScanRequest]) -> float:
         """
