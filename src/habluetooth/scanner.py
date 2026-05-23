@@ -553,7 +553,7 @@ class HaScanner(BaseHaScanner):
             attempt,
             START_ATTEMPTS,
             ex,
-            exc_info=True,
+            exc_info=ex,
         )
 
     def _log_start_attempt(self, attempt: int) -> None:
@@ -569,7 +569,7 @@ class HaScanner(BaseHaScanner):
             "%s: Starting bluetooth scanner aborted: %s",
             self.name,
             ex,
-            exc_info=True,
+            exc_info=ex,
         )
         msg = f"{self.name}: Starting bluetooth scanner aborted"
         raise ScannerStartError(msg) from ex
@@ -579,7 +579,7 @@ class HaScanner(BaseHaScanner):
             "%s: FileNotFoundError while starting bluetooth: %s",
             self.name,
             ex,
-            exc_info=True,
+            exc_info=ex,
         )
         if is_docker_env():
             raise ScannerStartError(
@@ -593,7 +593,7 @@ class HaScanner(BaseHaScanner):
 
     def _raise_for_broken_pipe_error(self, ex: BrokenPipeError) -> None:
         """Raise a ScannerStartError for a BrokenPipeError."""
-        _LOGGER.debug("%s: DBus connection broken: %s", self.name, ex, exc_info=True)
+        _LOGGER.debug("%s: DBus connection broken: %s", self.name, ex, exc_info=ex)
         if is_docker_env():
             msg = (
                 f"{self.name}: DBus connection broken: {ex}; try restarting "
@@ -612,7 +612,7 @@ class HaScanner(BaseHaScanner):
             "%s: Invalid DBus message received: %s",
             self.name,
             ex,
-            exc_info=True,
+            exc_info=ex,
         )
         msg = f"{self.name}: Invalid DBus message received: {ex}; try restarting `dbus`"
         raise ScannerStartError(msg) from ex
