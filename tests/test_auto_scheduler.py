@@ -2226,7 +2226,7 @@ class _DiscoverableAutoScanner(_RecordingAutoScanner):
         super().__init__(source, mode, connectable)
         self._discovered: dict[str, tuple[BLEDevice, AdvertisementData]] = {}
 
-    def add_discovered(self, address: str, rssi: int = -60) -> None:
+    def add_discovered(self, address: str, rssi: int | None = -60) -> None:
         """Mark ``address`` as currently discovered by this scanner."""
         device = generate_ble_device(address, "x")
         adv = generate_advertisement_data(local_name="x", rssi=rssi)
@@ -3965,4 +3965,183 @@ async def test_worker_tick_three_addresses_mixed_outcomes_advance_correctly() ->
         c3()
         c_owner()
         c_active()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_fallback_with_none_rssi_is_still_dispatched() -> None:
+    """
+    A fallback whose last advertisement has ``rssi is None`` is usable.
+
+    Pins Kōan blocker #1: ``_resolve_fallback_for_address`` must not
+    crash on ``None`` RSSI (would raise ``TypeError`` on ``None >
+    -10_000``). The defensive ``rssi or NO_RSSI_VALUE`` normalization
+    keeps the scanner in the candidate pool with the sentinel score.
+    Here the single fallback has ``rssi=None`` and the dispatch must
+    still fire on it.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:39"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:39:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:39:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=None)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == []
+        assert fb.active_window_calls == [6.0]
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_fallback_with_rssi_loses_to_better_fallback() -> None:
+    """
+    A ``None``-RSSI fallback loses to a fallback with a real RSSI.
+
+    With ``None`` normalized to ``NO_RSSI_VALUE`` (-127), any
+    real-world RSSI beats it, so the ``None``-RSSI scanner is only
+    picked when nothing else is available.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:3A"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:3A:01", BluetoothScanningMode.AUTO)
+    fb_none = _DiscoverableAutoScanner("AA:00:00:00:3A:02", BluetoothScanningMode.AUTO)
+    fb_real = _DiscoverableAutoScanner("AA:00:00:00:3A:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_n = manager.async_register_scanner(fb_none)
+    c_r = manager.async_register_scanner(fb_real)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb_none.add_discovered(address, rssi=None)
+        fb_real.add_discovered(address, rssi=-90)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        # Real RSSI (-90) beats the normalized None (-127).
+        assert fb_real.active_window_calls == [6.0]
+        assert fb_none.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_n()
+        c_r()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_failed_fallback_advances_entries_by_full_interval() -> None:
+    """
+    Failed fallback dispatch still advances entries by ``scan_interval``.
+
+    Pins Kōan suggestion #2 / the documented "advance on failure"
+    semantics: when ``fb.async_request_active_window`` raises, the
+    per-address entries have already been advanced by ``scan_interval``
+    (NOT reset to ``retry_at``) and the fallback worker's
+    ``_window_end`` / ``_sweep_last_completed`` bumps from
+    ``note_window_dispatched`` are preserved. A failing fallback is
+    treated like a successful one to avoid busy-looping on a stuck
+    scanner.
+    """
+
+    class _RaisingScanner(_DiscoverableAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            self.active_window_calls.append(duration)
+            msg = "boom"
+            raise RuntimeError(msg)
+
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:3B"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:3B:01", BluetoothScanningMode.AUTO)
+    fb = _RaisingScanner("AA:00:00:00:3B:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        fb_worker = sched._workers[fb.source]
+        sweep_before = fb_worker._sweep_last_completed
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        # Entries advanced by full scan_interval, NOT retry_at.
+        for due in sched._needs[address].values():
+            assert due == pytest.approx(before + 120.0, abs=0.5)
+            assert due > before + 60.0  # well past the 30s retry_at
+        # fb_worker bumps from note_window_dispatched are preserved.
+        assert fb_worker._sweep_last_completed > sweep_before
+        assert fb_worker._sweep_last_completed >= before
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_dispatch_short_window_still_resets_full_sweep() -> None:
+    """
+    A 5s delegated window resets the fallback's full 12h sweep cadence.
+
+    Pins the documented best-effort caveat: ``note_window_dispatched``
+    advances ``_sweep_last_completed`` to ``now`` regardless of how
+    short the delegated window is. With min duration (5s, well below
+    ``AUTO_REDISCOVERY_SWEEP_DURATION`` of 15s), the next sweep is
+    still pushed out a full ``AUTO_REDISCOVERY_INTERVAL`` (12h).
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:3C"
+    # Request duration well under MIN; coalesce_duration clamps to
+    # _AUTO_WINDOW_MIN_DURATION (5.0).
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=5.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:3C:01", BluetoothScanningMode.AUTO)
+    fb = _DiscoverableAutoScanner("AA:00:00:00:3C:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fb = manager.async_register_scanner(fb)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb.add_discovered(address, rssi=-60)
+        # Place fb's sweep clock far in the past so we can see the bump.
+        fb_worker = sched._workers[fb.source]
+        fb_worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL / 2
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        before = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        # Delegated window was 5s; fb's next sweep was pushed to
+        # roughly now + 12h regardless of the short window.
+        next_sweep_due = fb_worker._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        assert next_sweep_due == pytest.approx(
+            before + AUTO_REDISCOVERY_INTERVAL, abs=1
+        )
+        assert fb.active_window_calls == [5.0]
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
         c_fb()

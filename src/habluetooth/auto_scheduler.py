@@ -735,7 +735,7 @@ class AutoScanScheduler:
         coverage since the caller short-circuits on ``covered``.
         """
         best: BaseHaScanner | None = None
-        best_rssi = NO_RSSI_VALUE
+        best_rssi = 0
         for device in self._manager.async_scanner_devices_by_address(address, False):
             scanner = device.scanner
             if scanner.source == exclude_source:
@@ -748,7 +748,7 @@ class AutoScanScheduler:
             if mode is not BluetoothScanningMode.AUTO:
                 continue
             rssi = device.advertisement.rssi or NO_RSSI_VALUE
-            if rssi > best_rssi:
+            if best is None or rssi > best_rssi:
                 best_rssi = rssi
                 best = scanner
         return False, best
