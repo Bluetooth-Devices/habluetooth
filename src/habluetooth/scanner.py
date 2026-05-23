@@ -664,11 +664,10 @@ class HaScanner(BaseHaScanner):
                 await self._async_reset_adapter(True)
             try:
                 await self._async_start()
-            except ScannerStartError as ex:
+            except ScannerStartError:
                 _LOGGER.exception(
-                    "%s: Failed to restart Bluetooth scanner: %s",
+                    "%s: Failed to restart Bluetooth scanner",
                     self.name,
-                    ex,
                 )
 
     async def _async_reset_adapter(self, gone_silent: bool) -> None:
@@ -948,11 +947,11 @@ class HaScanner(BaseHaScanner):
         try:
             async with asyncio.timeout(STOP_TIMEOUT):
                 await self.scanner.stop()
-        except (TimeoutError, BleakError) as ex:
+        except (TimeoutError, BleakError):
             # This is not fatal, and they may want to reload
             # the config entry to restart the scanner if they
             # change the bluetooth dongle.
-            _LOGGER.error("%s: Error stopping scanner: %s", self.name, ex)
+            _LOGGER.exception("%s: Error stopping scanner", self.name)
         self.scanner = None
 
     async def _async_force_stop_discovery(self) -> None:
@@ -961,10 +960,10 @@ class HaScanner(BaseHaScanner):
         try:
             async with asyncio.timeout(STOP_TIMEOUT):
                 await stop_discovery(self.adapter)
-        except TimeoutError as ex:
-            _LOGGER.error("%s: Timeout force stopping scanner: %s", self.name, ex)
-        except Exception as ex:  # noqa: BLE001
+        except TimeoutError:
+            _LOGGER.exception("%s: Timeout force stopping scanner", self.name)
+        except Exception:
             # Best-effort BlueZ cleanup; dbus_fast can raise a wide
             # variety of errors and we don't want any of them to
             # propagate out of the recovery path.
-            _LOGGER.error("%s: Failed to force stop scanner: %s", self.name, ex)
+            _LOGGER.exception("%s: Failed to force stop scanner", self.name)
