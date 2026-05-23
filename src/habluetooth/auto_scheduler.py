@@ -142,7 +142,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bleak_retry_connector import NO_RSSI_VALUE
 
@@ -834,3 +834,51 @@ class AutoScanScheduler:
         if requested > _AUTO_WINDOW_MAX_DURATION:
             return _AUTO_WINDOW_MAX_DURATION
         return requested
+
+    def async_diagnostics(self) -> dict[str, Any]:
+        """
+        Return a snapshot of scheduler state for diagnostics.
+
+        Per-worker timing fields and ``monotonic_time`` are raw
+        ``loop.time()`` values so callers can compute deltas; before
+        ``start()`` (or after ``stop()``) ``_loop`` is None and these
+        are reported as 0.0.
+        """
+        loop = self._loop
+        now = loop.time() if loop is not None else 0.0
+        workers: dict[str, dict[str, Any]] = {}
+        for source, worker in self._workers.items():
+            workers[source] = {
+                "name": worker._scanner.name,
+                "window_end": worker._window_end,
+                "sweep_last_completed": worker._sweep_last_completed,
+                "next_sweep_at": (
+                    worker._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
+                ),
+                "next_event_at": (
+                    worker._next_event_at(now) if loop is not None else 0.0
+                ),
+                "failed_window": worker._failed_window,
+                "warned_no_fallback": worker._warned_no_fallback,
+            }
+        last_service_info = self._manager.async_last_service_info
+        requests: dict[str, list[dict[str, Any]]] = {}
+        for address, bucket in self._requests_by_address.items():
+            entries = self._needs.get(address, {})
+            history = last_service_info(address, False)
+            owner_source = history.source if history is not None else None
+            requests[address] = [
+                {
+                    "scan_interval": request.scan_interval,
+                    "scan_duration": request.scan_duration,
+                    "next_due": entries.get(request),
+                    "owner_source": owner_source,
+                }
+                for request in bucket
+            ]
+        return {
+            "running": self._running,
+            "monotonic_time": now,
+            "workers": workers,
+            "requests": requests,
+        }
