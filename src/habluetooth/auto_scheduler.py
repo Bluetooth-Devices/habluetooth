@@ -913,10 +913,14 @@ class AutoScanScheduler:
         future and take down the siblings or the leader's
         ``set_result``.
         """
-        if self._loop is None:
+        # Capture loop locally so a concurrent stop() (which nulls
+        # self._loop) during the sleep loop or the flip-await cannot
+        # turn a re-read into AttributeError.
+        loop = self._loop
+        if loop is None:
             return
         duration = _clamp_window_duration(duration)
-        now = self._loop.time()
+        now = loop.time()
         desired_end = now + duration
         in_flight = self._on_demand_sweep_future
         if in_flight is not None:
@@ -925,13 +929,13 @@ class AutoScanScheduler:
                 await self._flip_scanners_for_sweep(desired_end - now)
             await asyncio.shield(in_flight)
             return
-        future = self._loop.create_future()
+        future = loop.create_future()
         self._on_demand_sweep_future = future
         self._on_demand_sweep_end = desired_end
         try:
             await self._flip_scanners_for_sweep(duration)
             while True:
-                remaining = self._on_demand_sweep_end - self._loop.time()
+                remaining = self._on_demand_sweep_end - loop.time()
                 if remaining <= 0:
                     break
                 await asyncio.sleep(remaining)
