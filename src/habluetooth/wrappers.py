@@ -10,7 +10,7 @@ import warnings
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final, Literal, overload
+from typing import TYPE_CHECKING, Any, Final, Literal, Self, overload
 
 from bleak import BleakClient, BleakError, normalize_uuid_str
 from bleak.backends import BleakBackend
@@ -154,12 +154,12 @@ class HaBleakScannerWrapper:
     async def start(self, *args: Any, **kwargs: Any) -> None:
         """Start scanning for devices."""
 
-    async def __aenter__(self) -> HaBleakScannerWrapper:
+    async def __aenter__(self) -> Self:
         """Enter the context manager."""
         await self.start()
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: object) -> None:
         """Exit the context manager."""
         await self.stop()
 
