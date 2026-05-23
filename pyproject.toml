@@ -122,6 +122,7 @@ ignore = [
 select = [
     "A",    # flake8-builtins
     "B",    # flake8-bugbear
+    "BLE",  # flake8-blind-except
     "C4",   # flake8-comprehensions
     "D",    # flake8-docstrings
     "DTZ",  # flake8-datetimez
