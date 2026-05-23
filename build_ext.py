@@ -48,7 +48,6 @@ class BuildExt(build_ext):
             # platform mismatch, etc.) should fall back to the pure-Python
             # install rather than break the build.
             _LOGGER.debug("Failed to build extensions: %s", ex, exc_info=True)
-            pass
 
 
 def build(setup_kwargs: Any) -> None:
@@ -74,4 +73,3 @@ def build(setup_kwargs: Any) -> None:
     except Exception:
         if os.environ.get("REQUIRE_CYTHON"):
             raise
-        pass

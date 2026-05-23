@@ -1303,7 +1303,6 @@ async def test_mgmt_permission_error_fallback() -> None:
             self, service_info: BluetoothServiceInfoBleak
         ) -> None:
             """Track discovered service info."""
-            pass
 
     adapters = FakeBluetoothAdapters()
     slot_manager = BleakSlotManager()

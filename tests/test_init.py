@@ -23,8 +23,6 @@ def test_create_scanner():
     connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
 
     class MockScanner(BaseHaScanner):
-        pass
-
         @property
         def discovered_devices_and_advertisement_data(self):
             return []
