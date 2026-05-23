@@ -454,7 +454,7 @@ class BluetoothManager:
             loop.time() + UNAVAILABLE_TRACK_SECONDS, self._async_check_unavailable
         )
 
-    def _async_check_unavailable(self) -> None:
+    def _async_check_unavailable(self) -> None:  # noqa: C901
         """Watch for unavailable devices and cleanup state history."""
         monotonic_now = monotonic_time_coarse()
         connectable_history = self._connectable_history
@@ -733,7 +733,9 @@ class BluetoothManager:
         """
         self._scanner_adv_received(service_info)
 
-    def _scanner_adv_received(self, service_info: BluetoothServiceInfoBleak) -> None:
+    def _scanner_adv_received(  # noqa: C901
+        self, service_info: BluetoothServiceInfoBleak
+    ) -> None:
         """
         Handle a new advertisement from any scanner (internal cdef path).
 
