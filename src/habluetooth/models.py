@@ -154,9 +154,10 @@ class BluetoothServiceInfo:
     @property
     def manufacturer(self) -> str | None:
         """Convert manufacturer data to a string."""
-        from bleak.backends._manufacturers import (
-            MANUFACTURERS,  # pylint: disable=import-outside-toplevel
-        )
+        # MANUFACTURERS is a multi-kilobyte dict; lazy-load so the
+        # cost is only paid by the rare caller that asks for the
+        # manufacturer name (most don't).
+        from bleak.backends._manufacturers import MANUFACTURERS  # noqa: PLC0415
 
         for manufacturer in self.manufacturer_data:
             if manufacturer in MANUFACTURERS:

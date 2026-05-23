@@ -1,8 +1,11 @@
 """Tests for the cross-scanner name cache on BluetoothManager."""
 
 import time
+from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
+from freezegun import freeze_time
 
 from habluetooth import HaBluetoothConnector, get_manager
 
@@ -14,6 +17,7 @@ from . import (
     generate_advertisement_data,
     generate_ble_device,
     inject_advertisement_with_source,
+    utcnow,
 )
 
 # ---------------------------------------------------------------------------
@@ -416,13 +420,6 @@ async def test_async_clear_advertisement_history_evicts_cache() -> None:
 @pytest.mark.asyncio
 async def test_disappearance_evicts_cache() -> None:
     """A device that disappears via _async_check_unavailable evicts its cache entry."""
-    from datetime import timedelta
-    from unittest.mock import patch
-
-    from freezegun import freeze_time
-
-    from . import utcnow
-
     manager = get_manager()
     address = "44:44:33:11:23:54"
 

@@ -55,7 +55,9 @@ def build(setup_kwargs: Any) -> None:
     if os.environ.get("SKIP_CYTHON"):
         return
     try:
-        from Cython.Build import cythonize
+        # Cython is optional; defer the import so the SKIP_CYTHON
+        # branch above never has to find it on sys.path.
+        from Cython.Build import cythonize  # noqa: PLC0415
 
         setup_kwargs.update(
             {
