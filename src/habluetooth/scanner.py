@@ -952,5 +952,8 @@ class HaScanner(BaseHaScanner):
                 await stop_discovery(self.adapter)
         except TimeoutError as ex:
             _LOGGER.error("%s: Timeout force stopping scanner: %s", self.name, ex)
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
+            # Best-effort BlueZ cleanup; dbus_fast can raise a wide
+            # variety of errors and we don't want any of them to
+            # propagate out of the recovery path.
             _LOGGER.error("%s: Failed to force stop scanner: %s", self.name, ex)

@@ -122,6 +122,7 @@ ignore = [
 select = [
     "A",    # flake8-builtins
     "B",    # flake8-bugbear
+    "BLE",  # flake8-blind-except
     "C4",   # flake8-comprehensions
     "D",    # flake8-docstrings
     "DTZ",  # flake8-datetimez
@@ -131,12 +132,15 @@ select = [
     "FA",   # flake8-future-annotations
     "FIX",  # flake8-fixme
     "FLY",  # flynt
+    "FURB", # refurb
     "G",    # flake8-logging-format
     "I",    # isort
     "ICN",  # flake8-import-conventions
     "INP",  # flake8-no-pep420
     "NPY",  # numpy-specific rules
     "PERF", # Perflint
+    "PGH",  # pygrep-hooks
+    "PIE",  # flake8-pie
     "PTH",  # flake8-use-pathlib
     "Q",    # flake8-quotes
     "RET",  # return
@@ -144,6 +148,7 @@ select = [
     "RUF",  # ruff specific
     "S",    # flake8-bandit
     "SIM",  # simplify
+    "SLOT", # flake8-slots
     "T10",  # flake8-debugger
     "T20",  # flake8-print
     "TD",   # flake8-todos

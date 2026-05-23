@@ -475,7 +475,7 @@ async def test_recovery_from_dbus_restart() -> None:
         with patch_bluetooth_time(
             start_time_monotonic,
         ):
-            _callback(  # type: ignore
+            _callback(  # type: ignore[misc]
                 generate_ble_device("44:44:33:11:23:42", "any_name"),
                 generate_advertisement_data(local_name="any_name"),
             )
@@ -1303,7 +1303,6 @@ async def test_mgmt_permission_error_fallback() -> None:
             self, service_info: BluetoothServiceInfoBleak
         ) -> None:
             """Track discovered service info."""
-            pass
 
     adapters = FakeBluetoothAdapters()
     slot_manager = BleakSlotManager()
@@ -2501,6 +2500,8 @@ async def test_detection_callback_coerces_non_str_name_and_non_int_tx_power() ->
 
     class _StrSubclass(str):
         """str subclass — `type() is not str` so coercion fires."""
+
+        __slots__ = ()
 
     class _IntLike:
         """Non-int that ``int()`` accepts (e.g. numpy.int64 stand-in)."""

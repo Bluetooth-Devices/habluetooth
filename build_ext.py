@@ -43,9 +43,11 @@ class BuildExt(build_ext):
             self.parallel = os.cpu_count() or 1
         try:
             super().build_extensions()
-        except Exception as ex:  # nosec
+        except Exception as ex:  # nosec  # noqa: BLE001
+            # Cython is optional; any compile failure (missing C compiler,
+            # platform mismatch, etc.) should fall back to the pure-Python
+            # install rather than break the build.
             _LOGGER.debug("Failed to build extensions: %s", ex, exc_info=True)
-            pass
 
 
 def build(setup_kwargs: Any) -> None:
@@ -71,4 +73,3 @@ def build(setup_kwargs: Any) -> None:
     except Exception:
         if os.environ.get("REQUIRE_CYTHON"):
             raise
-        pass

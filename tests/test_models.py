@@ -183,10 +183,10 @@ def test_from_device_and_advertisement_data():
 
 def test_pyobjc_compat():
     class pyobjc_str(str):
-        pass
+        __slots__ = ()
 
     class pyobjc_int(int):
-        pass
+        __slots__ = ()
 
     name = pyobjc_str("wohand")
     address = pyobjc_str("44:44:33:11:23:45")

@@ -275,7 +275,7 @@ async def test_test_switch_adapters_when_out_of_slots(
 
     with (
         patch.object(manager.slot_manager, "release_slot") as release_slot_mock,
-        patch.object(  # type: ignore
+        patch.object(  # type: ignore[assignment]
             manager.slot_manager, "allocate_slot", _allocate_slot_mock
         ) as allocate_slot_mock,
     ):
