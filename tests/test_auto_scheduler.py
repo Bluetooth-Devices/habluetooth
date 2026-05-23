@@ -7,8 +7,10 @@ import contextlib
 import logging
 import math
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
+from freezegun import freeze_time
 
 from habluetooth import (
     BaseHaScanner,
@@ -25,6 +27,7 @@ from habluetooth.const import (
     AUTO_WINDOW_MIN_DURATION,
     DEFAULT_ACTIVE_SCAN_DURATION,
     DEFAULT_ACTIVE_SCAN_INTERVAL,
+    DEFAULT_ON_DEMAND_SWEEP_DURATION,
 )
 
 from . import generate_advertisement_data, generate_ble_device
@@ -4346,3 +4349,176 @@ async def test_async_diagnostics() -> None:
     # After cancellation the address falls out of both indexes.
     post = sched.async_diagnostics()
     assert post["requests"] == {}
+
+
+@contextlib.asynccontextmanager
+async def _no_real_sleep():
+    """
+    Replace ``asyncio.sleep`` with an immediate no-op for sweep tests.
+
+    Sweeps clamp duration to AUTO_WINDOW_MIN_DURATION (5s); stubbing
+    the sleep keeps tests fast while preserving the call shape so we
+    can still observe what duration was requested.
+    """
+
+    async def _instant(duration: float) -> None:
+        return None
+
+    with patch("asyncio.sleep", new=_instant):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_fires_active_window_on_each_auto_scanner() -> None:
+    """A sweep flips every AUTO scanner into ACTIVE for the duration."""
+    manager = get_manager()
+    a = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    b = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(a)
+    c_b = manager.async_register_scanner(b)
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_sweep(duration=7.0)
+        assert a.active_window_calls == [7.0]
+        assert b.active_window_calls == [7.0]
+    finally:
+        c_a()
+        c_b()
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_skips_connecting_scanner() -> None:
+    """A scanner mid-connect is skipped; non-connecting peers still flip."""
+    manager = get_manager()
+    busy = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    free = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+    c_busy = manager.async_register_scanner(busy)
+    c_free = manager.async_register_scanner(free)
+    busy._add_connecting("11:22:33:44:55:66")
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_sweep(duration=5.0)
+        assert busy.active_window_calls == []
+        assert free.active_window_calls == [5.0]
+    finally:
+        busy._finished_connecting("11:22:33:44:55:66", connected=False)
+        c_busy()
+        c_free()
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_resets_next_sweep_time() -> None:
+    """A sweep advances each flipped worker's _sweep_last_completed to now."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    worker = sched._workers[scanner.source]
+    # Backdate so we can observe the bump.
+    worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+    try:
+        before = loop.time()
+        async with _no_real_sleep():
+            await manager.async_request_sweep(duration=5.0)
+        assert worker._sweep_last_completed >= before
+        assert worker._sweep_last_completed <= loop.time() + 0.1
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_dedupes_concurrent_callers() -> None:
+    """Two concurrent sweep calls share one window; the bus flips once."""
+    manager = get_manager()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        async with _no_real_sleep():
+            await asyncio.gather(
+                manager.async_request_sweep(duration=5.0),
+                manager.async_request_sweep(duration=5.0),
+            )
+        # Only one active window despite two callers.
+        assert scanner.active_window_calls == [5.0]
+        # The deduped future is cleared once the sweep finishes.
+        assert manager._auto_scheduler._on_demand_sweep_future is None
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_default_duration_is_10s() -> None:
+    """Calling without a duration uses DEFAULT_ON_DEMAND_SWEEP_DURATION (10s)."""
+    manager = get_manager()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_sweep()
+        assert scanner.active_window_calls == [DEFAULT_ON_DEMAND_SWEEP_DURATION]
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_clamps_to_window_bounds() -> None:
+    """Out-of-range durations are clamped to [MIN, MAX]."""
+    manager = get_manager()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_sweep(duration=0.5)  # below MIN
+            await manager.async_request_sweep(duration=999.0)  # above MAX
+        assert scanner.active_window_calls == [
+            AUTO_WINDOW_MIN_DURATION,
+            AUTO_WINDOW_MAX_DURATION,
+        ]
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_rejects_invalid_duration() -> None:
+    """NaN, inf, zero, and negative durations raise ValueError."""
+    manager = get_manager()
+    for bad in (float("nan"), float("inf"), float("-inf"), 0.0, -1.0):
+        with pytest.raises(ValueError, match="finite positive"):
+            await manager.async_request_sweep(duration=bad)
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_awaits_the_full_duration() -> None:
+    """
+    The sweep awaits ``duration`` so the caller can read advertisements.
+
+    Freezegun patches ``time.monotonic`` (and thus ``loop.time``);
+    advancing the frozen clock by the requested duration lets the
+    scheduler's internal ``asyncio.sleep`` complete and the task
+    finish. The scanner is registered inside the freeze so the
+    worker's ``_sweep_last_completed`` is anchored to the frozen
+    clock; the worker's background ``_run`` task is cancelled so it
+    cannot tick during the on-demand window.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    with freeze_time() as frozen:
+        scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+        register_cancel = manager.async_register_scanner(scanner)
+        worker = sched._workers[scanner.source]
+        worker.stop()
+        await asyncio.sleep(0)
+        try:
+            task = asyncio.create_task(manager.async_request_sweep(duration=5.0))
+            # Let the task start, flip the radio, and enter asyncio.sleep.
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert scanner.active_window_calls == [5.0]
+            assert not task.done()
+            # Advance past the sweep duration; the sleep wakes up.
+            frozen.tick(5.1)
+            await task
+            assert task.done()
+        finally:
+            register_cancel()

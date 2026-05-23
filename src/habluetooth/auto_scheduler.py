@@ -177,6 +177,15 @@ _AUTO_CONNECTING_DEFER = 30.0
 _LOGGER = logging.getLogger(__name__)
 
 
+def _clamp_window_duration(duration: float) -> float:
+    """Clamp a window duration into ``[MIN, MAX]``."""
+    if duration < _AUTO_WINDOW_MIN_DURATION:
+        return _AUTO_WINDOW_MIN_DURATION
+    if duration > _AUTO_WINDOW_MAX_DURATION:
+        return _AUTO_WINDOW_MAX_DURATION
+    return duration
+
+
 class ActiveScanRequest:
     """
     A registered need for on-demand active scans on one address.
@@ -588,6 +597,7 @@ class AutoScanScheduler:
         "_loop",
         "_manager",
         "_needs",
+        "_on_demand_sweep_future",
         "_requests_by_address",
         "_running",
         "_workers",
@@ -601,6 +611,7 @@ class AutoScanScheduler:
         self._workers: dict[str, _ScannerWorker] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
+        self._on_demand_sweep_future: asyncio.Future[None] | None = None
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """
@@ -825,15 +836,70 @@ class AutoScanScheduler:
         float (``async_register_active_scan`` enforces this at the
         boundary).
         """
-        requested = max(
-            (e.scan_duration for e in entries),
-            default=_AUTO_WINDOW_MIN_DURATION,
+        return _clamp_window_duration(
+            max(
+                (e.scan_duration for e in entries),
+                default=_AUTO_WINDOW_MIN_DURATION,
+            )
         )
-        if requested < _AUTO_WINDOW_MIN_DURATION:
-            return _AUTO_WINDOW_MIN_DURATION
-        if requested > _AUTO_WINDOW_MAX_DURATION:
-            return _AUTO_WINDOW_MAX_DURATION
-        return requested
+
+    async def async_request_sweep(self, duration: float) -> None:
+        """
+        Flip every AUTO scanner to ACTIVE for ``duration`` seconds.
+
+        Used by the public ``BluetoothManager.async_request_sweep``
+        entry point for HA config-flow discovery. The manager
+        validates that ``duration`` is finite and positive; this
+        method clamps into ``[MIN, MAX]`` to keep parity with the
+        scheduled-window path.
+
+        Concurrent callers share an in-flight sweep via
+        ``_on_demand_sweep_future``: there is never more than one
+        on-demand window outstanding on the bus, so joining callers
+        wait on the same future and return when it resolves. The
+        check-and-set on the future is synchronous (no ``await``
+        before it) so it is atomic under cooperative scheduling.
+
+        Skips scanners whose radio is busy with a connect attempt;
+        adjacent scanners cover those devices. Advances each flipped
+        worker's ``_sweep_last_completed`` and ``_window_end`` via
+        ``note_window_dispatched`` so the next periodic sweep is
+        deferred and the worker's own ``_tick`` suppresses itself
+        during the on-demand window. Always awaits the full
+        ``duration`` so the caller can read advertisements collected
+        during the window before this returns.
+        """
+        if (in_flight := self._on_demand_sweep_future) is not None:
+            await in_flight
+            return
+        if self._loop is None:
+            return
+        duration = _clamp_window_duration(duration)
+        future = self._loop.create_future()
+        self._on_demand_sweep_future = future
+        try:
+            now = self._loop.time()
+            window_end = now + duration
+            targets: list[BaseHaScanner] = []
+            for worker in self._workers.values():
+                scanner = worker._scanner
+                if scanner._connections_in_progress() > 0:
+                    continue
+                worker.note_window_dispatched(window_end, now)
+                targets.append(scanner)
+            if targets:
+                await asyncio.gather(
+                    *(
+                        scanner.async_request_active_window(duration)
+                        for scanner in targets
+                    ),
+                    return_exceptions=True,
+                )
+            await asyncio.sleep(duration)
+        finally:
+            self._on_demand_sweep_future = None
+            if not future.done():
+                future.set_result(None)
 
     def async_diagnostics(self) -> dict[str, Any]:
         """

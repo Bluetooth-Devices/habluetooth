@@ -37,6 +37,7 @@ from .const import (
     CALLBACK_TYPE,
     DEFAULT_ACTIVE_SCAN_DURATION,
     DEFAULT_ACTIVE_SCAN_INTERVAL,
+    DEFAULT_ON_DEMAND_SWEEP_DURATION,
     FAILED_ADAPTER_MAC,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     MIN_ACTIVE_SCAN_DURATION,
@@ -1129,6 +1130,33 @@ class BluetoothManager:
         request = ActiveScanRequest(normalized, scan_interval, scan_duration)
         self._auto_scheduler.add_request(request)
         return partial(self._auto_scheduler.remove_request, request)
+
+    async def async_request_sweep(self, duration: float | None = None) -> None:
+        """
+        Run an on-demand active sweep across every AUTO scanner.
+
+        Intended for HA config-flow discovery: an integration can
+        call this to actively probe for new devices on the bus
+        rather than wait for the 12 hour rediscovery sweep.
+        Awaits ``duration`` seconds so the caller can read newly
+        discovered advertisements via the manager's history APIs
+        after this returns.
+
+        Concurrent callers share an in-flight sweep; the bus never
+        runs two on-demand windows simultaneously. Scanners with a
+        connect in progress are skipped (adjacent scanners cover the
+        same devices); ACTIVE scanners are already actively scanning
+        and need no flip. ``duration`` defaults to
+        ``DEFAULT_ON_DEMAND_SWEEP_DURATION`` (10s) and is clamped to
+        ``[AUTO_WINDOW_MIN_DURATION, AUTO_WINDOW_MAX_DURATION]`` by
+        the scheduler.
+        """
+        if duration is None:
+            duration = DEFAULT_ON_DEMAND_SWEEP_DURATION
+        if not math.isfinite(duration) or duration <= 0.0:
+            msg = "duration must be a finite positive number"
+            raise ValueError(msg)
+        await self._auto_scheduler.async_request_sweep(duration)
 
     def async_release_connection_slot(self, device: BLEDevice) -> None:
         """Release a connection slot."""
