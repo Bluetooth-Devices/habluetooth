@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.5.0 (2026-05-23)
+
+### Features
+
+
+- Route active-window scans around a connecting scanner ([`2d1471d`](https://github.com/Bluetooth-Devices/habluetooth/commit/2d1471d297a395a44131495697df3d40ea12aa0f))
+
+
 ## v6.4.0 (2026-05-23)
 
 ### Features
