@@ -552,7 +552,7 @@ class BaseHaScanner:
             None,
         )
 
-    def _async_on_advertisement_internal(
+    def _async_on_advertisement_internal(  # noqa: C901
         self,
         address: _str,
         rssi: _int,

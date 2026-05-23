@@ -400,7 +400,7 @@ class HaScanner(BaseHaScanner):
         """
         return self._scan_mode_override or self.requested_mode
 
-    async def _async_start_attempt(self, attempt: int) -> bool:
+    async def _async_start_attempt(self, attempt: int) -> bool:  # noqa: C901
         """Start the scanner and handle errors."""
         assert (  # noqa: S101
             self._loop is not None

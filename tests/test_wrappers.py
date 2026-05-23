@@ -1831,15 +1831,15 @@ async def test_connection_path_scoring_with_slots_and_logging(
                 assert "(slots=1/3 free)" in line
                 assert "(score=-63.8)" in line
 
-                # Scanner 2 has RSSI -65 with 2 slots free, no penalty:
-                # score = -65
+                # Scanner 2 has RSSI -65 with 2 slots free, no penalty, so
+                # the score is just -65.
                 assert "Scanner 2" in line
                 assert "(slots=2/3 free)" in line
                 # Check for both -65 and -65.0
                 assert ("(score=-65)" in line) or ("(score=-65.0)" in line)
 
-                # Scanner 3 has RSSI -70 with all slots free, no penalty:
-                # score = -70
+                # Scanner 3 has RSSI -70 with all slots free, no penalty, so
+                # the score is just -70.
                 assert "Scanner 3" in line
                 assert "(slots=3/3 free)" in line
                 # Check for both -70 and -70.0
@@ -1972,7 +1972,7 @@ async def test_connection_path_scoring_no_slots_available(
 
 
 @pytest.mark.asyncio
-async def test_thundering_herd_connection_slots() -> None:
+async def test_thundering_herd_connection_slots() -> None:  # noqa: C901
     """
     Test thundering herd scenario with limited connection slots.
 
