@@ -899,8 +899,6 @@ def test_remote_scanner_type() -> None:
     class TestRemoteScanner(BaseHaRemoteScanner):
         """Test remote scanner implementation."""
 
-        pass
-
     scanner = TestRemoteScanner("test_source", "test_adapter")
     assert scanner.details.scanner_type is HaScannerType.REMOTE
 

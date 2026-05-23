@@ -140,6 +140,7 @@ select = [
     "NPY",  # numpy-specific rules
     "PERF", # Perflint
     "PGH",  # pygrep-hooks
+    "PIE",  # flake8-pie
     "PTH",  # flake8-use-pathlib
     "Q",    # flake8-quotes
     "RET",  # return
