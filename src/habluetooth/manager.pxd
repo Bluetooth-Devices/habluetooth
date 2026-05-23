@@ -116,3 +116,18 @@ cdef class BluetoothManager:
     cdef void _scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
 
     cpdef _async_describe_source(self, BluetoothServiceInfoBleak service_info)
+
+    cpdef void _unregister_source_callback(
+        self,
+        dict callbacks_dict,
+        object source,
+        object callback,
+    ) except *
+
+    cdef void _dispatch_source_callbacks(
+        self,
+        dict callbacks_dict,
+        object source,
+        object payload,
+        str label,
+    ) except *
