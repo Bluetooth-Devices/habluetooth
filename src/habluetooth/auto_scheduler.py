@@ -747,7 +747,9 @@ class AutoScanScheduler:
                 return True, None
             if mode is not BluetoothScanningMode.AUTO:
                 continue
-            rssi = device.advertisement.rssi or NO_RSSI_VALUE
+            rssi = device.advertisement.rssi
+            if rssi is None:
+                rssi = NO_RSSI_VALUE
             if best is None or rssi > best_rssi:
                 best_rssi = rssi
                 best = scanner

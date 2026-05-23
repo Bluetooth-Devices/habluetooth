@@ -4100,6 +4100,47 @@ async def test_worker_tick_failed_fallback_advances_entries_by_full_interval() -
 
 
 @pytest.mark.asyncio
+async def test_worker_tick_fallback_with_rssi_zero_is_strongest() -> None:
+    """
+    A fallback with ``rssi == 0`` beats a fallback with negative RSSI.
+
+    Pins the explicit ``rssi is None`` check (rather than ``rssi or
+    NO_RSSI_VALUE``): an RSSI of 0 is a valid very-strong signal and
+    must not be coerced to the missing-RSSI sentinel via ``0 or X``
+    falsiness.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:3D"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:3D:01", BluetoothScanningMode.AUTO)
+    fb_zero = _DiscoverableAutoScanner("AA:00:00:00:3D:02", BluetoothScanningMode.AUTO)
+    fb_neg = _DiscoverableAutoScanner("AA:00:00:00:3D:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_zero = manager.async_register_scanner(fb_zero)
+    c_neg = manager.async_register_scanner(fb_neg)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fb_zero.add_discovered(address, rssi=0)
+        fb_neg.add_discovered(address, rssi=-50)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        await _run_worker_tick(sched, owner.source)
+        # rssi=0 beats rssi=-50; the falsy-or pattern would have
+        # incorrectly normalised 0 to NO_RSSI_VALUE and lost.
+        assert fb_zero.active_window_calls == [6.0]
+        assert fb_neg.active_window_calls == []
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_zero()
+        c_neg()
+
+
+@pytest.mark.asyncio
 async def test_worker_tick_dispatch_short_window_still_resets_full_sweep() -> None:
     """
     A 5s delegated window resets the fallback's full 12h sweep cadence.
