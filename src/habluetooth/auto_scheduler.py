@@ -887,11 +887,11 @@ class AutoScanScheduler:
                     result,
                 )
 
-    async def async_request_sweep(self, duration: float) -> None:
+    async def async_request_active_scan(self, duration: float) -> None:
         """
         Flip every AUTO scanner to ACTIVE for ``duration`` seconds.
 
-        Public entry is ``BluetoothManager.async_request_sweep``
+        Public entry is ``BluetoothManager.async_request_active_scan``
         (validates finite/positive); this method clamps to
         ``[MIN, MAX]``.
 

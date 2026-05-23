@@ -1131,7 +1131,7 @@ class BluetoothManager:
         self._auto_scheduler.add_request(request)
         return partial(self._auto_scheduler.remove_request, request)
 
-    async def async_request_sweep(self, duration: float | None = None) -> None:
+    async def async_request_active_scan(self, duration: float | None = None) -> None:
         """
         Run an on-demand active sweep across every AUTO scanner.
 
@@ -1142,14 +1142,14 @@ class BluetoothManager:
         ``[AUTO_WINDOW_MIN_DURATION, AUTO_WINDOW_MAX_DURATION]`` by
         the scheduler. Concurrent callers dedupe to one bus-wide
         window (a longer request extends the in-flight one); see
-        ``AutoScanScheduler.async_request_sweep``.
+        ``AutoScanScheduler.async_request_active_scan``.
         """
         if duration is None:
             duration = DEFAULT_ON_DEMAND_SWEEP_DURATION
         if not math.isfinite(duration) or duration <= 0.0:
             msg = "duration must be a finite positive number"
             raise ValueError(msg)
-        await self._auto_scheduler.async_request_sweep(duration)
+        await self._auto_scheduler.async_request_active_scan(duration)
 
     def async_release_connection_slot(self, device: BLEDevice) -> None:
         """Release a connection slot."""
