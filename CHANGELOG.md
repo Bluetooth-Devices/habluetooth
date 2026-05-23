@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.6.0 (2026-05-23)
+
+### Features
+
+
+- Expose diagnostics for sweeps, windows, and watched devices ([`6a6e084`](https://github.com/Bluetooth-Devices/habluetooth/commit/6a6e08492954e7b624e435fb3cda96921b11f9a2))
+
+
 ## v6.5.0 (2026-05-23)
 
 ### Features
