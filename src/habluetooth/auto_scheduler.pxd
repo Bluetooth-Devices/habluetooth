@@ -8,6 +8,7 @@ cdef double _AUTO_REDISCOVERY_SWEEP_DURATION
 cdef double _AUTO_WINDOW_MAX_DURATION
 cdef double _AUTO_WINDOW_MIN_DURATION
 cdef double _AUTO_CONNECTING_DEFER
+cdef double _AUTO_COALESCE_LOOKAHEAD
 cdef int NO_RSSI_VALUE
 
 
@@ -59,6 +60,9 @@ cdef class _ScannerWorker:
         due=list,
         due_buckets=list,
         all_due=list,
+        threshold=double,
+        any_immediate=bint,
+        t=double,
     )
     cpdef tuple _collect_due_buckets(self, double now)
 

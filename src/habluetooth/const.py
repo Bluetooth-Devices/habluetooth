@@ -67,6 +67,15 @@ AUTO_REDISCOVERY_SWEEP_DURATION: Final = 15.0
 AUTO_WINDOW_MIN_DURATION: Final = 5.0
 AUTO_WINDOW_MAX_DURATION: Final = 30.0
 
+# When the worker ticks, also pull in per-device entries due within
+# this many seconds so devices registered at staggered times coalesce
+# into one window instead of triggering back-to-back active flips
+# seconds apart. Devices pulled forward are scanned slightly early
+# (at most AUTO_COALESCE_LOOKAHEAD seconds) on this tick; their
+# next_due is advanced from now, so they sync up with the rest of
+# the bucket on subsequent ticks.
+AUTO_COALESCE_LOOKAHEAD: Final = 15.0
+
 # Minimum values accepted by async_register_active_scan. Anything
 # shorter would just churn the radio without giving the device time to
 # respond on its scan response.

@@ -147,6 +147,7 @@ from typing import TYPE_CHECKING, Any
 from bleak_retry_connector import NO_RSSI_VALUE
 
 from .const import (
+    AUTO_COALESCE_LOOKAHEAD,
     AUTO_INITIAL_SWEEP_DELAY,
     AUTO_REDISCOVERY_INTERVAL,
     AUTO_REDISCOVERY_SWEEP_DURATION,
@@ -167,6 +168,7 @@ _AUTO_REDISCOVERY_INTERVAL = AUTO_REDISCOVERY_INTERVAL
 _AUTO_REDISCOVERY_SWEEP_DURATION = AUTO_REDISCOVERY_SWEEP_DURATION
 _AUTO_WINDOW_MAX_DURATION = AUTO_WINDOW_MAX_DURATION
 _AUTO_WINDOW_MIN_DURATION = AUTO_WINDOW_MIN_DURATION
+_AUTO_COALESCE_LOOKAHEAD = AUTO_COALESCE_LOOKAHEAD
 
 # Retry delay when the owner is mid-connect: short enough that we
 # retry shortly after a typical connect completes (~10s), long enough
@@ -360,14 +362,23 @@ class _ScannerWorker:
         look up an alternate scanner per address without re-walking
         ``_needs``. Prunes orphan ``_needs`` entries (history None) in
         passing.
+
+        Lookahead: entries due within ``_AUTO_COALESCE_LOOKAHEAD``
+        seconds of ``now`` are also collected and advanced so devices
+        registered at staggered times do not trigger back-to-back
+        active flips a few seconds apart. The bucket is only returned
+        if at least one entry is immediately due (``t <= now``); a
+        scanner that only has soon-due entries does not tick early.
         """
         source = self._scanner.source
         needs = self._scheduler._needs
         last_service_info = self._manager.async_last_service_info
+        threshold = now + _AUTO_COALESCE_LOOKAHEAD
         due_buckets: list[
             tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]
         ] = []
         all_due: list[ActiveScanRequest] = []
+        any_immediate = False
         for address in list(needs):
             entries = needs.get(address)
             if not entries:
@@ -378,11 +389,18 @@ class _ScannerWorker:
                 continue
             if history.source != source:
                 continue
-            due = [r for r, t in entries.items() if t <= now]
+            due = []
+            for r, t in entries.items():
+                if t <= threshold:
+                    due.append(r)
+                    if t <= now:
+                        any_immediate = True
             if not due:
                 continue
             due_buckets.append((address, entries, due))
             all_due.extend(due)
+        if not any_immediate:
+            return [], []
         return due_buckets, all_due
 
     def _advance_due(

@@ -206,6 +206,95 @@ async def test_worker_tick_advances_by_scan_interval_from_window_start() -> None
 
 
 @pytest.mark.asyncio
+async def test_worker_tick_coalesces_near_future_due_entries() -> None:
+    """
+    Entries due within AUTO_COALESCE_LOOKAHEAD seconds ride the current window.
+
+    Without lookahead, two devices owned by the same scanner with
+    next_due staggered by ~10s (typical of integrations registered a
+    few seconds apart) trigger back-to-back radio flips: the first
+    tick fires for device A, returns, the worker re-ticks immediately
+    because B's next_due is now in the past, and the radio cycles
+    active->passive->active within milliseconds. With lookahead, B's
+    near-future entry is pulled into A's bucket and both advance to
+    now + scan_interval, syncing them up permanently after the shift.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_a = "11:22:33:44:55:01"
+    addr_b = "11:22:33:44:55:02"
+    cancel_a = manager.async_register_active_scan(
+        addr_a, scan_interval=300.0, scan_duration=10.0
+    )
+    cancel_b = manager.async_register_active_scan(
+        addr_b, scan_interval=300.0, scan_duration=10.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, addr_a)
+        _inject(scanner, addr_b)
+        # A is due now; B is due 10s from now (within the 15s
+        # lookahead). One tick should serve both.
+        now = loop.time()
+        entries_a = sched._needs[addr_a]
+        entries_b = sched._needs[addr_b]
+        for req in entries_a:
+            entries_a[req] = now - 1.0
+        for req in entries_b:
+            entries_b[req] = now + 10.0
+        await _run_worker_tick(sched, scanner.source)
+        # One window covers both — not two back-to-back.
+        assert scanner.active_window_calls == [10.0]
+        # Both advanced from now (~now + 300), so they coalesce again
+        # next tick rather than staying 10s apart forever.
+        post_tick_now = loop.time()
+        a_next = next(iter(entries_a.values()))
+        b_next = next(iter(entries_b.values()))
+        assert a_next == pytest.approx(post_tick_now + 300.0, abs=1.0)
+        assert b_next == pytest.approx(post_tick_now + 300.0, abs=1.0)
+        assert abs(a_next - b_next) < 0.5
+    finally:
+        cancel_a()
+        cancel_b()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_does_not_fire_when_only_soon_due_no_immediate() -> None:
+    """
+    Soon-due entries alone do not trigger an early tick.
+
+    The lookahead pulls in near-future entries when there is already
+    an immediately-due entry to scan for; it must not fire a fresh
+    window early when nothing is immediately due (otherwise a single
+    registered device would trigger continuously).
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=300.0, scan_duration=10.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        entries = sched._needs[address]
+        # Set next_due 5s in the future — within the lookahead but
+        # not immediately due.
+        for req in entries:
+            entries[req] = loop.time() + 5.0
+        await _run_worker_tick(sched, scanner.source)
+        assert scanner.active_window_calls == []
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_worker_tick_coalesces_overlapping_requests() -> None:
     """Multiple requests for the same address coalesce on max scan_duration."""
     manager = get_manager()
