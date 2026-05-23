@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Generator
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager, suppress
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -133,6 +133,32 @@ def _generate_ble_device_and_adv_data(
         ),
         generate_advertisement_data(rssi=rssi),
     )
+
+
+def _make_detection_recorder() -> tuple[
+    list[tuple[BLEDevice, AdvertisementData]],
+    Callable[[BLEDevice, AdvertisementData], None],
+]:
+    """Return ``(recorded, callback)``; callback appends ``(device, adv)``."""
+    recorded: list[tuple[BLEDevice, AdvertisementData]] = []
+
+    def _record(device: BLEDevice, advertisement_data: AdvertisementData) -> None:
+        recorded.append((device, advertisement_data))
+
+    return recorded, _record
+
+
+def _make_async_detection_recorder() -> tuple[
+    list[tuple[BLEDevice, AdvertisementData]],
+    Callable[[BLEDevice, AdvertisementData], Awaitable[None]],
+]:
+    """Async variant of :func:`_make_detection_recorder`."""
+    recorded: list[tuple[BLEDevice, AdvertisementData]] = []
+
+    async def _record(device: BLEDevice, advertisement_data: AdvertisementData) -> None:
+        recorded.append((device, advertisement_data))
+
+    return recorded, _record
 
 
 @pytest.fixture(name="install_bleak_catcher")
@@ -806,13 +832,7 @@ async def test_wrapped_instance_with_filter(
     register_hci0_scanner: None,
 ) -> None:
     """Test wrapped instance with a filter as if it was normal BleakScanner."""
-    detected = []
-
-    def _device_detected(
-        device: BLEDevice, advertisement_data: AdvertisementData
-    ) -> None:
-        """Handle a detected device."""
-        detected.append((device, advertisement_data))
+    detected, _device_detected = _make_detection_recorder()
 
     switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand")
     switchbot_adv = generate_advertisement_data(
@@ -864,13 +884,7 @@ async def test_register_detection_callback_deprecated(
     register_hci0_scanner: None,
 ) -> None:
     """Test the deprecated register_detection_callback still works and warns."""
-    detected: list[tuple[BLEDevice, AdvertisementData]] = []
-
-    def _device_detected(
-        device: BLEDevice, advertisement_data: AdvertisementData
-    ) -> None:
-        """Handle a detected device."""
-        detected.append((device, advertisement_data))
+    detected, _device_detected = _make_detection_recorder()
 
     switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand")
     switchbot_adv = generate_advertisement_data(
@@ -904,13 +918,7 @@ async def test_wrapped_instance_with_service_uuids(
     register_hci0_scanner: None,
 ) -> None:
     """Test wrapped instance with a service_uuids list as normal BleakScanner."""
-    detected = []
-
-    def _device_detected(
-        device: BLEDevice, advertisement_data: AdvertisementData
-    ) -> None:
-        """Handle a detected device."""
-        detected.append((device, advertisement_data))
+    detected, _device_detected = _make_detection_recorder()
 
     switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand")
     switchbot_adv = generate_advertisement_data(
@@ -957,13 +965,7 @@ async def test_wrapped_instance_with_service_uuids_with_coro_callback(
 
     Verify that coro callbacks are supported.
     """
-    detected = []
-
-    async def _device_detected(
-        device: BLEDevice, advertisement_data: AdvertisementData
-    ) -> None:
-        """Handle a detected device."""
-        detected.append((device, advertisement_data))
+    detected, _device_detected = _make_async_detection_recorder()
 
     switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand")
     switchbot_adv = generate_advertisement_data(
@@ -1043,13 +1045,7 @@ async def test_wrapped_instance_changes_uuids(
     register_hci0_scanner: None,
 ) -> None:
     """Test consumers can use the wrapped instance can change the uuids later."""
-    detected = []
-
-    def _device_detected(
-        device: BLEDevice, advertisement_data: AdvertisementData
-    ) -> None:
-        """Handle a detected device."""
-        detected.append((device, advertisement_data))
+    detected, _device_detected = _make_detection_recorder()
 
     switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand")
     switchbot_adv = generate_advertisement_data(
@@ -1091,13 +1087,7 @@ async def test_wrapped_instance_changes_filters(
     register_hci0_scanner: None,
 ) -> None:
     """Test consumers can use the wrapped instance can change the filter later."""
-    detected = []
-
-    def _device_detected(
-        device: BLEDevice, advertisement_data: AdvertisementData
-    ) -> None:
-        """Handle a detected device."""
-        detected.append((device, advertisement_data))
+    detected, _device_detected = _make_detection_recorder()
 
     switchbot_device = generate_ble_device("44:44:33:11:23:42", "wohand")
     switchbot_adv = generate_advertisement_data(
