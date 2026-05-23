@@ -5008,3 +5008,229 @@ async def test_async_request_active_scan_leader_cancellation_releases_joiners() 
             assert sched._on_demand_sweep_future is None
     finally:
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_declined_does_not_advance_sweep_floor() -> (
+    None
+):
+    """
+    A scanner that declines the flip (returns False) leaves the sweep floor alone.
+
+    The radio never went ACTIVE for a declined flip, so
+    ``_sweep_last_completed`` must stay at its prior value; the
+    worker's own periodic sweep then fires later as a retry rather
+    than being suppressed for the full 12 h rediscovery cadence on
+    a scanner that did not actually flip.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    scanner._return_value = False
+    register_cancel = manager.async_register_scanner(scanner)
+    worker = sched._workers[scanner.source]
+    # Backdate so an erroneous bump would be visible.
+    original = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+    worker._sweep_last_completed = original
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_active_scan(duration=5.0)
+        assert scanner.active_window_calls == [5.0]
+        assert worker._sweep_last_completed == original
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_exception_does_not_advance_sweep_floor() -> (
+    None
+):
+    """A flip that raises also leaves the sweep floor alone for that scanner."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+
+    class _FailingScanner(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            msg = "boom"
+            raise RuntimeError(msg)
+
+    bad = _FailingScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    good = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+    c_bad = manager.async_register_scanner(bad)
+    c_good = manager.async_register_scanner(good)
+    bad_worker = sched._workers[bad.source]
+    good_worker = sched._workers[good.source]
+    original = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+    bad_worker._sweep_last_completed = original
+    good_worker._sweep_last_completed = original
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_active_scan(duration=5.0)
+        # bad raised; floor stays put. good returned True; floor advances.
+        assert bad_worker._sweep_last_completed == original
+        assert good_worker._sweep_last_completed > original
+    finally:
+        c_bad()
+        c_good()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_does_not_shrink_existing_window_end() -> None:
+    """
+    A pre-existing longer ``_window_end`` is not shrunk by a new flip.
+
+    Covers the false branch of ``worker._window_end < window_end``
+    in the pre-await suppression bump.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    worker = sched._workers[scanner.source]
+    pre_existing = loop.time() + 9999.0
+    worker._window_end = pre_existing
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_active_scan(duration=5.0)
+        assert worker._window_end == pre_existing
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_does_not_move_sweep_floor_backwards() -> None:
+    """
+    A pre-existing later ``_sweep_last_completed`` is not moved backwards.
+
+    Covers the false branch of ``worker._sweep_last_completed < now``
+    in the success path.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    worker = sched._workers[scanner.source]
+    pre_existing = loop.time() + 9999.0
+    worker._sweep_last_completed = pre_existing
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_active_scan(duration=5.0)
+        assert worker._sweep_last_completed == pre_existing
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_stop_resolves_in_flight_on_demand_sweep_future() -> None:
+    """
+    ``stop()`` called during a sweep resolves the future and clears state.
+
+    The leader task is a caller, not a worker, so ``worker.stop()``
+    cannot reach it; without explicit cleanup any joiner parked on
+    ``asyncio.shield`` of the future would never resolve. Also
+    confirms the leader's own ``finally`` runs without raising
+    ``InvalidStateError`` after ``stop()`` resolved the future.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    worker = sched._workers[scanner.source]
+    worker.stop()
+    await asyncio.sleep(0)
+    try:
+        scanner._block_event = asyncio.Event()
+        leader = asyncio.create_task(manager.async_request_active_scan(duration=5.0))
+        joiner = asyncio.create_task(manager.async_request_active_scan(duration=5.0))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert sched._on_demand_sweep_future is not None
+        assert not joiner.done()
+        sched.stop()
+        # Future resolved, state cleared, joiner wakes up to None.
+        assert manager._auto_scheduler._on_demand_sweep_future is None
+        assert manager._auto_scheduler._on_demand_sweep_end == 0.0
+        await joiner
+        assert joiner.result() is None
+        # Release the leader so its finally runs; the done() guard
+        # absorbs ``stop()``'s already-resolved future.
+        scanner._block_event.set()
+        await asyncio.wait_for(leader, timeout=1.0)
+        assert leader.result() is None
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_stop_is_safe_without_in_flight_on_demand_sweep() -> None:
+    """``stop()`` with no active sweep is a no-op for the sweep state."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        assert sched._on_demand_sweep_future is None
+        sched.stop()
+        assert sched._on_demand_sweep_future is None
+        assert sched._on_demand_sweep_end == 0.0
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_orphan_leader_does_not_clobber_fresh_sweep_state() -> None:
+    """
+    A leader orphaned by ``stop()`` + ``start()`` does not clear a fresh future.
+
+    Sequence: leader L1 runs, ``stop()`` resolves L1's future,
+    ``start()`` re-arms the scheduler, fresh sweep state is
+    installed as if a new leader L2 had won the next dedup check,
+    and only then does L1's ``finally`` execute. L1 must observe
+    ``_on_demand_sweep_future is not future`` and leave L2's state
+    untouched.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    sched._workers[scanner.source].stop()
+    await asyncio.sleep(0)
+    try:
+        # Start L1 and block it inside its flip await.
+        scanner._block_event = asyncio.Event()
+        l1 = asyncio.create_task(manager.async_request_active_scan(duration=5.0))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert sched._on_demand_sweep_future is not None
+        # Tear down and re-arm against the same loop, then install
+        # fresh sweep state as if L2 had won the next dedup check.
+        # Stop the freshly-spawned worker so its periodic tick does
+        # not interfere with the assertion below.
+        sched.stop()
+        sched.start(loop)
+        sched._workers[scanner.source].stop()
+        await asyncio.sleep(0)
+        fresh_future: asyncio.Future[None] = loop.create_future()
+        sched._on_demand_sweep_future = fresh_future
+        # Past-end so L1's sleep loop exits immediately and runs
+        # its finally; the fresh state below is what we check.
+        sched._on_demand_sweep_end = loop.time() - 1.0
+        # Release L1 so its finally runs; it must leave the fresh
+        # future alone (identity check on ``_on_demand_sweep_future``)
+        # and must not call ``set_result`` on the already-done L1
+        # future (the ``done()`` guard).
+        scanner._block_event.set()
+        await asyncio.wait_for(l1, timeout=1.0)
+        assert sched._on_demand_sweep_future is fresh_future
+        assert not fresh_future.done()
+    finally:
+        if not fresh_future.done():
+            fresh_future.set_result(None)
+        sched._on_demand_sweep_future = None
+        sched._on_demand_sweep_end = 0.0
+        register_cancel()
