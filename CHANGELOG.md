@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.6.1 (2026-05-23)
+
+### Bug fixes
+
+
+- Shorten initial sweep delay from 10m to 4m ([`0b24ff7`](https://github.com/Bluetooth-Devices/habluetooth/commit/0b24ff7fa1577ed0c29b4d91734257cd5d45d9dd))
+
+
 ## v6.6.0 (2026-05-23)
 
 ### Features
