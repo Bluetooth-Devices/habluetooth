@@ -475,7 +475,7 @@ async def test_recovery_from_dbus_restart() -> None:
         with patch_bluetooth_time(
             start_time_monotonic,
         ):
-            _callback(  # type: ignore
+            _callback(  # type: ignore[misc]
                 generate_ble_device("44:44:33:11:23:42", "any_name"),
                 generate_advertisement_data(local_name="any_name"),
             )

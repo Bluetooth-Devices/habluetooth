@@ -139,6 +139,7 @@ select = [
     "INP",  # flake8-no-pep420
     "NPY",  # numpy-specific rules
     "PERF", # Perflint
+    "PGH",  # pygrep-hooks
     "PTH",  # flake8-use-pathlib
     "Q",    # flake8-quotes
     "RET",  # return
