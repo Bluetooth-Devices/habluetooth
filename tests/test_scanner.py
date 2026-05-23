@@ -4,7 +4,6 @@ import asyncio
 import logging
 import platform
 import time
-import types
 from collections.abc import Generator
 from datetime import timedelta
 from typing import Any
@@ -40,9 +39,11 @@ from habluetooth.scanner import (
 )
 
 from . import (
+    MockBleakScanner,
     async_fire_time_changed,
     generate_advertisement_data,
     generate_ble_device,
+    patch_bleak_scanner_factory,
     patch_bluetooth_time,
     utcnow,
 )
@@ -380,35 +381,28 @@ async def test_adapter_needs_reset_at_start(
     _callback = None
     mock_discovered: list[Any] = []
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self, *args, **kwargs):
-            """Mock Start."""
+    class _DBusRecoveryScanner(MockBleakScanner):
+        async def start(self, *args: object, **kwargs: object) -> None:
             nonlocal called_start
             called_start += 1
             if called_start < 3:
                 raise BleakError(error)
 
-        async def stop(self, *args, **kwargs):
-            """Mock Start."""
+        async def stop(self, *args: object, **kwargs: object) -> None:
             nonlocal called_stop
             called_stop += 1
 
         @property
         def discovered_devices(self):
-            """Mock discovered_devices."""
-            nonlocal mock_discovered
             return mock_discovered
 
         def register_detection_callback(
             self, callback: AdvertisementDataCallback
         ) -> None:
-            """Mock Register Detection Callback."""
             nonlocal _callback
             _callback = callback
 
-    mock_scanner = MockBleakScanner()
+    mock_scanner = _DBusRecoveryScanner()
 
     with (
         patch("habluetooth.scanner.OriginalBleakScanner", return_value=mock_scanner),
@@ -433,32 +427,32 @@ async def test_recovery_from_dbus_restart() -> None:
     _callback = None
     mock_discovered: list[Any] = []
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        def __init__(self, detection_callback, *args, **kwargs):
+    class _CallbackCapturingScanner(MockBleakScanner):
+        def __init__(
+            self,
+            detection_callback: AdvertisementDataCallback,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            super().__init__()
             nonlocal _callback
             _callback = detection_callback
 
-        async def start(self, *args, **kwargs):
-            """Mock Start."""
+        async def start(self, *args: object, **kwargs: object) -> None:
             nonlocal called_start
             called_start += 1
 
-        async def stop(self, *args, **kwargs):
-            """Mock Start."""
+        async def stop(self, *args: object, **kwargs: object) -> None:
             nonlocal called_stop
             called_stop += 1
 
         @property
         def discovered_devices(self):
-            """Mock discovered_devices."""
-            nonlocal mock_discovered
             return mock_discovered
 
     with patch(
         "habluetooth.scanner.OriginalBleakScanner",
-        MockBleakScanner,
+        _CallbackCapturingScanner,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
@@ -517,33 +511,26 @@ async def test_adapter_recovery() -> None:
     _callback = None
     mock_discovered: list[Any] = []
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self, *args, **kwargs):
-            """Mock Start."""
+    class _AdapterRecoveryScanner(MockBleakScanner):
+        async def start(self, *args: object, **kwargs: object) -> None:
             nonlocal called_start
             called_start += 1
 
-        async def stop(self, *args, **kwargs):
-            """Mock Start."""
+        async def stop(self, *args: object, **kwargs: object) -> None:
             nonlocal called_stop
             called_stop += 1
 
         @property
         def discovered_devices(self):
-            """Mock discovered_devices."""
-            nonlocal mock_discovered
             return mock_discovered
 
         def register_detection_callback(
             self, callback: AdvertisementDataCallback
         ) -> None:
-            """Mock Register Detection Callback."""
             nonlocal _callback
             _callback = callback
 
-    mock_scanner = MockBleakScanner()
+    mock_scanner = _AdapterRecoveryScanner()
     start_time_monotonic = time.monotonic()
 
     with (
@@ -620,37 +607,30 @@ async def test_adapter_scanner_fails_to_start_first_time() -> None:
     _callback = None
     mock_discovered: list[Any] = []
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self, *args, **kwargs):
-            """Mock Start."""
+    class _RestartFailScanner(MockBleakScanner):
+        async def start(self, *args: object, **kwargs: object) -> None:
             nonlocal called_start
             called_start += 1
             if called_start == 1:
-                return  # Start ok the first time
+                return
             if called_start < 4:
                 raise BleakError("Failed to start")
 
-        async def stop(self, *args, **kwargs):
-            """Mock Start."""
+        async def stop(self, *args: object, **kwargs: object) -> None:
             nonlocal called_stop
             called_stop += 1
 
         @property
         def discovered_devices(self):
-            """Mock discovered_devices."""
-            nonlocal mock_discovered
             return mock_discovered
 
         def register_detection_callback(
             self, callback: AdvertisementDataCallback
         ) -> None:
-            """Mock Register Detection Callback."""
             nonlocal _callback
             _callback = callback
 
-    mock_scanner = MockBleakScanner()
+    mock_scanner = _RestartFailScanner()
     start_time_monotonic = time.monotonic()
 
     with (
@@ -738,11 +718,8 @@ async def test_adapter_fails_to_start_and_takes_a_bit_to_init(
     _callback = None
     mock_discovered: list[Any] = []
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self, *args, **kwargs):
-            """Mock Start."""
+    class _DBusInProgressScanner(MockBleakScanner):
+        async def start(self, *args: object, **kwargs: object) -> None:
             nonlocal called_start
             called_start += 1
             if called_start == 1:
@@ -752,25 +729,21 @@ async def test_adapter_fails_to_start_and_takes_a_bit_to_init(
             if called_start == 3:
                 raise BleakError("org.bluez.Error.InProgress")
 
-        async def stop(self, *args, **kwargs):
-            """Mock Start."""
+        async def stop(self, *args: object, **kwargs: object) -> None:
             nonlocal called_stop
             called_stop += 1
 
         @property
         def discovered_devices(self):
-            """Mock discovered_devices."""
-            nonlocal mock_discovered
             return mock_discovered
 
         def register_detection_callback(
             self, callback: AdvertisementDataCallback
         ) -> None:
-            """Mock Register Detection Callback."""
             nonlocal _callback
             _callback = callback
 
-    mock_scanner = MockBleakScanner()
+    mock_scanner = _DBusInProgressScanner()
     start_time_monotonic = time.monotonic()
 
     with (
@@ -812,31 +785,15 @@ async def test_restart_takes_longer_than_watchdog_time(
     release_start_event = asyncio.Event()
     called_start = 0
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self, *args, **kwargs):
-            """Mock Start."""
+    class _ReleaseGatedScanner(MockBleakScanner):
+        async def start(self, *args: object, **kwargs: object) -> None:
             nonlocal called_start
             called_start += 1
             if called_start == 1:
                 return
             await release_start_event.wait()
 
-        async def stop(self, *args, **kwargs):
-            """Mock Start."""
-
-        @property
-        def discovered_devices(self):
-            """Mock discovered_devices."""
-            return []
-
-        def register_detection_callback(
-            self, callback: AdvertisementDataCallback
-        ) -> None:
-            """Mock Register Detection Callback."""
-
-    mock_scanner = MockBleakScanner()
+    mock_scanner = _ReleaseGatedScanner()
     start_time_monotonic = time.monotonic()
 
     with (
@@ -882,26 +839,15 @@ async def test_setup_and_stop_macos() -> None:
     """Test we enable use_bdaddr on MacOS."""
     init_kwargs = None
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        def __init__(self, *args, **kwargs):
-            """Init the scanner."""
+    class _KwargsCapturingScanner(MockBleakScanner):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__()
             nonlocal init_kwargs
             init_kwargs = kwargs
 
-        async def start(self, *args, **kwargs):
-            """Start the scanner."""
-
-        async def stop(self, *args, **kwargs):
-            """Stop the scanner."""
-
-        def register_detection_callback(self, *args, **kwargs):
-            """Register a callback."""
-
     with patch(
         "habluetooth.scanner.OriginalBleakScanner",
-        MockBleakScanner,
+        _KwargsCapturingScanner,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
@@ -925,11 +871,8 @@ async def test_adapter_init_fails_fallback_to_passive(
     _callback = None
     mock_discovered: list[Any] = []
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self, *args, **kwargs):
-            """Mock Start."""
+    class _InProgressFatalScanner(MockBleakScanner):
+        async def start(self, *args: object, **kwargs: object) -> None:
             nonlocal called_start
             called_start += 1
             if called_start == 1:
@@ -939,30 +882,21 @@ async def test_adapter_init_fails_fallback_to_passive(
             if called_start == 3:
                 raise BleakError("org.bluez.Error.InProgress")
 
-        async def stop(self, *args, **kwargs):
-            """Mock Start."""
+        async def stop(self, *args: object, **kwargs: object) -> None:
             nonlocal called_stop
             called_stop += 1
 
         @property
         def discovered_devices(self):
-            """Mock discovered_devices."""
-            nonlocal mock_discovered
             return mock_discovered
 
         def register_detection_callback(
             self, callback: AdvertisementDataCallback
         ) -> None:
-            """Mock Register Detection Callback."""
             nonlocal _callback
             _callback = callback
 
-        @property
-        def discovered_devices_and_advertisement_data(self) -> dict[str, Any]:
-            """Mock discovered_devices."""
-            return {}
-
-    mock_scanner = MockBleakScanner()
+    mock_scanner = _InProgressFatalScanner()
     start_time_monotonic = time.monotonic()
 
     with (
@@ -1782,26 +1716,6 @@ async def test_async_request_active_window_rejects_invalid_duration(
 @pytest.mark.asyncio
 async def test_async_request_active_window_restarts_scanner_in_active_mode() -> None:
     """An AUTO scanner flips to ACTIVE and schedules a return to the prior mode."""
-
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        def __init__(self):
-            self.start_modes: list[str] = []
-
-        async def start(self):
-            self.start_modes.append("started")
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     starts: list[str] = []
 
     def _factory(*_args, **kwargs):
@@ -1857,23 +1771,6 @@ async def test_active_window_restart_does_not_log_fallback_warning(
     restart. The check now uses effective_mode (the mode we tried to
     start in) so it only triggers on a real fallback.
     """
-
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     with patch(
         "habluetooth.scanner.OriginalBleakScanner",
         side_effect=lambda *_a, **_kw: MockBleakScanner(),
@@ -1905,26 +1802,11 @@ async def test_async_toggle_active_window_mode_returns_false_when_no_scanner() -
 async def test_async_toggle_active_window_mode_returns_false_on_stop_error() -> None:
     """The toggle helper logs and bails when scanner.stop() raises."""
 
-    class StopErrorMockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
-            pass
-
-        async def stop(self):
+    class StopErrorMockBleakScanner(MockBleakScanner):
+        async def stop(self) -> None:
             raise BleakError("simulated stop failure")
 
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_, **__: StopErrorMockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(StopErrorMockBleakScanner):
         scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner_obj.async_setup()
         await scanner_obj.async_start()
@@ -1950,10 +1832,8 @@ async def test_async_toggle_active_window_mode_marks_not_scanning_on_start_error
     """
     starts = 0
 
-    class StartErrorMockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
+    class StartErrorMockBleakScanner(MockBleakScanner):
+        async def start(self) -> None:
             nonlocal starts
             starts += 1
             # First start (initial async_start) succeeds; the
@@ -1961,20 +1841,7 @@ async def test_async_toggle_active_window_mode_marks_not_scanning_on_start_error
             if starts > 1:
                 raise BleakError("simulated start failure")
 
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_, **__: StartErrorMockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(StartErrorMockBleakScanner):
         scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner_obj.async_setup()
         await scanner_obj.async_start()
@@ -2009,26 +1876,11 @@ async def test_async_toggle_active_window_mode_attribute_error_marks_not_scannin
         def _scanning_mode(self, value: str) -> None:
             raise AttributeError("simulated bleak refactor — attribute removed")
 
-    class AttrErrorMockBleakScanner:
-        _backend = MockBackend()
+    class AttrErrorMockBleakScanner(MockBleakScanner):
+        def __init__(self) -> None:
+            self._backend = MockBackend()
 
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_, **__: AttrErrorMockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(AttrErrorMockBleakScanner):
         scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner_obj.async_setup()
         await scanner_obj.async_start()
@@ -2053,23 +1905,6 @@ async def test_arm_active_window_timer_cancels_existing_handle() -> None:
     isn't reachable through normal callers, but the contract on
     _arm_active_window_timer must defend against it.
     """
-
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     with patch(
         "habluetooth.scanner.OriginalBleakScanner",
         side_effect=lambda *_a, **_kw: MockBleakScanner(),
@@ -2095,23 +1930,6 @@ async def test_arm_active_window_timer_cancels_existing_handle() -> None:
 @pytest.mark.asyncio
 async def test_async_request_active_window_extends_existing_window() -> None:
     """A second request inside an active window extends the timer in place."""
-
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     starts: list[str] = []
 
     def _factory(*_args, **kwargs):
@@ -2166,31 +1984,17 @@ async def test_async_request_active_window_end_time_matches_real_timer() -> None
     restart_started = asyncio.Event()
     gate = asyncio.Event()
 
-    class GatedMockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
+    class GatedMockBleakScanner(MockBleakScanner):
         _first_start_done = False
 
-        async def start(self):
+        async def start(self) -> None:
             if not type(self)._first_start_done:
                 type(self)._first_start_done = True
                 return
             restart_started.set()
             await gate.wait()
 
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *a, **k: GatedMockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(GatedMockBleakScanner):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         await scanner.async_start()
@@ -2241,23 +2045,6 @@ async def test_async_request_active_window_skips_restart_if_still_active() -> No
     before the bg task runs reuses the in-flight ACTIVE mode and just
     arms a new timer.
     """
-
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     starts: list[str] = []
 
     def _factory(*_args, **kwargs):
@@ -2312,23 +2099,6 @@ async def test_async_request_active_window_still_active_does_not_shrink() -> Non
     ``loop.time() + duration > _active_window_end`` check the
     lockless fast-path uses.
     """
-
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     with patch(
         "habluetooth.scanner.OriginalBleakScanner",
         side_effect=lambda *_, **__: MockBleakScanner(),
@@ -2361,23 +2131,6 @@ async def test_async_request_active_window_still_active_does_not_shrink() -> Non
 @pytest.mark.asyncio
 async def test_async_stop_clears_active_window_state() -> None:
     """Stopping mid-window cancels the timer and clears the override."""
-
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     with patch(
         "habluetooth.scanner.OriginalBleakScanner",
         side_effect=lambda *_, **__: MockBleakScanner(),
@@ -2400,29 +2153,14 @@ async def test_async_request_active_window_recovers_on_start_failure() -> None:
     call_count = 0
     fail_until = 0
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
+    class _CountingFailScanner(MockBleakScanner):
+        async def start(self) -> None:
             nonlocal call_count
             call_count += 1
             if call_count <= fail_until:
                 raise BleakError("simulated start failure")
 
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_, **__: MockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(_CountingFailScanner):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         await scanner.async_start()
@@ -2454,10 +2192,8 @@ async def test_async_request_active_window_clears_override_on_unexpected_error()
     """
     start_count = 0
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
+    class _UnexpectedErrorAfterFirstScanner(MockBleakScanner):
+        async def start(self) -> None:
             nonlocal start_count
             start_count += 1
             # First start (initial async_start) succeeds; second start
@@ -2467,20 +2203,7 @@ async def test_async_request_active_window_clears_override_on_unexpected_error()
             if start_count > 1:
                 raise RuntimeError("simulated unexpected error")
 
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_, **__: MockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(_UnexpectedErrorAfterFirstScanner):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         await scanner.async_start()
@@ -2538,23 +2261,6 @@ async def test_base_scanner_default_active_window_is_noop(
 @pytest.mark.asyncio
 async def test_async_end_active_window_defers_to_new_window() -> None:
     """If a new window armed the timer, the end-window task returns early."""
-
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     with patch(
         "habluetooth.scanner.OriginalBleakScanner",
         side_effect=lambda *_, **__: MockBleakScanner(),
@@ -2576,23 +2282,6 @@ async def test_async_end_active_window_defers_to_new_window() -> None:
 @pytest.mark.asyncio
 async def test_async_end_active_window_skips_when_not_scanning() -> None:
     """If the scanner was stopped during the window the restart is skipped."""
-
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     with patch(
         "habluetooth.scanner.OriginalBleakScanner",
         side_effect=lambda *_, **__: MockBleakScanner(),
@@ -2618,10 +2307,8 @@ async def test_async_request_active_window_passive_fallback_on_linux() -> None:
     """If the swap restart falls back to PASSIVE on Linux, request returns False."""
     starts = 0
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
+    class _PassiveFallbackScanner(MockBleakScanner):
+        async def start(self) -> None:
             nonlocal starts
             starts += 1
             # Fail the first three attempts so the 4th-attempt PASSIVE
@@ -2629,22 +2316,9 @@ async def test_async_request_active_window_passive_fallback_on_linux() -> None:
             if 2 <= starts <= 4:
                 raise BleakError("simulated active failure")
 
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     with (
         patch("habluetooth.scanner.IS_LINUX", True),
-        patch(
-            "habluetooth.scanner.OriginalBleakScanner",
-            side_effect=lambda *_, **__: MockBleakScanner(),
-        ),
+        patch_bleak_scanner_factory(_PassiveFallbackScanner),
         patch("habluetooth.scanner.async_reset_adapter", AsyncMock()),
         patch("habluetooth.scanner.ADAPTER_INIT_TIME", 0),
     ):
@@ -2668,29 +2342,14 @@ async def test_async_end_active_window_handles_start_error(
     starts = 0
     fail_until = 0
 
-    class MockBleakScanner:
-        _backend = types.SimpleNamespace(_scanning_mode="passive")
-
-        async def start(self):
+    class _FailUntilThresholdScanner(MockBleakScanner):
+        async def start(self) -> None:
             nonlocal starts
             starts += 1
             if starts <= fail_until:
                 raise BleakError("simulated end-window failure")
 
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_, **__: MockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(_FailUntilThresholdScanner):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         await scanner.async_start()
@@ -2800,26 +2459,16 @@ async def test_discovered_properties_delegate_when_scanner_attached() -> None:
     device = generate_ble_device("AA:BB:CC:DD:EE:01", "x")
     adv = generate_advertisement_data(local_name="x")
 
-    class MockBleakScanner:
-        def __init__(self) -> None:
-            self.discovered_devices = [device]
-            self.discovered_devices_and_advertisement_data = {
-                device.address: (device, adv),
-            }
+    class _DiscoveredScanner(MockBleakScanner):
+        @property
+        def discovered_devices(self):
+            return [device]
 
-        async def start(self):
-            pass
+        @property
+        def discovered_devices_and_advertisement_data(self):
+            return {device.address: (device, adv)}
 
-        async def stop(self):
-            pass
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_a, **_kw: MockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(_DiscoveredScanner):
         ha_scanner = HaScanner(
             BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:FF"
         )
@@ -2895,24 +2544,11 @@ async def test_start_attempt_timeout_resets_then_raises_on_exhaustion(
         async def _async_reset_adapter(self, gone_silent: bool) -> None:
             reset_calls.append(gone_silent)
 
-    class TimeoutMockBleakScanner:
-        async def start(self):
+    class TimeoutMockBleakScanner(MockBleakScanner):
+        async def start(self) -> None:
             raise TimeoutError("simulated start timeout")
 
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_a, **_kw: TimeoutMockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(TimeoutMockBleakScanner):
         ha_scanner = _RecordingResetScanner(
             BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:FF"
         )
@@ -2974,25 +2610,7 @@ def force_non_linux_non_macos_scanner_mode() -> Generator[None, None, None]:
 @pytest.mark.asyncio
 async def test_async_request_active_window_restart_path_happy() -> None:
     """Non-Linux active-window entry: full stop+restart leaves scanner in ACTIVE."""
-
-    class MockBleakScanner:
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_a, **_kw: MockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(MockBleakScanner):
         ha_scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:F1")
         ha_scanner.async_setup()
         await ha_scanner.async_start()
@@ -3017,8 +2635,8 @@ async def test_async_request_active_window_restart_path_scanner_start_error() ->
     """
     starts = 0
 
-    class AlwaysFailAfterFirstMockBleakScanner:
-        async def start(self):
+    class AlwaysFailAfterFirstMockBleakScanner(MockBleakScanner):
+        async def start(self) -> None:
             nonlocal starts
             starts += 1
             # First start (initial async_start) succeeds; every
@@ -3028,24 +2646,11 @@ async def test_async_request_active_window_restart_path_scanner_start_error() ->
             if starts > 1:
                 raise BleakError("simulated start failure")
 
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
     class _NoResetScanner(HaScanner):
         async def _async_reset_adapter(self, gone_silent: bool) -> None:
             pass
 
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_a, **_kw: AlwaysFailAfterFirstMockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(AlwaysFailAfterFirstMockBleakScanner):
         ha_scanner = _NoResetScanner(
             BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:F2"
         )
@@ -3078,24 +2683,7 @@ async def test_async_request_active_window_restart_path_unexpected_error() -> No
             if raise_on_restart:
                 raise RuntimeError("simulated unexpected error")
 
-    class MockBleakScanner:
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_a, **_kw: MockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(MockBleakScanner):
         ha_scanner = _MaybeRaiseRestartScanner(
             BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:F4"
         )
@@ -3159,24 +2747,7 @@ async def test_async_request_active_window_restart_path_mode_mismatch() -> None:
             if not noop_restart:
                 await HaScanner._async_stop_then_start_under_lock(self)
 
-    class MockBleakScanner:
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        @property
-        def discovered_devices(self):
-            return []
-
-        def register_detection_callback(self, callback):
-            pass
-
-    with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
-        side_effect=lambda *_a, **_kw: MockBleakScanner(),
-    ):
+    with patch_bleak_scanner_factory(MockBleakScanner):
         ha_scanner = _NoopRestartScanner(
             BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:F3"
         )

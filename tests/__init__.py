@@ -1,5 +1,6 @@
 import asyncio
 import time
+import types
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -7,7 +8,11 @@ from functools import partial
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from bleak.backends.scanner import AdvertisementData, BLEDevice
+from bleak.backends.scanner import (
+    AdvertisementData,
+    AdvertisementDataCallback,
+    BLEDevice,
+)
 
 from habluetooth import get_manager
 from habluetooth.models import BluetoothServiceInfoBleak
@@ -103,6 +108,62 @@ def async_fire_time_changed(utc_datetime: datetime) -> None:
 
 class MockBleakClient:
     pass
+
+
+class MockBleakScanner:
+    """
+    Drop-in fake for ``bleak.BleakScanner`` that satisfies ``HaScanner``.
+
+    Provides the four attributes ``HaScanner`` actually touches
+    (``start`` / ``stop`` / ``discovered_devices`` /
+    ``register_detection_callback``) plus a ``_backend`` namespace
+    with ``_scanning_mode`` for the active-window toggle path.
+
+    Subclass to override individual methods for failure injection
+    (e.g. ``async def start(self): raise BleakError(...)``); each
+    instance owns its own ``_backend`` so mutations don't leak
+    between tests.
+    """
+
+    def __init__(self) -> None:
+        # Typed as ``Any`` so subclasses can substitute custom backend
+        # objects (e.g. for AttributeError injection tests).
+        self._backend: Any = types.SimpleNamespace(_scanning_mode="passive")
+
+    async def start(self) -> None:
+        """No-op start."""
+
+    async def stop(self) -> None:
+        """No-op stop."""
+
+    @property
+    def discovered_devices(self) -> list[BLEDevice]:
+        """No devices by default; override for fixture-style fakes."""
+        return []
+
+    @property
+    def discovered_devices_and_advertisement_data(
+        self,
+    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
+        """No discoveries by default; override for fixture-style fakes."""
+        return {}
+
+    def register_detection_callback(self, callback: AdvertisementDataCallback) -> None:
+        """No-op detection-callback registration."""
+
+
+def patch_bleak_scanner_factory(factory: Any) -> Any:
+    """
+    Patch ``OriginalBleakScanner`` to call ``factory(*args, **kwargs)``.
+
+    Convenience wrapper to avoid the noisy
+    ``patch(..., side_effect=lambda *_a, **_kw: factory())`` ritual
+    used at every mock-scanner site.
+    """
+    return patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: factory(),
+    )
 
 
 def inject_advertisement(device: BLEDevice, adv: AdvertisementData) -> None:
