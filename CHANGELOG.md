@@ -1,5 +1,22 @@
 # Changelog
 
+## v6.4.0 (2026-05-23)
+
+### Features
+
+
+- Log mgmt side channel state when watchdog fires ([`edad0e7`](https://github.com/Bluetooth-Devices/habluetooth/commit/edad0e7a35a5f2b6b21a3bd370f1fc7515df3e0c))
+
+
+### Testing
+
+
+- Collapse repeated detection-recorder closures into a helper ([`3f18867`](https://github.com/Bluetooth-Devices/habluetooth/commit/3f18867114ee927e6fff57e7c0771302aa1d0762))
+
+
+- Extract injectableremotescanner base shared across test files ([`12f312d`](https://github.com/Bluetooth-Devices/habluetooth/commit/12f312d47c272c1695c25f3df3ce108a28c449af))
+
+
 ## v6.3.1 (2026-05-23)
 
 ### Bug fixes
