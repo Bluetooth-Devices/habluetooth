@@ -4429,17 +4429,20 @@ async def test_async_request_sweep_resets_next_sweep_time() -> None:
 
 @pytest.mark.asyncio
 async def test_async_request_sweep_dedupes_concurrent_callers() -> None:
-    """Two concurrent sweep calls share one window; the bus flips once."""
+    """N concurrent sweep calls share one window; the bus flips once."""
     manager = get_manager()
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
         async with _no_real_sleep():
+            # Three concurrent callers, mirroring HA integrations each
+            # opening their own config flow at the same time.
             await asyncio.gather(
                 manager.async_request_sweep(duration=5.0),
                 manager.async_request_sweep(duration=5.0),
+                manager.async_request_sweep(duration=5.0),
             )
-        # Only one active window despite two callers.
+        # Only one active window despite three callers.
         assert scanner.active_window_calls == [5.0]
         # The deduped future is cleared once the sweep finishes.
         assert manager._auto_scheduler._on_demand_sweep_future is None
