@@ -4463,13 +4463,18 @@ async def test_async_request_sweep_mixed_durations_extends_to_longest() -> None:
                 manager.async_request_sweep(duration=20.0),
             )
         # Exactly three flip durations: leader's 10s + two extensions
-        # (~15s and ~20s, with sub-second drift from task-start
-        # jitter — assert the floor and the order).
+        # (approximately 15s and 20s, with sub-second drift from
+        # task-start jitter — pytest.approx absorbs the drift, and
+        # the ordering pins the chain.
         assert len(scanner.active_window_calls) == 3
         assert scanner.active_window_calls[0] == 10.0
-        # The two extensions are increasing and approach 15 and 20.
-        assert 14.0 <= scanner.active_window_calls[1] <= 15.0
-        assert 19.0 <= scanner.active_window_calls[2] <= 20.0
+        assert scanner.active_window_calls[1] == pytest.approx(15.0, abs=1.0)
+        assert scanner.active_window_calls[2] == pytest.approx(20.0, abs=1.0)
+        assert (
+            scanner.active_window_calls[0]
+            < scanner.active_window_calls[1]
+            < scanner.active_window_calls[2]
+        )
         # The future and end are cleared once the leader finishes.
         assert manager._auto_scheduler._on_demand_sweep_future is None
         assert manager._auto_scheduler._on_demand_sweep_end == 0.0
@@ -4623,6 +4628,45 @@ async def test_async_request_sweep_logs_per_scanner_flip_failures(
     finally:
         c_bad()
         c_good()
+
+
+@pytest.mark.asyncio
+async def test_async_request_sweep_joiner_cancellation_does_not_break_siblings() -> (
+    None
+):
+    """
+    Cancelling one joiner must not cancel the shared future.
+
+    Without ``asyncio.shield`` on the joiner's await, a cancelled
+    joiner would cancel the underlying future, which then propagates
+    ``CancelledError`` to sibling joiners and makes the leader's
+    ``finally`` raise ``InvalidStateError`` on ``set_result``.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        with freeze_time() as frozen:
+            scanner._block_event = asyncio.Event()
+            leader = asyncio.create_task(manager.async_request_sweep(duration=5.0))
+            joiner_a = asyncio.create_task(manager.async_request_sweep(duration=5.0))
+            joiner_b = asyncio.create_task(manager.async_request_sweep(duration=5.0))
+            for _ in range(5):
+                await asyncio.sleep(0)
+            # Cancel one joiner; siblings and leader must continue.
+            joiner_a.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await joiner_a
+            scanner._block_event.set()
+            frozen.tick(5.1)
+            # Leader and the surviving joiner both complete normally.
+            await leader
+            await joiner_b
+            assert joiner_b.result() is None
+            assert sched._on_demand_sweep_future is None
+    finally:
+        register_cancel()
 
 
 @pytest.mark.asyncio

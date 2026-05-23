@@ -886,7 +886,12 @@ class AutoScanScheduler:
             return_exceptions=True,
         )
         for scanner, result in zip(targets, results, strict=True):
-            if isinstance(result, BaseException):
+            # Narrowed to Exception so a cancellation surfaced as a
+            # gather result (CancelledError / KeyboardInterrupt /
+            # SystemExit) is not mis-classified as a flip failure;
+            # matches the except-Exception convention elsewhere in
+            # this module.
+            if isinstance(result, Exception):
                 _LOGGER.warning(
                     "%s: error running on-demand active window of %.1fs: %s",
                     scanner.name,
@@ -959,7 +964,12 @@ class AutoScanScheduler:
                 # extends an open window in place when called with a
                 # longer remaining duration.
                 await self._flip_scanners_for_sweep(desired_end - now)
-            await in_flight
+            # asyncio.shield prevents joiner-task cancellation from
+            # cancelling the shared future itself: without it, a
+            # cancelled joiner would propagate CancelledError to
+            # sibling joiners and would make the leader's finally
+            # raise InvalidStateError on set_result.
+            await asyncio.shield(in_flight)
             return
         future = self._loop.create_future()
         self._on_demand_sweep_future = future
