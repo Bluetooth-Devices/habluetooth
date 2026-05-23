@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
+import math
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,6 +23,8 @@ from habluetooth.const import (
     AUTO_REDISCOVERY_SWEEP_DURATION,
     AUTO_WINDOW_MAX_DURATION,
     AUTO_WINDOW_MIN_DURATION,
+    DEFAULT_ACTIVE_SCAN_DURATION,
+    DEFAULT_ACTIVE_SCAN_INTERVAL,
 )
 
 from . import generate_advertisement_data, generate_ble_device
@@ -711,9 +715,7 @@ async def test_register_active_scan_validates_inputs() -> None:
     # Non-finite values must be rejected: NaN compared to anything
     # returns False, so without the explicit isfinite() check a NaN
     # would slip past the lower-bound validators.
-    import math as _math
-
-    for bad in (_math.nan, _math.inf, -_math.inf):
+    for bad in (math.nan, math.inf, -math.inf):
         with pytest.raises(ValueError, match="scan_interval must be a finite number"):
             manager.async_register_active_scan("AA:BB:CC:DD:EE:00", scan_interval=bad)
         with pytest.raises(ValueError, match="scan_duration must be a finite number"):
@@ -725,11 +727,6 @@ async def test_register_active_scan_validates_inputs() -> None:
 @pytest.mark.asyncio
 async def test_register_active_scan_applies_defaults() -> None:
     """Omitting scan_interval/scan_duration uses the configured defaults."""
-    from habluetooth.const import (
-        DEFAULT_ACTIVE_SCAN_DURATION,
-        DEFAULT_ACTIVE_SCAN_INTERVAL,
-    )
-
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "AA:BB:CC:DD:EE:42"
@@ -857,8 +854,6 @@ async def test_repeated_window_failures_log_only_first_traceback(
     still logs the full stack so the root cause is captured; subsequent
     failures collapse to a one-line warning to avoid flooding the log.
     """
-    import logging
-
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -899,8 +894,6 @@ async def test_tick_sync_phase_exception_is_logged_and_worker_survives(
     Stubs async_last_service_info to raise so _collect_due_buckets
     blows up; the outer except in _tick catches it and logs.
     """
-    import logging
-
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:55:91"

@@ -16,11 +16,12 @@ from bleak_retry_connector import Allocations
 
 from habluetooth import HaBluetoothConnector
 from habluetooth import get_manager as _get_manager
+from habluetooth.const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM
 from habluetooth.usage import (
     install_multiple_bleak_catcher,
     uninstall_multiple_bleak_catcher,
 )
-from habluetooth.wrappers import HaBleakScannerWrapper
+from habluetooth.wrappers import HaBleakScannerWrapper, _get_device_address_type
 
 from . import (
     HCI0_SOURCE_ADDRESS,
@@ -1555,9 +1556,6 @@ async def test_get_device_address_type_random(
         },
     )
 
-    from habluetooth.const import BDADDR_LE_RANDOM
-    from habluetooth.wrappers import _get_device_address_type
-
     assert _get_device_address_type(device) == BDADDR_LE_RANDOM
 
     cancel_hci0()
@@ -1575,9 +1573,6 @@ async def test_get_device_address_type_public(
 
     # Create a device with public address type (default)
     device = hci0_device_advs["00:00:00:00:00:01"][0]
-
-    from habluetooth.const import BDADDR_LE_PUBLIC
-    from habluetooth.wrappers import _get_device_address_type
 
     assert _get_device_address_type(device) == BDADDR_LE_PUBLIC
 
@@ -1707,8 +1702,6 @@ async def test_connection_path_scoring_with_slots_and_logging(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test connection path scoring and logging reflects slot availability."""
-    from bleak_retry_connector import Allocations
-
     manager = _get_manager()
 
     class FakeBleakClientNoConnect(BaseFakeBleakClient):
@@ -1967,8 +1960,6 @@ async def test_thundering_herd_connection_slots() -> None:  # noqa: C901
     - First 6 devices should connect to proxy1 and proxy2 (3 each)
     - 7th device should connect to proxy3 (bad signal) when others are full
     """
-    from bleak_retry_connector import Allocations
-
     manager = _get_manager()
 
     # Track which backend each device connected to

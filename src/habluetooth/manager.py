@@ -363,7 +363,11 @@ class BluetoothManager:
 
     async def async_setup(self) -> None:
         """Set up the bluetooth manager."""
-        from .central_manager import CentralBluetoothManager
+        # Deferred to avoid the circular import that a top-level
+        # ``from .central_manager import CentralBluetoothManager``
+        # would create (central_manager itself imports BluetoothManager
+        # under TYPE_CHECKING but only this method writes through it).
+        from .central_manager import CentralBluetoothManager  # noqa: PLC0415
 
         if CentralBluetoothManager.manager is None:
             CentralBluetoothManager.manager = self

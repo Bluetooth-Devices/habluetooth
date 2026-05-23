@@ -4,19 +4,21 @@ import asyncio
 import logging
 import platform
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from datetime import timedelta
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from bleak import BleakError
-from bleak.backends.scanner import AdvertisementDataCallback
-from bleak_retry_connector import BleakSlotManager
+from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
+from bleak_retry_connector import Allocations, BleakSlotManager
 
 from habluetooth import (
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
+    BaseHaScanner,
     BluetoothManager,
     BluetoothScanningMode,
     BluetoothServiceInfoBleak,
@@ -1576,8 +1578,6 @@ def test_ha_scanner_get_allocations_no_slot_manager() -> None:
 
 def test_ha_scanner_get_allocations_with_slot_manager() -> None:
     """Test HaScanner.get_allocations returns allocation info from BleakSlotManager."""
-    from bleak_retry_connector import Allocations
-
     scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
     manager = get_manager()
 
@@ -1603,8 +1603,6 @@ def test_ha_scanner_get_allocations_with_slot_manager() -> None:
 
 def test_ha_scanner_get_allocations_updates_dynamically() -> None:
     """Test that HaScanner.get_allocations returns current values as they change."""
-    from bleak_retry_connector import Allocations
-
     scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
     manager = get_manager()
 
@@ -2223,12 +2221,6 @@ async def test_base_scanner_default_active_window_is_noop(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """BaseHaScanner.async_request_active_window default returns False."""
-    from collections.abc import Iterable
-
-    from bleak.backends.device import BLEDevice
-    from bleak.backends.scanner import AdvertisementData
-
-    from habluetooth import BaseHaScanner
 
     class _PlainScanner(BaseHaScanner):
         @property
