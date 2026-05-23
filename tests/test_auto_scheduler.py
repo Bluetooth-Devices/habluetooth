@@ -9,6 +9,7 @@ import math
 from typing import TYPE_CHECKING
 
 import pytest
+from freezegun import freeze_time
 
 from habluetooth import (
     BaseHaScanner,
@@ -506,6 +507,45 @@ async def test_first_sweep_is_delayed_after_scanner_registers() -> None:
         )
     finally:
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_initial_sweep_fires_4_minutes_after_scanner_registers() -> None:
+    """
+    The initial sweep is suppressed for ~4 minutes after registration.
+
+    Literal seconds are used so this test pins the contract that
+    AUTO_INITIAL_SWEEP_DELAY stays at 4 minutes; the symbolic
+    relationship between the worker's scheduled time and the
+    constant is covered by
+    ``test_first_sweep_is_delayed_after_scanner_registers``.
+
+    Freezegun patches ``time.monotonic`` which backs
+    ``loop.time()``, so the worker's ``_tick`` sees the advanced
+    clock. The background ``_run`` task is cancelled up-front so its
+    own ``wait_for`` timeout (also driven by frozen monotonic) does
+    not race the explicit ticks below.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    four_minutes = 4 * 60.0
+    with freeze_time() as frozen:
+        scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+        register_cancel = manager.async_register_scanner(scanner)
+        worker = sched._workers[scanner.source]
+        worker.stop()
+        await asyncio.sleep(0)
+        try:
+            # 1s before the 4-minute mark; no window should fire.
+            frozen.tick(four_minutes - 1.0)
+            await worker._tick()
+            assert scanner.active_window_calls == []
+            # Crossing the 4-minute mark; the sweep fires with SWEEP_DURATION.
+            frozen.tick(2.0)
+            await worker._tick()
+            assert scanner.active_window_calls == [AUTO_REDISCOVERY_SWEEP_DURATION]
+        finally:
+            register_cancel()
 
 
 @pytest.mark.asyncio
