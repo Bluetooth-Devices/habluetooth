@@ -13,8 +13,9 @@ from bleak.backends.scanner import (
     AdvertisementDataCallback,
     BLEDevice,
 )
+from bluetooth_data_tools import monotonic_time_coarse
 
-from habluetooth import get_manager
+from habluetooth import BaseHaRemoteScanner, get_manager
 from habluetooth.models import BluetoothServiceInfoBleak
 
 utcnow = partial(datetime.now, UTC)
@@ -150,6 +151,54 @@ class MockBleakScanner:
 
     def register_detection_callback(self, callback: AdvertisementDataCallback) -> None:
         """No-op detection-callback registration."""
+
+
+class InjectableRemoteScanner(BaseHaRemoteScanner):
+    """
+    Remote scanner that exposes test-only ``inject_advertisement`` helpers.
+
+    Replaces the near-identical ``FakeScanner`` / ``_SeedFakeScanner``
+    classes that used to live in test_base_scanner / test_name_cache /
+    test_wrappers. ``device.details`` (when present) is merged into the
+    advertisement ``details`` dict so callers that route via DBus paths
+    (e.g. test_wrappers) keep the path key, while callers that pass a
+    ``details``-less device (the default) see only the test marker.
+    """
+
+    def inject_advertisement(
+        self,
+        device: BLEDevice,
+        advertisement_data: AdvertisementData,
+        now: float | None = None,
+    ) -> None:
+        """Inject an advertisement through the scanner's normal entry point."""
+        self._async_on_advertisement(
+            device.address,
+            advertisement_data.rssi,
+            device.name,
+            advertisement_data.service_uuids,
+            advertisement_data.service_data,
+            advertisement_data.manufacturer_data,
+            advertisement_data.tx_power,
+            (device.details or {}) | {"scanner_specific_data": "test"},
+            now if now is not None else monotonic_time_coarse(),
+        )
+
+    def inject_raw_advertisement(
+        self,
+        address: str,
+        rssi: int,
+        adv: bytes,
+        now: float | None = None,
+    ) -> None:
+        """Inject a raw advertisement through the scanner's normal entry point."""
+        self._async_on_raw_advertisement(
+            address,
+            rssi,
+            adv,
+            {"scanner_specific_data": "test"},
+            now if now is not None else monotonic_time_coarse(),
+        )
 
 
 def patch_bleak_scanner_factory(factory: Any) -> Any:

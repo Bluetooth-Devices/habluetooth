@@ -46,46 +46,10 @@ from . import (
     patch_bluetooth_time,
     utcnow,
 )
+from . import (
+    InjectableRemoteScanner as FakeScanner,
+)
 from .conftest import FakeBluetoothAdapters, MockBluetoothManagerWithCallbacks
-
-
-class FakeScanner(BaseHaRemoteScanner):
-    """Fake scanner."""
-
-    def inject_advertisement(
-        self,
-        device: BLEDevice,
-        advertisement_data: AdvertisementData,
-        now: float | None = None,
-    ) -> None:
-        """Inject an advertisement."""
-        self._async_on_advertisement(
-            device.address,
-            advertisement_data.rssi,
-            device.name,
-            advertisement_data.service_uuids,
-            advertisement_data.service_data,
-            advertisement_data.manufacturer_data,
-            advertisement_data.tx_power,
-            {"scanner_specific_data": "test"},
-            now or monotonic_time_coarse(),
-        )
-
-    def inject_raw_advertisement(
-        self,
-        address: str,
-        rssi: int,
-        adv: bytes,
-        now: float | None = None,
-    ) -> None:
-        """Inject a raw advertisement."""
-        self._async_on_raw_advertisement(
-            address,
-            rssi,
-            adv,
-            {"scanner_specific_data": "test"},
-            now or monotonic_time_coarse(),
-        )
 
 
 @pytest.mark.parametrize("name_2", [None, "w"])
