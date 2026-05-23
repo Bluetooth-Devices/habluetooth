@@ -111,16 +111,18 @@ line-length = 88
 
 [tool.ruff.lint]
 ignore = [
-    "E721", # type checks for cython
-    "D203", # 1 blank line required before class docstring
-    "D212", # Multi-line docstring summary should start at the first line
-    "D100", # Missing docstring in public module
-    "D104", # Missing docstring in public package
-    "D107", # Missing docstring in `__init__`
-    "D401", # First line of docstring should be in imperative mood
+    "E721",    # type checks for cython
+    "D203",    # 1 blank line required before class docstring
+    "D212",    # Multi-line docstring summary should start at the first line
+    "D100",    # Missing docstring in public module
+    "D104",    # Missing docstring in public package
+    "D107",    # Missing docstring in `__init__`
+    "D401",    # First line of docstring should be in imperative mood
+    "ASYNC109", # ``timeout`` is part of our bleak-compatible public API
 ]
 select = [
     "A",    # flake8-builtins
+    "ASYNC", # flake8-async
     "B",    # flake8-bugbear
     "BLE",  # flake8-blind-except
     "C4",   # flake8-comprehensions
