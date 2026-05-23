@@ -82,6 +82,12 @@ MIN_ACTIVE_SCAN_DURATION: Final = 5.0
 DEFAULT_ACTIVE_SCAN_INTERVAL: Final = 300.0
 DEFAULT_ACTIVE_SCAN_DURATION: Final = 10.0
 
+# Default duration for an on-demand sweep triggered by
+# BluetoothManager.async_request_active_scan (HA config-flow discovery).
+# 10s gives every device on the bus a chance to advertise during the
+# window without holding the caller too long.
+DEFAULT_ON_DEMAND_SWEEP_DURATION: Final = 10.0
+
 
 FAILED_ADAPTER_MAC = "00:00:00:00:00:00"
 

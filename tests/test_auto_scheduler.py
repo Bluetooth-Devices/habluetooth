@@ -7,6 +7,7 @@ import contextlib
 import logging
 import math
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 from freezegun import freeze_time
@@ -26,6 +27,7 @@ from habluetooth.const import (
     AUTO_WINDOW_MIN_DURATION,
     DEFAULT_ACTIVE_SCAN_DURATION,
     DEFAULT_ACTIVE_SCAN_INTERVAL,
+    DEFAULT_ON_DEMAND_SWEEP_DURATION,
 )
 
 from . import generate_advertisement_data, generate_ble_device
@@ -4386,3 +4388,431 @@ async def test_async_diagnostics() -> None:
     # After cancellation the address falls out of both indexes.
     post = sched.async_diagnostics()
     assert post["requests"] == {}
+
+
+@contextlib.asynccontextmanager
+async def _no_real_sleep():
+    """
+    Replace ``asyncio.sleep`` with an immediate fake-time advance.
+
+    Sweeps clamp duration to AUTO_WINDOW_MIN_DURATION (5s); stubbing
+    the sleep keeps tests fast while preserving the call shape so we
+    can still observe what duration was requested. Each mocked sleep
+    also advances ``loop.time()`` by ``duration`` so the on-demand
+    sweep's sleep-until-end loop (which re-reads
+    ``_on_demand_sweep_end`` on each wake) terminates instead of
+    spinning forever against a frozen clock.
+    """
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    fake_advance = [0.0]
+
+    async def _instant(duration: float) -> None:
+        fake_advance[0] += duration
+
+    def _fake_time() -> float:
+        return real_time() + fake_advance[0]
+
+    with (
+        patch("asyncio.sleep", new=_instant),
+        patch.object(loop, "time", _fake_time),
+    ):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_fires_active_window_on_each_auto_scanner() -> (
+    None
+):
+    """A sweep flips every AUTO scanner into ACTIVE for the duration."""
+    manager = get_manager()
+    a = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    b = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(a)
+    c_b = manager.async_register_scanner(b)
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_active_scan(duration=7.0)
+        assert a.active_window_calls == [7.0]
+        assert b.active_window_calls == [7.0]
+    finally:
+        c_a()
+        c_b()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_skips_connecting_scanner() -> None:
+    """A scanner mid-connect is skipped; non-connecting peers still flip."""
+    manager = get_manager()
+    busy = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    free = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+    c_busy = manager.async_register_scanner(busy)
+    c_free = manager.async_register_scanner(free)
+    busy._add_connecting("11:22:33:44:55:66")
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_active_scan(duration=5.0)
+        assert busy.active_window_calls == []
+        assert free.active_window_calls == [5.0]
+    finally:
+        busy._finished_connecting("11:22:33:44:55:66", connected=False)
+        c_busy()
+        c_free()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_resets_next_sweep_time() -> None:
+    """A sweep advances each flipped worker's _sweep_last_completed to now."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    worker = sched._workers[scanner.source]
+    # Backdate so we can observe the bump.
+    worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+    try:
+        before = loop.time()
+        async with _no_real_sleep():
+            await manager.async_request_active_scan(duration=5.0)
+        assert worker._sweep_last_completed >= before
+        assert worker._sweep_last_completed <= loop.time() + 0.1
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_mixed_durations_extends_to_longest() -> None:
+    """
+    Concurrent callers asking for (10, 15, 5, 20) all wait until T0+20.
+
+    The first caller to win the check-and-set runs a 10s sweep; the 15s
+    and 20s callers extend the in-flight window (re-flipping the radio
+    with the longer remaining duration); the 5s caller fits within the
+    already-extended end and does not flip again. The scanner records
+    each flip's duration so we can verify the extension chain.
+    """
+    manager = get_manager()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        async with _no_real_sleep():
+            await asyncio.gather(
+                manager.async_request_active_scan(duration=10.0),
+                manager.async_request_active_scan(duration=15.0),
+                manager.async_request_active_scan(duration=5.0),
+                manager.async_request_active_scan(duration=20.0),
+            )
+        # Exactly three flip durations: leader's 10s + two extensions
+        # (approximately 15s and 20s, with sub-second drift from
+        # task-start jitter — pytest.approx absorbs the drift, and
+        # the ordering pins the chain.
+        assert len(scanner.active_window_calls) == 3
+        assert scanner.active_window_calls[0] == 10.0
+        assert scanner.active_window_calls[1] == pytest.approx(15.0, abs=1.0)
+        assert scanner.active_window_calls[2] == pytest.approx(20.0, abs=1.0)
+        assert (
+            scanner.active_window_calls[0]
+            < scanner.active_window_calls[1]
+            < scanner.active_window_calls[2]
+        )
+        # The future and end are cleared once the leader finishes.
+        assert manager._auto_scheduler._on_demand_sweep_future is None
+        assert manager._auto_scheduler._on_demand_sweep_end == 0.0
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_dedupes_concurrent_callers() -> None:
+    """N concurrent sweep calls share one window; the bus flips once."""
+    manager = get_manager()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        async with _no_real_sleep():
+            # Three concurrent callers, mirroring HA integrations each
+            # opening their own config flow at the same time.
+            await asyncio.gather(
+                manager.async_request_active_scan(duration=5.0),
+                manager.async_request_active_scan(duration=5.0),
+                manager.async_request_active_scan(duration=5.0),
+            )
+        # Only one active window despite three callers.
+        assert scanner.active_window_calls == [5.0]
+        # The deduped future is cleared once the sweep finishes.
+        assert manager._auto_scheduler._on_demand_sweep_future is None
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_default_duration_is_10s() -> None:
+    """Calling without a duration uses DEFAULT_ON_DEMAND_SWEEP_DURATION (10s)."""
+    manager = get_manager()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_active_scan()
+        assert scanner.active_window_calls == [DEFAULT_ON_DEMAND_SWEEP_DURATION]
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_clamps_to_window_bounds() -> None:
+    """Out-of-range durations are clamped to [MIN, MAX]."""
+    manager = get_manager()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_active_scan(duration=0.5)  # below MIN
+            await manager.async_request_active_scan(duration=999.0)  # above MAX
+        assert scanner.active_window_calls == [
+            AUTO_WINDOW_MIN_DURATION,
+            AUTO_WINDOW_MAX_DURATION,
+        ]
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_rejects_invalid_duration() -> None:
+    """NaN, inf, zero, and negative durations raise ValueError."""
+    manager = get_manager()
+    for bad in (float("nan"), float("inf"), float("-inf"), 0.0, -1.0):
+        with pytest.raises(ValueError, match="finite positive"):
+            await manager.async_request_active_scan(duration=bad)
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_no_op_when_scheduler_stopped() -> None:
+    """After stop() the scheduler has no loop; the sweep returns immediately."""
+    manager = get_manager()
+    manager._auto_scheduler.stop()
+    await manager.async_request_active_scan(duration=5.0)
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_no_op_without_auto_scanners() -> None:
+    """With no AUTO workers the sweep still completes its sleep cleanly."""
+    manager = get_manager()
+    # No scanners registered; targets is empty but the sleep still runs.
+    async with _no_real_sleep():
+        await manager.async_request_active_scan(duration=5.0)
+    assert manager._auto_scheduler._on_demand_sweep_future is None
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_awaits_the_full_duration() -> None:
+    """
+    The sweep awaits ``duration`` so the caller can read advertisements.
+
+    Freezegun patches ``time.monotonic`` (and thus ``loop.time``);
+    advancing the frozen clock by the requested duration lets the
+    scheduler's internal ``asyncio.sleep`` complete and the task
+    finish. The scanner is registered inside the freeze so the
+    worker's ``_sweep_last_completed`` is anchored to the frozen
+    clock; the worker's background ``_run`` task is cancelled so it
+    cannot tick during the on-demand window.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    with freeze_time() as frozen:
+        scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+        register_cancel = manager.async_register_scanner(scanner)
+        worker = sched._workers[scanner.source]
+        worker.stop()
+        await asyncio.sleep(0)
+        try:
+            task = asyncio.create_task(manager.async_request_active_scan(duration=5.0))
+            # Let the task start, flip the radio, and enter asyncio.sleep.
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert scanner.active_window_calls == [5.0]
+            assert not task.done()
+            # Advance past the sweep duration; the sleep wakes up.
+            frozen.tick(5.1)
+            await task
+            assert task.done()
+        finally:
+            register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_logs_per_scanner_flip_failures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A scanner whose flip raises is logged; the sweep still completes."""
+    manager = get_manager()
+
+    class _FailingScanner(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            msg = "boom"
+            raise RuntimeError(msg)
+
+    bad = _FailingScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    good = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+    c_bad = manager.async_register_scanner(bad)
+    c_good = manager.async_register_scanner(good)
+    try:
+        with caplog.at_level(logging.WARNING, logger="habluetooth.auto_scheduler"):
+            async with _no_real_sleep():
+                await manager.async_request_active_scan(duration=5.0)
+        assert good.active_window_calls == [5.0]
+        assert any(
+            "on-demand active window" in record.message and "boom" in record.message
+            for record in caplog.records
+        )
+    finally:
+        c_bad()
+        c_good()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_joiner_cancel_during_extension() -> None:
+    """
+    Joiner cancelled mid-extension still finishes the all-or-nothing re-flip.
+
+    Without ``asyncio.shield`` on the extension flip, a joiner
+    cancelled while extending would leave ``_on_demand_sweep_end``
+    pushed out past a partial re-flip, so the leader (and other
+    joiners) would sleep until the extended end believing every
+    scanner was active when some were not. With the shield, the
+    re-flip runs to completion; the scanner records both the
+    leader's original flip duration and the extension duration
+    even after the joiner is cancelled.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    with freeze_time() as frozen:
+        # Register inside freeze + stop the worker so the worker's
+        # own periodic sweep does not fire and pollute the recorded
+        # active_window_calls.
+        scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+        register_cancel = manager.async_register_scanner(scanner)
+        worker = sched._workers[scanner.source]
+        worker.stop()
+        await asyncio.sleep(0)
+        try:
+            # Block scanner flips so the leader stays in its first
+            # flip await while the joiner extends and is cancelled.
+            scanner._block_event = asyncio.Event()
+            leader = asyncio.create_task(
+                manager.async_request_active_scan(duration=5.0)
+            )
+            for _ in range(3):
+                await asyncio.sleep(0)
+            joiner = asyncio.create_task(
+                manager.async_request_active_scan(duration=20.0)
+            )
+            # Yield enough for the joiner to enter its shielded
+            # extension flip (which is now also blocked on the
+            # scanner's block_event).
+            for _ in range(3):
+                await asyncio.sleep(0)
+            assert len(scanner.active_window_calls) == 2
+            joiner.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await joiner
+            # Release the scanner; leader's flip returns, joiner's
+            # shielded flip also completes as an orphan task.
+            scanner._block_event.set()
+            frozen.tick(20.1)
+            await leader
+            # Both leader's 5s flip and joiner's ~20s extension
+            # recorded despite the cancel.
+            assert scanner.active_window_calls[0] == 5.0
+            assert scanner.active_window_calls[1] == pytest.approx(20.0, abs=1.0)
+            assert sched._on_demand_sweep_future is None
+        finally:
+            register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_joiner_cancel_keeps_siblings() -> None:
+    """
+    Cancelling one joiner must not cancel the shared future.
+
+    Without ``asyncio.shield`` on the joiner's await, a cancelled
+    joiner would cancel the underlying future, which then propagates
+    ``CancelledError`` to sibling joiners and makes the leader's
+    ``finally`` raise ``InvalidStateError`` on ``set_result``.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        with freeze_time() as frozen:
+            scanner._block_event = asyncio.Event()
+            leader = asyncio.create_task(
+                manager.async_request_active_scan(duration=5.0)
+            )
+            joiner_a = asyncio.create_task(
+                manager.async_request_active_scan(duration=5.0)
+            )
+            joiner_b = asyncio.create_task(
+                manager.async_request_active_scan(duration=5.0)
+            )
+            for _ in range(5):
+                await asyncio.sleep(0)
+            # Cancel one joiner; siblings and leader must continue.
+            joiner_a.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await joiner_a
+            scanner._block_event.set()
+            frozen.tick(5.1)
+            # Leader and the surviving joiner both complete normally.
+            await leader
+            await joiner_b
+            assert joiner_b.result() is None
+            assert sched._on_demand_sweep_future is None
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_leader_cancellation_releases_joiners() -> None:
+    """
+    Cancelling the leader still resolves the future so joiners do not hang.
+
+    Joiners see ``None`` (no propagated ``CancelledError``) and benefit
+    from whatever radio activity already happened; a subsequent sweep can
+    run because ``_on_demand_sweep_future`` is cleared.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        with freeze_time():
+            # Block the leader inside its scanner-flip await so we know
+            # we're past the gather and inside the leader's sleep when
+            # we cancel.
+            scanner._block_event = asyncio.Event()
+            leader = asyncio.create_task(
+                manager.async_request_active_scan(duration=5.0)
+            )
+            joiner = asyncio.create_task(
+                manager.async_request_active_scan(duration=5.0)
+            )
+            for _ in range(5):
+                await asyncio.sleep(0)
+            # Both tasks are now waiting; joiner has latched onto the
+            # leader's future.
+            assert not leader.done()
+            assert not joiner.done()
+            scanner._block_event.set()
+            leader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await leader
+            # Joiner completes normally with no exception.
+            await joiner
+            assert joiner.result() is None
+            # Future is cleared so a fresh sweep can start.
+            assert sched._on_demand_sweep_future is None
+    finally:
+        register_cancel()

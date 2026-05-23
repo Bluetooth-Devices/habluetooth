@@ -177,6 +177,15 @@ _AUTO_CONNECTING_DEFER = 30.0
 _LOGGER = logging.getLogger(__name__)
 
 
+def _clamp_window_duration(duration: float) -> float:
+    """Clamp a window duration into ``[MIN, MAX]``."""
+    if duration < _AUTO_WINDOW_MIN_DURATION:
+        return _AUTO_WINDOW_MIN_DURATION
+    if duration > _AUTO_WINDOW_MAX_DURATION:
+        return _AUTO_WINDOW_MAX_DURATION
+    return duration
+
+
 class ActiveScanRequest:
     """
     A registered need for on-demand active scans on one address.
@@ -588,6 +597,8 @@ class AutoScanScheduler:
         "_loop",
         "_manager",
         "_needs",
+        "_on_demand_sweep_end",
+        "_on_demand_sweep_future",
         "_requests_by_address",
         "_running",
         "_workers",
@@ -601,6 +612,8 @@ class AutoScanScheduler:
         self._workers: dict[str, _ScannerWorker] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
+        self._on_demand_sweep_future: asyncio.Future[None] | None = None
+        self._on_demand_sweep_end: float = 0.0
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """
@@ -825,15 +838,115 @@ class AutoScanScheduler:
         float (``async_register_active_scan`` enforces this at the
         boundary).
         """
-        requested = max(
-            (e.scan_duration for e in entries),
-            default=_AUTO_WINDOW_MIN_DURATION,
+        return _clamp_window_duration(
+            max(
+                (e.scan_duration for e in entries),
+                default=_AUTO_WINDOW_MIN_DURATION,
+            )
         )
-        if requested < _AUTO_WINDOW_MIN_DURATION:
-            return _AUTO_WINDOW_MIN_DURATION
-        if requested > _AUTO_WINDOW_MAX_DURATION:
-            return _AUTO_WINDOW_MAX_DURATION
-        return requested
+
+    async def _flip_scanners_for_sweep(self, duration: float) -> None:
+        """
+        Flip every non-busy AUTO scanner into a ``duration``-second window.
+
+        ``return_exceptions=True`` plus the per-scanner log keeps one
+        stuck adapter from aborting the bus-wide sweep while still
+        surfacing its failure. Mid-connect scanners are skipped —
+        unlike the periodic ``_tick`` path this does not route to a
+        fallback; on-demand is best-effort. Re-flipping with a
+        longer duration extends the radio's open window in place
+        (``BaseHaScanner.async_request_active_window`` contract),
+        so the same helper serves both leader and joiner-extension.
+        Caller must guard ``self._loop is not None``.
+        """
+        if TYPE_CHECKING:
+            assert self._loop is not None
+        now = self._loop.time()
+        window_end = now + duration
+        targets: list[BaseHaScanner] = []
+        for worker in self._workers.values():
+            scanner = worker._scanner
+            if scanner._connections_in_progress() > 0:
+                continue
+            worker.note_window_dispatched(window_end, now)
+            targets.append(scanner)
+        if not targets:
+            return
+        results = await asyncio.gather(
+            *(scanner.async_request_active_window(duration) for scanner in targets),
+            return_exceptions=True,
+        )
+        for scanner, result in zip(targets, results, strict=True):
+            # Exception not BaseException so a CancelledError surfaced
+            # as a result propagates instead of being mis-logged.
+            if isinstance(result, Exception):
+                _LOGGER.warning(
+                    "%s: error running on-demand active window of %.1fs: %s",
+                    scanner.name,
+                    duration,
+                    result,
+                )
+
+    async def async_request_active_scan(self, duration: float) -> None:
+        """
+        Flip every AUTO scanner to ACTIVE for ``duration`` seconds.
+
+        Public entry is ``BluetoothManager.async_request_active_scan``
+        (validates finite/positive); this method clamps to
+        ``[MIN, MAX]``.
+
+        Concurrent callers dedupe on ``_on_demand_sweep_future``
+        (synchronous check-and-set, atomic under cooperative
+        scheduling — exactly one window per bus). A joiner whose
+        ``desired_end`` exceeds the current end extends the
+        in-flight window: re-flip the scanners and push
+        ``_on_demand_sweep_end`` out; the leader's sleep loop
+        re-reads it on each wake, so an extension just makes the
+        leader sleep again. The 1s slop on the extension threshold
+        absorbs task-start jitter so same-duration concurrent
+        callers do not trigger bogus extensions.
+
+        Cancellation: leader's cancel propagates to its caller and
+        joiners wake to ``None`` (best-effort — they get whatever
+        radio activity happened). Joiners ``await asyncio.shield``
+        the future so a cancelled joiner cannot cancel the shared
+        future and take down the siblings or the leader's
+        ``set_result``.
+        """
+        # Capture loop locally so a concurrent stop() (which nulls
+        # self._loop) during the sleep loop or the flip-await cannot
+        # turn a re-read into AttributeError.
+        loop = self._loop
+        if loop is None:
+            return
+        duration = _clamp_window_duration(duration)
+        now = loop.time()
+        desired_end = now + duration
+        in_flight = self._on_demand_sweep_future
+        if in_flight is not None:
+            if desired_end - self._on_demand_sweep_end > 1.0:
+                self._on_demand_sweep_end = desired_end
+                # asyncio.shield the extension flip so a cancelled
+                # joiner does not leave the shared end pushed out
+                # past a partial re-flip; either all non-busy
+                # scanners receive the longer duration or none do.
+                await asyncio.shield(self._flip_scanners_for_sweep(desired_end - now))
+            await asyncio.shield(in_flight)
+            return
+        future = loop.create_future()
+        self._on_demand_sweep_future = future
+        self._on_demand_sweep_end = desired_end
+        try:
+            await self._flip_scanners_for_sweep(duration)
+            while True:
+                remaining = self._on_demand_sweep_end - loop.time()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(remaining)
+        finally:
+            self._on_demand_sweep_future = None
+            self._on_demand_sweep_end = 0.0
+            future.set_result(None)
 
     def async_diagnostics(self) -> dict[str, Any]:
         """

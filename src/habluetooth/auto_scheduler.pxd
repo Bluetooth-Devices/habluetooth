@@ -11,6 +11,9 @@ cdef double _AUTO_CONNECTING_DEFER
 cdef int NO_RSSI_VALUE
 
 
+cdef double _clamp_window_duration(double duration) noexcept
+
+
 cdef class ActiveScanRequest:
 
     cdef public str address
@@ -76,6 +79,8 @@ cdef class AutoScanScheduler:
     cdef public dict _workers
     cdef public object _loop
     cdef public bint _running
+    cdef public object _on_demand_sweep_future
+    cdef public double _on_demand_sweep_end
 
     @cython.locals(
         existing=dict,
