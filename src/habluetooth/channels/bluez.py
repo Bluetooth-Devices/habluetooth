@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast
 from btsocket import btmgmt_socket
 from btsocket.btmgmt_socket import BluetoothSocketError
 
-from ..const import (
+from habluetooth.const import (
     FAST_CONN_LATENCY,
     FAST_CONN_TIMEOUT,
     FAST_MAX_CONN_INTERVAL,
@@ -23,7 +23,7 @@ from ..const import (
     MEDIUM_MIN_CONN_INTERVAL,
     ConnectParams,
 )
-from ..scanner import HaScanner
+from habluetooth.scanner import HaScanner
 
 _LOGGER = logging.getLogger(__name__)
 _int = int
