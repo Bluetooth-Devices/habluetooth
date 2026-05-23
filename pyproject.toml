@@ -119,6 +119,7 @@ ignore = [
     "D107",    # Missing docstring in `__init__`
     "D401",    # First line of docstring should be in imperative mood
     "ASYNC109", # ``timeout`` is part of our bleak-compatible public API
+    "TRY003",  # too many to fix; long messages outside the exception class
 ]
 select = [
     "A",    # flake8-builtins
@@ -163,6 +164,7 @@ select = [
     "T20",  # flake8-print
     "TC",   # flake8-type-checking
     "TD",   # flake8-todos
+    "TRY",  # tryceratops
     "UP",   # pyupgrade
     "W",    # pycodestyle
     "YTT",  # flake8-2020

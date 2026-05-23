@@ -116,8 +116,8 @@ class BluetoothMGMTProtocol:
                     "Bluetooth mgmt socket returned 0 for %d bytes (kernel bug fix)",
                     len(data),
                 )
-        except Exception as exc:
-            _LOGGER.error("Failed to write to mgmt socket: %s", exc)
+        except Exception:
+            _LOGGER.exception("Failed to write to mgmt socket")
             raise
 
     @asynccontextmanager
@@ -539,10 +539,11 @@ class MGMTBluetoothCtl:
                 latency,
                 timeout,
             )
-            return True
         except Exception:
             _LOGGER.exception("Failed to load conn params")
             return False
+        else:
+            return True
 
     def load_conn_params_explicit(
         self,
@@ -608,7 +609,8 @@ class MGMTBluetoothCtl:
                 latency,
                 timeout,
             )
-            return True
         except Exception:
             _LOGGER.exception("Failed to load conn params")
             return False
+        else:
+            return True

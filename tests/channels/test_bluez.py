@@ -1037,8 +1037,9 @@ def test_kernel_bug_workaround_send_raises_exception(
     with pytest.raises(OSError, match="Socket error"):
         protocol._write_to_socket(test_data)
 
-    # Verify the error was logged
-    assert "Failed to write to mgmt socket: Socket error" in caplog.text
+    # Verify the error was logged; the traceback carries the OSError text.
+    assert "Failed to write to mgmt socket" in caplog.text
+    assert "Socket error" in caplog.text
     mock_socket.send.assert_called_once_with(test_data)
 
 
@@ -1190,7 +1191,7 @@ async def test_reconnect_task_shutdown() -> None:
         establish_called = True
         # Should not be called since we're shutting down
         msg = "Should not be called"
-        raise Exception(msg)
+        raise AssertionError(msg)
 
     with patch.object(
         ctl, "_establish_connection", side_effect=mock_establish_connection
