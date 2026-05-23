@@ -7,20 +7,13 @@ import contextlib
 import inspect
 import logging
 import warnings
-from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final, Literal, Self, overload
 
 from bleak import BleakClient, BleakError, normalize_uuid_str
-from bleak.backends import BleakBackend
 from bleak.backends.client import BaseBleakClient, get_platform_client_backend_type
 from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import (
-    AdvertisementData,
-    AdvertisementDataCallback,
-    AdvertisementDataFilter,
-)
 from bleak_retry_connector import (
     ble_device_description,
     clear_cache,
@@ -51,6 +44,15 @@ def _get_device_address_type(device: BLEDevice) -> int:
 
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Callable
+
+    from bleak.backends import BleakBackend
+    from bleak.backends.scanner import (
+        AdvertisementData,
+        AdvertisementDataCallback,
+        AdvertisementDataFilter,
+    )
+
     from .base_scanner import BaseHaScanner
     from .manager import BluetoothManager
 

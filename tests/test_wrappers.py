@@ -4,21 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager, suppress
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import bleak
 import pytest
 from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
 from bleak.exc import BleakError
 from bleak_retry_connector import Allocations
 
 from habluetooth import HaBluetoothConnector
 from habluetooth import get_manager as _get_manager
-from habluetooth.manager import BluetoothManager
 from habluetooth.usage import (
     install_multiple_bleak_catcher,
     uninstall_multiple_bleak_catcher,
@@ -33,6 +30,13 @@ from . import (
     inject_advertisement,
     patch_discovered_devices,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Generator
+
+    from bleak.backends.scanner import AdvertisementData
+
+    from habluetooth.manager import BluetoothManager
 
 
 @contextmanager

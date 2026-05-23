@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .models import BluetoothServiceInfoBleak
+if TYPE_CHECKING:
+    from .models import BluetoothServiceInfoBleak
 
 ADVERTISING_TIMES_NEEDED = 16
 _ADVERTISING_TIMES_NEEDED = ADVERTISING_TIMES_NEEDED

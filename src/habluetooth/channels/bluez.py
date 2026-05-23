@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import socket
 from asyncio import timeout as asyncio_timeout
-from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from struct import Struct
 from typing import TYPE_CHECKING, cast
@@ -23,7 +21,12 @@ from ..const import (
     MEDIUM_MIN_CONN_INTERVAL,
     ConnectParams,
 )
-from ..scanner import HaScanner
+
+if TYPE_CHECKING:
+    import socket
+    from collections.abc import AsyncIterator, Callable
+
+    from ..scanner import HaScanner
 
 _LOGGER = logging.getLogger(__name__)
 _int = int
@@ -89,7 +92,7 @@ class BluetoothMGMTProtocol:
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         """Handle connection made."""
         _set_future_if_not_done(self.connection_made_future)
-        self.transport = cast(asyncio.Transport, transport)
+        self.transport = cast("asyncio.Transport", transport)
 
     def _write_to_socket(self, data: bytes) -> None:
         """
@@ -357,7 +360,7 @@ class MGMTBluetoothCtl:
             btmgmt_socket.close(self.sock)
             raise
         _LOGGER.debug("Bluetooth management socket connection established")
-        self.protocol = cast(BluetoothMGMTProtocol, protocol)
+        self.protocol = cast("BluetoothMGMTProtocol", protocol)
         self._on_connection_lost_future = loop.create_future()
 
     def _has_mgmt_capabilities_from_status(self, status: int) -> bool:

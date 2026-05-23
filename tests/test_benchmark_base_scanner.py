@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from bleak.backends.scanner import AdvertisementData
 from bluetooth_data_tools import monotonic_time_coarse
-from pytest_codspeed import BenchmarkFixture
 
 from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector, get_manager
 from habluetooth.channels.bluez import BluetoothMGMTProtocol
@@ -20,6 +19,10 @@ from . import (
     generate_advertisement_data,
     generate_ble_device,
 )
+
+if TYPE_CHECKING:
+    from bleak.backends.scanner import AdvertisementData
+    from pytest_codspeed import BenchmarkFixture
 
 pytestmark = pytest.mark.timeout(60)
 

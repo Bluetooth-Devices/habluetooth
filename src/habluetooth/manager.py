@@ -7,12 +7,10 @@ import itertools
 import logging
 import math
 import platform
-from collections.abc import Callable, Iterable
 from dataclasses import asdict
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final
 
-from bleak.backends.scanner import AdvertisementDataCallback
 from bleak_retry_connector import (
     NO_RSSI_VALUE,
     AllocationChangeEvent,
@@ -57,8 +55,10 @@ from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catc
 from .util import async_reset_adapter
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
     from bleak.backends.device import BLEDevice
-    from bleak.backends.scanner import AdvertisementData
+    from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 
     from .base_scanner import BaseHaScanner
     from .scanner import HaScanner
