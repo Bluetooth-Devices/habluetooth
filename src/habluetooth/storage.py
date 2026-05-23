@@ -143,11 +143,15 @@ def discovered_device_advertisement_data_from_dict(
             ),
             _deserialize_discovered_device_raw(data.get(DISCOVERED_DEVICE_RAW, {})),
         )
-    except Exception as err:  # pylint: disable=broad-except
+    except (KeyError, ValueError, TypeError):
+        _LOGGER.warning(
+            "Discovery cache shape mismatch, discarding cache; "
+            "adapter startup will be slow"
+        )
+    except Exception:  # pylint: disable=broad-except
         _LOGGER.exception(
-            "Error deserializing discovered_device_advertisement_data"
-            ", adapter startup will be slow: %s",
-            err,
+            "Unexpected error deserializing discovered_device_advertisement_data, "
+            "adapter startup will be slow"
         )
     return None
 
