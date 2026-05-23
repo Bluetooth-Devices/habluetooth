@@ -1342,7 +1342,8 @@ async def test_run_exits_when_scheduler_not_running() -> None:
         sched._running = False
         new_task = loop.create_task(worker._run())
         await asyncio.wait_for(new_task, timeout=1.0)
-        assert new_task.done() and not new_task.cancelled()
+        assert new_task.done()
+        assert not new_task.cancelled()
     finally:
         sched._running = True
         register_cancel()
@@ -1362,7 +1363,8 @@ async def test_run_exits_when_loop_detached() -> None:
         sched._loop = None
         new_task = asyncio.get_running_loop().create_task(worker._run())
         await asyncio.wait_for(new_task, timeout=1.0)
-        assert new_task.done() and not new_task.cancelled()
+        assert new_task.done()
+        assert not new_task.cancelled()
         sched._loop = original_loop
     finally:
         register_cancel()
