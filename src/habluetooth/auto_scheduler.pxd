@@ -8,6 +8,7 @@ cdef double _AUTO_REDISCOVERY_SWEEP_DURATION
 cdef double _AUTO_WINDOW_MAX_DURATION
 cdef double _AUTO_WINDOW_MIN_DURATION
 cdef double _AUTO_CONNECTING_DEFER
+cdef int NO_RSSI_VALUE
 
 
 cdef class ActiveScanRequest:
@@ -108,3 +109,13 @@ cdef class AutoScanScheduler:
     cpdef void start(self, object loop)
 
     cpdef void stop(self)
+
+    @cython.locals(
+        best_rssi=int,
+        rssi=int,
+        scanner=object,
+        mode=object,
+    )
+    cpdef tuple _resolve_fallback_for_address(
+        self, str address, str exclude_source
+    )
