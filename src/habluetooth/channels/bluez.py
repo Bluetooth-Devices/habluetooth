@@ -412,8 +412,7 @@ class MGMTBluetoothCtl:
             return await self._do_mgmt_op_get_connections(header)
         except (TimeoutError, OSError) as ex:
             _LOGGER.debug(
-                "MGMT capability check failed: %s - "
-                "likely missing NET_ADMIN/NET_RAW",
+                "MGMT capability check failed: %s - likely missing NET_ADMIN/NET_RAW",
                 ex,
             )
             return False

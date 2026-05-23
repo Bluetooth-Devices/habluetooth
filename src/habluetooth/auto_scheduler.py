@@ -253,7 +253,9 @@ class _ScannerWorker:
                 return
             await self._tick()
 
-    def _collect_due_buckets(self, now: float) -> tuple[
+    def _collect_due_buckets(
+        self, now: float
+    ) -> tuple[
         list[tuple[dict[ActiveScanRequest, float], list[ActiveScanRequest]]],
         list[ActiveScanRequest],
     ]:
