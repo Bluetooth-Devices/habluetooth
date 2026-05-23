@@ -2766,3 +2766,150 @@ async def test_async_request_active_window_restart_path_mode_mismatch() -> None:
         finally:
             noop_restart = False
             await ha_scanner.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_describe_side_channel_state_no_adapter_idx() -> None:
+    """Non-hci adapter names have no MGMT index so report the fallback path."""
+    ha_scanner = HaScanner(
+        BluetoothScanningMode.PASSIVE, "Core Bluetooth", "AA:BB:CC:DD:EE:01"
+    )
+    assert (
+        ha_scanner._describe_side_channel_state()
+        == "no adapter_idx; bleak detection_callback path"
+    )
+
+
+@pytest.mark.asyncio
+async def test_describe_side_channel_state_no_side_channel() -> None:
+    """When the manager never brought MGMT up we fall back to bleak's callback."""
+    manager = get_manager()
+    manager.has_advertising_side_channel = False
+    ha_scanner = HaScanner(BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:02")
+    assert (
+        ha_scanner._describe_side_channel_state()
+        == "MGMT side channel unavailable; bleak detection_callback path"
+    )
+
+
+@pytest.mark.asyncio
+async def test_describe_side_channel_state_unregistered() -> None:
+    """Side channel is alive but the scanner isn't in _side_channel_scanners."""
+    manager = get_manager()
+    manager.has_advertising_side_channel = True
+    manager._side_channel_scanners.clear()
+    ha_scanner = HaScanner(BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:03")
+    assert (
+        ha_scanner._describe_side_channel_state()
+        == "MGMT side channel up but hci0 unregistered"
+    )
+
+
+@pytest.mark.asyncio
+async def test_describe_side_channel_state_bound_to_other_scanner() -> None:
+    """Another scanner owns the hciN slot in _side_channel_scanners."""
+    manager = get_manager()
+    manager.has_advertising_side_channel = True
+    other = HaScanner(BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:04")
+    manager._side_channel_scanners[0] = other
+    ha_scanner = HaScanner(BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:05")
+    try:
+        assert (
+            ha_scanner._describe_side_channel_state()
+            == "MGMT side channel at hci0 bound to a different scanner"
+        )
+    finally:
+        manager._side_channel_scanners.clear()
+
+
+@pytest.mark.asyncio
+async def test_describe_side_channel_state_protocol_down() -> None:
+    """Scanner is registered but the MGMT ctl is gone — socket died."""
+    manager = get_manager()
+    manager.has_advertising_side_channel = True
+    ha_scanner = HaScanner(BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:06")
+    manager._side_channel_scanners[0] = ha_scanner
+    manager._mgmt_ctl = None
+    try:
+        assert (
+            ha_scanner._describe_side_channel_state()
+            == "MGMT side channel registered at hci0 but protocol down"
+        )
+    finally:
+        manager._side_channel_scanners.clear()
+
+
+@pytest.mark.asyncio
+async def test_describe_side_channel_state_transport_closed() -> None:
+    """Scanner is registered, protocol exists, but the transport is gone."""
+    manager = get_manager()
+    manager.has_advertising_side_channel = True
+    ha_scanner = HaScanner(BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:07")
+    manager._side_channel_scanners[0] = ha_scanner
+    mgmt_ctl = Mock()
+    mgmt_ctl.protocol = Mock(spec=BluetoothMGMTProtocol)
+    mgmt_ctl.protocol.transport = None
+    manager._mgmt_ctl = mgmt_ctl
+    try:
+        assert (
+            ha_scanner._describe_side_channel_state()
+            == "MGMT side channel registered at hci0 but transport closed"
+        )
+    finally:
+        manager._side_channel_scanners.clear()
+        manager._mgmt_ctl = None
+
+
+@pytest.mark.asyncio
+async def test_describe_side_channel_state_feeding() -> None:
+    """Happy path: scanner registered, protocol and transport both live."""
+    manager = get_manager()
+    manager.has_advertising_side_channel = True
+    ha_scanner = HaScanner(BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:08")
+    manager._side_channel_scanners[0] = ha_scanner
+    mgmt_ctl = Mock()
+    mgmt_ctl.protocol = Mock(spec=BluetoothMGMTProtocol)
+    mgmt_ctl.protocol.transport = Mock()
+    manager._mgmt_ctl = mgmt_ctl
+    try:
+        assert (
+            ha_scanner._describe_side_channel_state()
+            == "MGMT side channel feeding hci0"
+        )
+    finally:
+        manager._side_channel_scanners.clear()
+        manager._mgmt_ctl = None
+
+
+@pytest.mark.asyncio
+async def test_scanner_watchdog_log_includes_side_channel_state(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The 'gone quiet' restart log line carries the side-channel diagnostic."""
+    manager = get_manager()
+    manager.has_advertising_side_channel = True
+
+    class _NoRestartScanner(HaScanner):
+        # Skip the actual restart so the test just exercises the log path.
+        def _create_background_task(self, coro):
+            coro.close()
+
+    with patch_bleak_scanner_factory(MockBleakScanner):
+        ha_scanner = _NoRestartScanner(
+            BluetoothScanningMode.PASSIVE, "hci0", "AA:BB:CC:DD:EE:09"
+        )
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        try:
+            # Force the watchdog over its timeout without producing any
+            # advertisements, and clear out the side-channel registration
+            # to make the diagnostic message distinctive.
+            manager._side_channel_scanners.clear()
+            ha_scanner._last_detection = (
+                ha_scanner._last_detection - SCANNER_WATCHDOG_TIMEOUT - 1.0
+            )
+            with caplog.at_level(logging.DEBUG, logger="habluetooth.scanner"):
+                ha_scanner._async_scanner_watchdog()
+            assert "MGMT side channel up but hci0 unregistered" in caplog.text
+        finally:
+            await ha_scanner.async_stop()
