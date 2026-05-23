@@ -4186,3 +4186,43 @@ async def test_worker_tick_dispatch_short_window_still_resets_full_sweep() -> No
         cancel()
         c_owner()
         c_fb()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_per_device_window_satisfies_sweep_floor() -> None:
+    """
+    A per-device active window advances ``_sweep_last_completed``.
+
+    The rediscovery sweep is a floor: scanners that haven't
+    active-scanned in 12 h get a 15 s sweep. A scanner that just ran
+    a per-device active window has already actively scanned, so its
+    next sweep is pushed out a full ``AUTO_REDISCOVERY_INTERVAL``
+    even when ``sweep_due`` was False at tick time.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:3E"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=6.0
+    )
+    scanner = _DiscoverableAutoScanner("AA:00:00:00:3E:01", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject_with_rssi(scanner, address, rssi=-50)
+        worker = sched._workers[scanner.source]
+        # Place sweep clock recent enough that sweep is NOT due — we
+        # want to prove the per-device window still advances it.
+        recent_sweep = loop.time() - 60.0
+        worker._sweep_last_completed = recent_sweep
+        _make_due(sched, address)
+        before = loop.time()
+        await _run_worker_tick(sched, scanner.source)
+        assert scanner.active_window_calls == [6.0]
+        # Per-device window pushed sweep clock from "60s ago" to "now",
+        # demonstrating any active scan satisfies the sweep floor.
+        assert worker._sweep_last_completed > recent_sweep
+        assert worker._sweep_last_completed >= before
+    finally:
+        cancel()
+        register_cancel()
