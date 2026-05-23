@@ -3,42 +3,18 @@
 import time
 
 import pytest
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
-from bluetooth_data_tools import monotonic_time_coarse
 
-from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector, get_manager
+from habluetooth import HaBluetoothConnector, get_manager
 
+from . import (
+    InjectableRemoteScanner as _SeedFakeScanner,
+)
 from . import (
     MockBleakClient,
     generate_advertisement_data,
     generate_ble_device,
     inject_advertisement_with_source,
 )
-
-
-class _SeedFakeScanner(BaseHaRemoteScanner):
-    """Minimal remote scanner that exposes inject_advertisement for tests."""
-
-    def inject_advertisement(
-        self,
-        device: BLEDevice,
-        advertisement_data: AdvertisementData,
-        now: float | None = None,
-    ) -> None:
-        """Inject an advertisement through the scanner's normal entry point."""
-        self._async_on_advertisement(
-            device.address,
-            advertisement_data.rssi,
-            device.name,
-            advertisement_data.service_uuids,
-            advertisement_data.service_data,
-            advertisement_data.manufacturer_data,
-            advertisement_data.tx_power,
-            {"scanner_specific_data": "test"},
-            now or monotonic_time_coarse(),
-        )
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for the prefix-extension policy

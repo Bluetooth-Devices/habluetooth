@@ -15,9 +15,8 @@ from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bleak.exc import BleakError
 from bleak_retry_connector import Allocations
-from bluetooth_data_tools import monotonic_time_coarse
 
-from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector
+from habluetooth import HaBluetoothConnector
 from habluetooth import get_manager as _get_manager
 from habluetooth.manager import BluetoothManager
 from habluetooth.usage import (
@@ -28,6 +27,7 @@ from habluetooth.wrappers import HaBleakScannerWrapper
 
 from . import (
     HCI0_SOURCE_ADDRESS,
+    InjectableRemoteScanner,
     generate_advertisement_data,
     generate_ble_device,
     inject_advertisement,
@@ -43,8 +43,8 @@ def mock_shutdown(manager: BluetoothManager) -> Generator[None, None, None]:
     manager.shutdown = False
 
 
-class FakeScanner(BaseHaRemoteScanner):
-    """Fake scanner."""
+class FakeScanner(InjectableRemoteScanner):
+    """Wrappers-test scanner that empties _details for routing tests."""
 
     def __init__(
         self,
@@ -60,22 +60,6 @@ class FakeScanner(BaseHaRemoteScanner):
     def __repr__(self) -> str:
         """Return the representation."""
         return f"FakeScanner({self.name})"
-
-    def inject_advertisement(
-        self, device: BLEDevice, advertisement_data: AdvertisementData
-    ) -> None:
-        """Inject an advertisement."""
-        self._async_on_advertisement(
-            device.address,
-            advertisement_data.rssi,
-            device.name,
-            advertisement_data.service_uuids,
-            advertisement_data.service_data,
-            advertisement_data.manufacturer_data,
-            advertisement_data.tx_power,
-            device.details | {"scanner_specific_data": "test"},
-            monotonic_time_coarse(),
-        )
 
 
 class BaseFakeBleakClient:
