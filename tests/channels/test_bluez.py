@@ -1129,7 +1129,7 @@ async def test_reconnect_task() -> None:
             raise BluetoothSocketError("Test error")
         else:
             # Stop the test
-            raise asyncio.CancelledError()
+            raise asyncio.CancelledError
 
     with patch.object(
         ctl, "_establish_connection", side_effect=mock_establish_connection
