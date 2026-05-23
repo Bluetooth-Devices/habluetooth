@@ -1135,21 +1135,14 @@ class BluetoothManager:
         """
         Run an on-demand active sweep across every AUTO scanner.
 
-        Intended for HA config-flow discovery: an integration can
-        call this to actively probe for new devices on the bus
-        rather than wait for the 12 hour rediscovery sweep.
-        Awaits ``duration`` seconds so the caller can read newly
-        discovered advertisements via the manager's history APIs
-        after this returns.
-
-        Concurrent callers share an in-flight sweep; the bus never
-        runs two on-demand windows simultaneously. Scanners with a
-        connect in progress are skipped (adjacent scanners cover the
-        same devices); ACTIVE scanners are already actively scanning
-        and need no flip. ``duration`` defaults to
-        ``DEFAULT_ON_DEMAND_SWEEP_DURATION`` (10s) and is clamped to
+        Intended for HA config-flow discovery: probes the bus
+        actively without waiting for the 12 h rediscovery cadence,
+        awaits ``duration`` so the caller can then read
+        newly-discovered advertisements. Default 10s; clamped to
         ``[AUTO_WINDOW_MIN_DURATION, AUTO_WINDOW_MAX_DURATION]`` by
-        the scheduler.
+        the scheduler. Concurrent callers dedupe to one bus-wide
+        window (a longer request extends the in-flight one); see
+        ``AutoScanScheduler.async_request_sweep``.
         """
         if duration is None:
             duration = DEFAULT_ON_DEMAND_SWEEP_DURATION
