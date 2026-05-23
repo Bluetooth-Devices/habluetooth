@@ -1268,12 +1268,15 @@ async def test_command_response_cleanup_on_exception() -> None:
     )
 
     opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
+
     # Test cleanup on exception
-    with pytest.raises(ValueError):
+    async def _raise_inside_command_response() -> None:
         async with protocol.command_response(opcode) as response_future:
-            # Verify we got a future
             assert response_future is not None
             raise ValueError("Test exception")
+
+    with pytest.raises(ValueError, match="Test exception"):
+        await _raise_inside_command_response()
 
     # The future should still exist after exception
     # (cleanup just removes it from internal tracking)
