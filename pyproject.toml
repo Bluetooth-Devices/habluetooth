@@ -129,6 +129,7 @@ select = [
     "D",    # flake8-docstrings
     "DTZ",  # flake8-datetimez
     "E",    # pycodestyle
+    "ERA",  # eradicate
     "EXE",  # flake8-executable
     "F",    # pyflake
     "FA",   # flake8-future-annotations

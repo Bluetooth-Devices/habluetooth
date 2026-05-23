@@ -481,22 +481,22 @@ class MGMTBluetoothCtl:
             _LOGGER.error("Invalid MAC address: %s", address)
             return False
 
-        # Build command structure
+        # Build command structure (C definitions from BlueZ mgmt-api.txt):
         # struct mgmt_cp_load_conn_param {
         #     uint16_t param_count;
         #     struct mgmt_conn_param params[0];
-        # }
+        # };
         # struct mgmt_conn_param {
         #     struct mgmt_addr_info addr;
         #     uint16_t min_interval;
         #     uint16_t max_interval;
         #     uint16_t latency;
         #     uint16_t timeout;
-        # }
+        # };
         # struct mgmt_addr_info {
         #     bdaddr_t bdaddr;
         #     uint8_t type;
-        # }
+        # };
 
         # Get the appropriate connection parameters based on the enum
         if params is ConnectParams.FAST:

@@ -1225,8 +1225,8 @@ async def test_set_fallback_interval_big() -> None:
         is None
     )
 
-    # Force the interval to be really big and check it doesn't expire using the default
-    # timeout (900)
+    # Force the interval to be really big and check it doesn't expire using
+    # the default timeout of 900 seconds.
 
     get_manager().async_set_fallback_availability_interval(
         "44:44:33:11:23:12", 604800.0
