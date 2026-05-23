@@ -137,6 +137,7 @@ select = [
     "I",    # isort
     "ICN",  # flake8-import-conventions
     "INP",  # flake8-no-pep420
+    "ISC",  # flake8-implicit-str-concat
     "NPY",  # numpy-specific rules
     "PERF", # Perflint
     "PGH",  # pygrep-hooks

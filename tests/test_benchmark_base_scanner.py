@@ -998,7 +998,7 @@ async def test_inject_100_bluez_raw_end_to_end_changed(
         ad_data = (
             b"\x02\x01\x06"  # Flags
             b"\x08\x09TestDev"  # Complete Local Name = "TestDev"
-            + b"\x04\xff\x01\x00"  # Manufacturer data header: company 0x0001
+            b"\x04\xff\x01\x00"  # Manufacturer data header: company 0x0001
             + bytes((i,))  # Varying data byte
         )
         param_len = 6 + 1 + 1 + 4 + 2 + len(ad_data)

@@ -1238,8 +1238,8 @@ async def test_command_response_context_manager() -> None:
         # Simulate receiving a response
         response_data = (
             b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
-            + b"\x00\x00"  # controller index
-            + b"\x03\x00"  # param_len (3 bytes: opcode=2 + status=1)
+            b"\x00\x00"  # controller index
+            b"\x03\x00"  # param_len (3 bytes: opcode=2 + status=1)
             + opcode.to_bytes(2, "little")  # opcode
             + b"\x00"  # status (success)
         )
@@ -1299,8 +1299,8 @@ async def test_get_connections_response_handling() -> None:
         # Test with permission denied status (0x14)
         response_data = (
             b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
-            + b"\x00\x00"  # controller index
-            + b"\x03\x00"  # param_len
+            b"\x00\x00"  # controller index
+            b"\x03\x00"  # param_len
             + opcode.to_bytes(2, "little")  # opcode
             + b"\x14"  # status (permission denied)
         )
@@ -1334,7 +1334,7 @@ async def test_get_connections_response_with_data() -> None:
         extra_data = b"\x01\x02\x03\x04"
         response_data = (
             b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
-            + b"\x00\x00"  # controller index
+            b"\x00\x00"  # controller index
             + (3 + len(extra_data)).to_bytes(
                 2, "little"
             )  # param_len (opcode=2 + status=1 + extra_data)
