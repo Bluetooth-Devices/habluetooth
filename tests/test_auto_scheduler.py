@@ -4226,3 +4226,71 @@ async def test_worker_tick_per_device_window_satisfies_sweep_floor() -> None:
     finally:
         cancel()
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_dispatch_samples_time_per_fallback() -> None:
+    """
+    Each fallback's ``window_end`` is anchored to its dispatch time.
+
+    Each ``await fb.async_request_active_window(duration)`` can take
+    seconds in production (scanner stop/restart on Linux). Reusing
+    the owner's tick-start ``now`` for every fallback's
+    ``note_window_dispatched`` would leave later fallbacks'
+    ``_window_end`` in the past — defeating the suppression. Use a
+    first fallback that ``asyncio.sleep``s during its dispatch so the
+    second fallback's ``loop.time()`` is strictly later than the
+    owner's tick-start ``now``, then verify the second fallback's
+    ``_window_end`` reflects its own dispatch time.
+    """
+
+    class _SlowScanner(_DiscoverableAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            self.active_window_calls.append(duration)
+            await asyncio.sleep(0.1)
+            return self._return_value
+
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_a = "11:22:33:44:55:3F"
+    addr_b = "11:22:33:44:55:40"
+    c1 = manager.async_register_active_scan(
+        addr_a, scan_interval=120.0, scan_duration=6.0
+    )
+    c2 = manager.async_register_active_scan(
+        addr_b, scan_interval=120.0, scan_duration=6.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:3F:01", BluetoothScanningMode.AUTO)
+    fb_slow = _SlowScanner("AA:00:00:00:3F:02", BluetoothScanningMode.AUTO)
+    fb_late = _DiscoverableAutoScanner("AA:00:00:00:3F:03", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_s = manager.async_register_scanner(fb_slow)
+    c_l = manager.async_register_scanner(fb_late)
+    try:
+        _inject_with_rssi(owner, addr_a, rssi=-50)
+        _inject_with_rssi(owner, addr_b, rssi=-50)
+        fb_slow.add_discovered(addr_a, rssi=-60)
+        fb_late.add_discovered(addr_b, rssi=-60)
+        owner._add_connecting(addr_a)
+        _make_due(sched, addr_a)
+        _make_due(sched, addr_b)
+        tick_start = loop.time()
+        await _run_worker_tick(sched, owner.source)
+        # Both fallbacks were called.
+        assert fb_slow.active_window_calls == [6.0]
+        assert fb_late.active_window_calls == [6.0]
+        # fb_late was dispatched AFTER fb_slow's 0.1s sleep, so its
+        # _window_end is anchored to dispatch_now ≈ tick_start + 0.1,
+        # i.e. > tick_start + duration (6.0). The owner's tick-start
+        # ``now`` would have given tick_start + 6.0 ≈ tick_start + 6.0
+        # exactly, which is < tick_start + 6.0 + 0.05.
+        fb_late_worker = sched._workers[fb_late.source]
+        assert fb_late_worker._window_end > tick_start + 6.0 + 0.05
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        c1()
+        c2()
+        c_owner()
+        c_s()
+        c_l()

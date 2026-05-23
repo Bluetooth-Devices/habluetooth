@@ -545,13 +545,24 @@ class _ScannerWorker:
         # same reason the owner path advances on failure — a stuck
         # fallback must not busy-loop the worker. The next normal
         # tick will pick the address up at its full cadence.
+        loop = self._scheduler._loop
+        if TYPE_CHECKING:
+            assert loop is not None
         workers = self._scheduler._workers
         fb_worker: _ScannerWorker | None
         for fb, fb_due in fallback_groups.values():
             duration = self._scheduler._coalesce_duration(fb_due)
             fb_worker = workers.get(fb.source)
             if fb_worker is not None:
-                fb_worker.note_window_dispatched(now + duration, now)
+                # Sample loop.time() per iteration: each prior
+                # ``async_request_active_window`` await can take
+                # seconds (scanner stop/restart on Linux), so the
+                # owner's tick-start ``now`` is stale for later
+                # fallbacks and would put ``_window_end`` in the
+                # past — leaving the fallback worker's tick
+                # suppression off during the delegated window.
+                dispatch_now = loop.time()
+                fb_worker.note_window_dispatched(dispatch_now + duration, dispatch_now)
             try:
                 await fb.async_request_active_window(duration)
             except Exception:
