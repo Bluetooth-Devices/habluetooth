@@ -1149,6 +1149,35 @@ class BluetoothManager:
             self.slot_manager.get_allocations(event.adapter)
         )
 
+    def _unregister_source_callback(
+        self,
+        callbacks_dict: dict[str | None, set[Callable[..., None]]],
+        source: str | None,
+        callback: Callable[..., None],
+    ) -> None:
+        """Unregister a source-keyed callback."""
+        if (callbacks := callbacks_dict.get(source)) is not None:
+            callbacks.discard(callback)
+            if not callbacks:
+                del callbacks_dict[source]
+
+    def _dispatch_source_callbacks(
+        self,
+        callbacks_dict: dict[str | None, set[Callable[..., None]]],
+        source: str | None,
+        payload: object,
+        label: str,
+    ) -> None:
+        """Dispatch payload to source-specific and global (None) callbacks."""
+        for source_key in (source, None):
+            if not (callbacks := callbacks_dict.get(source_key)):
+                continue
+            for callback_ in callbacks.copy():
+                try:
+                    callback_(payload)
+                except Exception:  # pylint: disable=broad-except
+                    _LOGGER.exception("Error in %s", label)
+
     def async_on_allocation_changed(self, allocations: Allocations) -> None:
         """Call allocation callbacks."""
         source = self._adapter_sources.get(allocations.adapter, allocations.adapter)
@@ -1159,33 +1188,23 @@ class BluetoothManager:
             allocated=allocations.allocated,
         )
         self._allocations[source] = ha_slot_allocations
-        for source_key in (source, None):
-            if not (
-                allocation_callbacks := self._allocations_callbacks.get(source_key)
-            ):
-                continue
-            for callback_ in allocation_callbacks:
-                try:
-                    callback_(ha_slot_allocations)
-                except Exception:
-                    _LOGGER.exception("Error in allocation callback")
+        self._dispatch_source_callbacks(
+            self._allocations_callbacks,
+            source,
+            ha_slot_allocations,
+            "allocation callback",
+        )
 
     def _async_on_scanner_registration(
         self, scanner: BaseHaScanner, event: HaScannerRegistrationEvent
     ) -> None:
         """Call scanner callbacks."""
-        for source_key in (scanner.source, None):
-            if not (
-                scanner_callbacks := self._scanner_registration_callbacks.get(
-                    source_key
-                )
-            ):
-                continue
-            for callback_ in scanner_callbacks:
-                try:
-                    callback_(HaScannerRegistration(event, scanner))
-                except Exception:
-                    _LOGGER.exception("Error in scanner callback")
+        self._dispatch_source_callbacks(
+            self._scanner_registration_callbacks,
+            scanner.source,
+            HaScannerRegistration(event, scanner),
+            "scanner callback",
+        )
 
     def async_current_allocations(
         self, source: str | None = None
@@ -1204,15 +1223,12 @@ class BluetoothManager:
     ) -> CALLBACK_TYPE:
         """Register a callback to be called when an allocations change."""
         self._allocations_callbacks.setdefault(source, set()).add(callback)
-        return partial(self._async_unregister_allocation_callback, callback, source)
-
-    def _async_unregister_allocation_callback(
-        self, callback: Callable[[HaBluetoothSlotAllocations], None], source: str | None
-    ) -> None:
-        if (callbacks := self._allocations_callbacks.get(source)) is not None:
-            callbacks.discard(callback)
-            if not callbacks:
-                del self._allocations_callbacks[source]
+        return partial(
+            self._unregister_source_callback,
+            self._allocations_callbacks,
+            source,
+            callback,
+        )
 
     def async_register_scanner_registration_callback(
         self, callback: Callable[[HaScannerRegistration], None], source: str | None
@@ -1220,16 +1236,11 @@ class BluetoothManager:
         """Register a callback to be called when a scanner is added or removed."""
         self._scanner_registration_callbacks.setdefault(source, set()).add(callback)
         return partial(
-            self._async_unregister_scanner_registration_callback, callback, source
+            self._unregister_source_callback,
+            self._scanner_registration_callbacks,
+            source,
+            callback,
         )
-
-    def _async_unregister_scanner_registration_callback(
-        self, callback: Callable[[HaScannerRegistration], None], source: str | None
-    ) -> None:
-        if (callbacks := self._scanner_registration_callbacks.get(source)) is not None:
-            callbacks.discard(callback)
-            if not callbacks:
-                del self._scanner_registration_callbacks[source]
 
     def async_current_scanners(self) -> list[BaseHaScanner]:
         """Return the current scanners."""
@@ -1241,32 +1252,21 @@ class BluetoothManager:
         """Register a callback to be called when a scanner mode changes."""
         self._scanner_mode_change_callbacks.setdefault(source, set()).add(callback)
         return partial(
-            self._async_unregister_scanner_mode_change_callback, callback, source
+            self._unregister_source_callback,
+            self._scanner_mode_change_callbacks,
+            source,
+            callback,
         )
-
-    def _async_unregister_scanner_mode_change_callback(
-        self, callback: Callable[[HaScannerModeChange], None], source: str | None
-    ) -> None:
-        """Unregister a scanner mode change callback."""
-        if (callbacks := self._scanner_mode_change_callbacks.get(source)) is not None:
-            callbacks.discard(callback)
-            if not callbacks:
-                del self._scanner_mode_change_callbacks[source]
 
     def scanner_mode_changed(self, scanner: BaseHaScanner) -> None:
         """Notify callbacks that a scanner's mode has changed."""
-        mode_change = HaScannerModeChange(
-            scanner=scanner,
-            requested_mode=scanner.requested_mode,
-            current_mode=scanner.current_mode,
+        self._dispatch_source_callbacks(
+            self._scanner_mode_change_callbacks,
+            scanner.source,
+            HaScannerModeChange(
+                scanner=scanner,
+                requested_mode=scanner.requested_mode,
+                current_mode=scanner.current_mode,
+            ),
+            "scanner mode change callback",
         )
-        for source_key in (scanner.source, None):
-            if not (
-                mode_callbacks := self._scanner_mode_change_callbacks.get(source_key)
-            ):
-                continue
-            for callback_ in mode_callbacks:
-                try:
-                    callback_(mode_change)
-                except Exception:  # pylint: disable=broad-except
-                    _LOGGER.exception("Error in scanner mode change callback")
