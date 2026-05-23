@@ -497,6 +497,12 @@ class _ScannerWorker:
             self._sweep_last_completed = (
                 now - _AUTO_REDISCOVERY_INTERVAL + _AUTO_CONNECTING_DEFER
             )
+        # Entries were advanced by ``scan_interval`` and the fallback
+        # worker was notified before this await; a failing dispatch
+        # is treated like a successful one (no soon-retry) for the
+        # same reason the owner path advances on failure — a stuck
+        # fallback must not busy-loop the worker. The next normal
+        # tick will pick the address up at its full cadence.
         workers = self._scheduler._workers
         fb_worker: _ScannerWorker | None
         for fb, fb_due in fallback_groups.values():
