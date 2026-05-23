@@ -545,6 +545,13 @@ class _ScannerWorker:
         # same reason the owner path advances on failure — a stuck
         # fallback must not busy-loop the worker. The next normal
         # tick will pick the address up at its full cadence.
+        # Dispatches are awaited sequentially on purpose: typical HA
+        # setups have 0-2 fallbacks per tick, the BlueZ stop/start
+        # path serializes at the daemon anyway, and a per-fallback
+        # try/except keeps a stuck one from masking errors on the
+        # others. ``asyncio.gather`` would parallelize but adds task
+        # creation cost and ExceptionGroup handling for no win at
+        # this scale.
         loop = self._scheduler._loop
         if TYPE_CHECKING:
             assert loop is not None
