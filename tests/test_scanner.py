@@ -2502,6 +2502,8 @@ async def test_detection_callback_coerces_non_str_name_and_non_int_tx_power() ->
     class _StrSubclass(str):
         """str subclass — `type() is not str` so coercion fires."""
 
+        __slots__ = ()
+
     class _IntLike:
         """Non-int that ``int()`` accepts (e.g. numpy.int64 stand-in)."""
 
