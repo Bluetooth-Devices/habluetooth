@@ -175,6 +175,11 @@ _AUTO_COALESCE_LOOKAHEAD = AUTO_COALESCE_LOOKAHEAD
 # that we don't busy-loop while it's in flight.
 _AUTO_CONNECTING_DEFER = 30.0
 
+# Joiner-extension threshold: a desired end-time within this margin
+# of the in-flight window's end does not trigger an extension.
+# Absorbs sub-second task-start jitter for same-duration callers.
+_ON_DEMAND_EXTENSION_SLOP = 1.0
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -677,12 +682,23 @@ class AutoScanScheduler:
         needs an ``await asyncio.sleep(0)`` between them so
         cancelled tasks finish before new workers spawn on the same
         sources; HA's flow never does this.
+
+        Also resolves any in-flight on-demand sweep future since the
+        leader is a caller task that ``worker.stop()`` cannot reach.
         """
         self._running = False
         for worker in self._workers.values():
             worker.stop()
         self._workers.clear()
         self._needs.clear()
+        # done() guard mirrors the leader's finally for symmetry;
+        # a future left non-None after completion would otherwise
+        # raise InvalidStateError here.
+        future = self._on_demand_sweep_future
+        if future is not None and not future.done():
+            future.set_result(None)
+        self._on_demand_sweep_future = None
+        self._on_demand_sweep_end = 0.0
         self._loop = None
 
     def add_scanner(self, scanner: BaseHaScanner) -> None:
@@ -862,7 +878,7 @@ class AutoScanScheduler:
             )
         )
 
-    async def _flip_scanners_for_sweep(self, duration: float) -> None:
+    async def _flip_scanners_for_sweep(self, duration: float) -> None:  # noqa: C901
         """
         Flip every non-busy AUTO scanner into a ``duration``-second window.
 
@@ -875,33 +891,56 @@ class AutoScanScheduler:
         (``BaseHaScanner.async_request_active_window`` contract),
         so the same helper serves both leader and joiner-extension.
         Caller must guard ``self._loop is not None``.
+
+        Pre-await bumps ``_window_end`` to suppress the worker's own
+        tick during the window; ``_sweep_last_completed`` is bumped
+        post-await only on ``True`` so a declined/raised flip leaves
+        the 12 h rediscovery floor unsatisfied for that scanner.
         """
         if TYPE_CHECKING:
             assert self._loop is not None
         now = self._loop.time()
         window_end = now + duration
-        targets: list[BaseHaScanner] = []
+        targets: list[tuple[_ScannerWorker, BaseHaScanner]] = []
         for worker in self._workers.values():
             scanner = worker._scanner
             if scanner._connections_in_progress() > 0:
                 continue
-            worker.note_window_dispatched(window_end, now)
-            targets.append(scanner)
+            if worker._window_end < window_end:
+                worker._window_end = window_end
+            targets.append((worker, scanner))
         if not targets:
             return
         results = await asyncio.gather(
-            *(scanner.async_request_active_window(duration) for scanner in targets),
+            *(scanner.async_request_active_window(duration) for _, scanner in targets),
             return_exceptions=True,
         )
-        for scanner, result in zip(targets, results, strict=True):
-            # Exception not BaseException so a CancelledError surfaced
-            # as a result propagates instead of being mis-logged.
+        for (worker, scanner), result in zip(targets, results, strict=True):
+            if result is True:
+                if worker._sweep_last_completed < now:
+                    worker._sweep_last_completed = now
+                continue
             if isinstance(result, Exception):
                 _LOGGER.warning(
                     "%s: error running on-demand active window of %.1fs: %s",
                     scanner.name,
                     duration,
                     result,
+                )
+            elif isinstance(result, BaseException):
+                # CancelledError etc. from a scanner that internally
+                # cancelled; best-effort, log distinctly from a
+                # genuine False-decline so logs do not mislead.
+                _LOGGER.debug(
+                    "%s: cancelled during on-demand active window of %.1fs",
+                    scanner.name,
+                    duration,
+                )
+            else:
+                _LOGGER.debug(
+                    "%s: declined on-demand active window of %.1fs",
+                    scanner.name,
+                    duration,
                 )
 
     async def async_request_active_scan(self, duration: float) -> None:
@@ -919,9 +958,9 @@ class AutoScanScheduler:
         in-flight window: re-flip the scanners and push
         ``_on_demand_sweep_end`` out; the leader's sleep loop
         re-reads it on each wake, so an extension just makes the
-        leader sleep again. The 1s slop on the extension threshold
-        absorbs task-start jitter so same-duration concurrent
-        callers do not trigger bogus extensions.
+        leader sleep again. ``_ON_DEMAND_EXTENSION_SLOP`` on the
+        extension threshold absorbs task-start jitter so same-
+        duration concurrent callers do not trigger bogus extensions.
 
         Cancellation: leader's cancel propagates to its caller and
         joiners wake to ``None`` (best-effort — they get whatever
@@ -941,7 +980,7 @@ class AutoScanScheduler:
         desired_end = now + duration
         in_flight = self._on_demand_sweep_future
         if in_flight is not None:
-            if desired_end - self._on_demand_sweep_end > 1.0:
+            if desired_end - self._on_demand_sweep_end > _ON_DEMAND_EXTENSION_SLOP:
                 self._on_demand_sweep_end = desired_end
                 # asyncio.shield the extension flip so a cancelled
                 # joiner does not leave the shared end pushed out
@@ -961,9 +1000,14 @@ class AutoScanScheduler:
                     break
                 await asyncio.sleep(remaining)
         finally:
-            self._on_demand_sweep_future = None
-            self._on_demand_sweep_end = 0.0
-            future.set_result(None)
+            # Identity check so a stop+start(new_loop) cycle does
+            # not let this orphan leader clobber the fresh state.
+            if self._on_demand_sweep_future is future:
+                self._on_demand_sweep_future = None
+                self._on_demand_sweep_end = 0.0
+            # stop() may have already resolved the future.
+            if not future.done():
+                future.set_result(None)
 
     def async_diagnostics(self) -> dict[str, Any]:
         """
