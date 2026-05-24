@@ -207,18 +207,7 @@ async def test_worker_tick_advances_by_scan_interval_from_window_start() -> None
 
 @pytest.mark.asyncio
 async def test_worker_tick_coalesces_near_future_due_entries() -> None:
-    """
-    Entries due within AUTO_COALESCE_LOOKAHEAD seconds ride the current window.
-
-    Without lookahead, two devices owned by the same scanner with
-    next_due staggered by ~10s (typical of integrations registered a
-    few seconds apart) trigger back-to-back radio flips: the first
-    tick fires for device A, returns, the worker re-ticks immediately
-    because B's next_due is now in the past, and the radio cycles
-    active->passive->active within milliseconds. With lookahead, B's
-    near-future entry is pulled into A's bucket and both advance to
-    now + scan_interval, syncing them up permanently after the shift.
-    """
+    """Staggered registrations sync to one window instead of back-to-back flips."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -263,14 +252,7 @@ async def test_worker_tick_coalesces_near_future_due_entries() -> None:
 
 @pytest.mark.asyncio
 async def test_worker_tick_does_not_fire_when_only_soon_due_no_immediate() -> None:
-    """
-    Soon-due entries alone do not trigger an early tick.
-
-    The lookahead pulls in near-future entries when there is already
-    an immediately-due entry to scan for; it must not fire a fresh
-    window early when nothing is immediately due (otherwise a single
-    registered device would trigger continuously).
-    """
+    """Soon-due entries alone do not trigger an early tick."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -296,16 +278,7 @@ async def test_worker_tick_does_not_fire_when_only_soon_due_no_immediate() -> No
 
 @pytest.mark.asyncio
 async def test_worker_tick_coalesces_near_max_window_boundary() -> None:
-    """
-    Lookahead covers the max window so a 30s window never outlives it.
-
-    A scan_duration of 30s (the public-boundary clamp ceiling) opens
-    a 30s window. The lookahead invariant
-    ``AUTO_COALESCE_LOOKAHEAD > AUTO_WINDOW_MAX_DURATION`` guarantees
-    a second device due at now+25 is still inside the lookahead and
-    rides this window, so the worker does not re-tick milliseconds
-    after passive transition.
-    """
+    """A 30s window pulls in a device due at now+25; lookahead > max window."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -340,15 +313,7 @@ async def test_worker_tick_coalesces_near_max_window_boundary() -> None:
 
 @pytest.mark.asyncio
 async def test_worker_tick_fallback_dispatch_rides_soon_due_entries() -> None:
-    """
-    Soon-due entries coalesce into the connecting-fallback dispatch too.
-
-    When the owner is mid-connect, the fallback gets the immediate
-    address's flip; a second address that is only soon-due (within
-    the lookahead) should ride that same dispatch so it does not
-    fire its own back-to-back window after the fallback's flip ends.
-    The soon-due entry is advanced by its full ``scan_interval``.
-    """
+    """Soon-due entries coalesce into the connecting-fallback dispatch."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -398,15 +363,7 @@ async def test_worker_tick_fallback_dispatch_rides_soon_due_entries() -> None:
 
 @pytest.mark.asyncio
 async def test_worker_tick_sweep_alone_pulls_in_soon_due_entries() -> None:
-    """
-    When the 12 h sweep fires with no immediate entry, soon-due ride it.
-
-    Without this, a sweep-only tick would open the rediscovery
-    window and any entry due within the lookahead would be left
-    overdue, firing a back-to-back active flip after the sweep
-    ended. Every active scan captures every advertiser in range so
-    riding the sweep is free.
-    """
+    """A sweep-only tick pulls in soon-due entries so they don't fire after."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()

@@ -356,25 +356,17 @@ class _ScannerWorker:
         """
         Return (due_buckets, all_due, any_immediate) for addresses owned.
 
-        ``due_buckets`` is the (address, entries, due) triples to
-        advance after the window; ``all_due`` is the flattened list
-        used to coalesce the window duration; ``any_immediate`` is
-        True iff at least one collected entry is ``t <= now``.
-        Prunes orphan ``_needs`` entries (history None) in passing.
+        Collects entries due within ``_AUTO_COALESCE_LOOKAHEAD`` of
+        ``now`` regardless of ``any_immediate``, so soon-due entries
+        ride a window the caller decides to open (a per-device hit
+        or the 12 h sweep). Caller must gate on
+        ``any_immediate or sweep_due`` — a scanner with only
+        soon-due entries must not tick early on its own. Prunes
+        orphan entries (history None) in passing.
 
-        Lookahead: every entry due within
-        ``_AUTO_COALESCE_LOOKAHEAD`` seconds of ``now`` is collected
-        regardless of ``any_immediate``. Caller decides whether to
-        fire — typically when ``any_immediate or sweep_due`` — so
-        soon-due entries also ride a sweep window when it fires
-        alone (any active radio captures every advertiser in range,
-        so pulling them in is free). A scanner with only soon-due
-        entries does not tick early on its own; ``_tick``'s gate
-        enforces that.
-
-        Invariant: ``_AUTO_COALESCE_LOOKAHEAD >= max window
-        duration`` so a window can never outlive its lookahead and
-        leave a device overdue when it ends.
+        Invariant: ``_AUTO_COALESCE_LOOKAHEAD > max window duration``
+        so a window cannot outlive its lookahead and leave a device
+        overdue when it ends.
         """
         source = self._scanner.source
         needs = self._scheduler._needs
