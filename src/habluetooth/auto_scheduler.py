@@ -691,10 +691,12 @@ class AutoScanScheduler:
             worker.stop()
         self._workers.clear()
         self._needs.clear()
-        # Leader clears _on_demand_sweep_future before set_result,
-        # so non-None here means it is still pending.
-        if self._on_demand_sweep_future is not None:
-            self._on_demand_sweep_future.set_result(None)
+        # done() guard mirrors the leader's finally for symmetry;
+        # a future left non-None after completion would otherwise
+        # raise InvalidStateError here.
+        future = self._on_demand_sweep_future
+        if future is not None and not future.done():
+            future.set_result(None)
         self._on_demand_sweep_future = None
         self._on_demand_sweep_end = 0.0
         self._loop = None
@@ -876,7 +878,7 @@ class AutoScanScheduler:
             )
         )
 
-    async def _flip_scanners_for_sweep(self, duration: float) -> None:
+    async def _flip_scanners_for_sweep(self, duration: float) -> None:  # noqa: C901
         """
         Flip every non-busy AUTO scanner into a ``duration``-second window.
 
@@ -918,14 +920,21 @@ class AutoScanScheduler:
                 if worker._sweep_last_completed < now:
                     worker._sweep_last_completed = now
                 continue
-            # CancelledError is not a subclass of Exception in 3.8+,
-            # so the isinstance check silently drops it (best-effort).
             if isinstance(result, Exception):
                 _LOGGER.warning(
                     "%s: error running on-demand active window of %.1fs: %s",
                     scanner.name,
                     duration,
                     result,
+                )
+            elif isinstance(result, BaseException):
+                # CancelledError etc. from a scanner that internally
+                # cancelled; best-effort, log distinctly from a
+                # genuine False-decline so logs do not mislead.
+                _LOGGER.debug(
+                    "%s: cancelled during on-demand active window of %.1fs",
+                    scanner.name,
+                    duration,
                 )
             else:
                 _LOGGER.debug(

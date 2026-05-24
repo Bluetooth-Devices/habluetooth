@@ -5069,6 +5069,41 @@ async def test_async_request_active_scan_exception_does_not_advance_sweep_floor(
 
 
 @pytest.mark.asyncio
+async def test_async_request_active_scan_cancelled_flip_logged_distinctly(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A CancelledError result is logged as cancelled, not as a False decline."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+
+    class _CancellingScanner(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            raise asyncio.CancelledError
+
+    cancelling = _CancellingScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(cancelling)
+    worker = sched._workers[cancelling.source]
+    original = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+    worker._sweep_last_completed = original
+    try:
+        with caplog.at_level(logging.DEBUG, logger="habluetooth.auto_scheduler"):
+            async with _no_real_sleep():
+                await manager.async_request_active_scan(duration=5.0)
+        assert worker._sweep_last_completed == original
+        assert any(
+            "cancelled during on-demand active window" in record.message
+            for record in caplog.records
+        )
+        assert not any(
+            "declined on-demand active window" in record.message
+            for record in caplog.records
+        )
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_async_request_active_scan_does_not_shrink_existing_window_end() -> None:
     """A pre-existing longer _window_end is not shrunk by a new flip."""
     manager = get_manager()
@@ -5140,6 +5175,20 @@ async def test_stop_resolves_in_flight_on_demand_sweep_future() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_is_safe_when_on_demand_future_already_done() -> None:
+    """stop() does not raise InvalidStateError on an already-resolved future."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    done_future: asyncio.Future[None] = loop.create_future()
+    done_future.set_result(None)
+    sched._on_demand_sweep_future = done_future
+    sched.stop()
+    assert manager._auto_scheduler._on_demand_sweep_future is None
+    assert manager._auto_scheduler._on_demand_sweep_end == 0.0
+
+
+@pytest.mark.asyncio
 async def test_stop_is_safe_without_in_flight_on_demand_sweep() -> None:
     """``stop()`` with no active sweep is a no-op for the sweep state."""
     manager = get_manager()
@@ -5149,8 +5198,8 @@ async def test_stop_is_safe_without_in_flight_on_demand_sweep() -> None:
     try:
         assert sched._on_demand_sweep_future is None
         sched.stop()
-        assert sched._on_demand_sweep_future is None
-        assert sched._on_demand_sweep_end == 0.0
+        assert manager._auto_scheduler._on_demand_sweep_future is None
+        assert manager._auto_scheduler._on_demand_sweep_end == 0.0
     finally:
         register_cancel()
 
