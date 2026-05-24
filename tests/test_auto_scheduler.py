@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -5010,6 +5010,35 @@ async def test_async_request_active_scan_no_op_when_every_dispatch_declines() ->
     finally:
         c_dec()
         c_raise()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_revert_skipped_on_concurrent_push() -> None:
+    """A concurrent _window_end push past our bump is not clobbered on revert."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    holder: list[Any] = []
+
+    class _MutatingScanner(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            self.active_window_calls.append(duration)
+            # Simulate a concurrent extension pushing _window_end out
+            # past the on-demand bump between pre-bump and result; the
+            # revert guard must observe the mismatch and leave it alone.
+            holder[0]._window_end = 1.0e12
+            return False
+
+    scanner = _MutatingScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    holder.append(sched._workers[scanner.source])
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_active_scan(duration=5.0)
+        # The concurrent push survived our revert (guarded by exact
+        # equality on the value we set).
+        assert holder[0]._window_end == 1.0e12
+    finally:
+        register_cancel()
 
 
 @pytest.mark.asyncio
