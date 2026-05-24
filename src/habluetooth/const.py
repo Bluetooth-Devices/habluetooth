@@ -67,23 +67,13 @@ AUTO_REDISCOVERY_SWEEP_DURATION: Final = 15.0
 AUTO_WINDOW_MIN_DURATION: Final = 5.0
 AUTO_WINDOW_MAX_DURATION: Final = 30.0
 
-# When the worker ticks, also pull in per-device entries due within
-# this many seconds so devices registered at staggered times coalesce
-# into one window instead of triggering back-to-back active flips
-# seconds apart. Devices pulled forward are scanned slightly early
-# (at most AUTO_COALESCE_LOOKAHEAD seconds) on this tick; their
-# next_due is advanced from now, so they sync up with the rest of
-# the bucket on subsequent ticks.
-#
-# Slop added to the coalesce lookahead so a device due exactly at
-# AUTO_WINDOW_MAX_DURATION away is still pulled in despite loop.time()
-# drifting forward between bucket collection and window open.
+# Per-device entries due within AUTO_COALESCE_LOOKAHEAD of now are
+# pulled into the current window so staggered registrations sync up
+# instead of triggering back-to-back active flips. Must exceed
+# AUTO_WINDOW_MAX_DURATION so a window can never outlive its
+# lookahead; the slop absorbs loop.time drift between bucket
+# collection and window open under a blocked event loop.
 AUTO_COALESCE_LOOKAHEAD_SLOP: Final = 5.0
-
-# Invariant: must be > AUTO_WINDOW_MAX_DURATION so a window can
-# never outlive the lookahead. If it did, a device due in the gap
-# would be left overdue when the window ends and fire a back-to-back
-# active flip — exactly the bug this coalescing is meant to prevent.
 AUTO_COALESCE_LOOKAHEAD: Final = AUTO_WINDOW_MAX_DURATION + AUTO_COALESCE_LOOKAHEAD_SLOP
 
 # Minimum values accepted by async_register_active_scan. Anything
