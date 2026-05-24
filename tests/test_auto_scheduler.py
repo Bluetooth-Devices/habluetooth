@@ -295,6 +295,93 @@ async def test_worker_tick_does_not_fire_when_only_soon_due_no_immediate() -> No
 
 
 @pytest.mark.asyncio
+async def test_worker_tick_coalesces_when_window_longer_than_short_lookahead() -> None:
+    """
+    Lookahead covers the maximum window so long windows do not cascade.
+
+    A scan_duration of 30s (the public-boundary clamp ceiling)
+    opens a 30s window. With the lookahead bounded by max window +
+    slop, a second device due at now+25 — past the previous 15s
+    lookahead but inside the new one — is pulled into the same
+    window and advances together, avoiding the back-to-back flip
+    when the 30s window ends.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_a = "11:22:33:44:55:01"
+    addr_b = "11:22:33:44:55:02"
+    cancel_a = manager.async_register_active_scan(
+        addr_a, scan_interval=300.0, scan_duration=30.0
+    )
+    cancel_b = manager.async_register_active_scan(
+        addr_b, scan_interval=300.0, scan_duration=30.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, addr_a)
+        _inject(scanner, addr_b)
+        now = loop.time()
+        entries_a = sched._needs[addr_a]
+        entries_b = sched._needs[addr_b]
+        for req in entries_a:
+            entries_a[req] = now - 1.0
+        for req in entries_b:
+            entries_b[req] = now + 25.0
+        await _run_worker_tick(sched, scanner.source)
+        # One 30s window covers both.
+        assert scanner.active_window_calls == [30.0]
+    finally:
+        cancel_a()
+        cancel_b()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_sweep_alone_pulls_in_soon_due_entries() -> None:
+    """
+    When the 12 h sweep fires with no immediate entry, soon-due ride it.
+
+    Without this, a sweep-only tick would open the rediscovery
+    window and any entry due within the lookahead would be left
+    overdue, firing a back-to-back active flip after the sweep
+    ended. Every active scan captures every advertiser in range so
+    riding the sweep is free.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=300.0, scan_duration=10.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        worker = sched._workers[scanner.source]
+        # Make the sweep due; per-device entry is soon-due but not
+        # immediate.
+        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        entries = sched._needs[address]
+        soon_due_at = loop.time() + 5.0
+        for req in entries:
+            entries[req] = soon_due_at
+        await _run_worker_tick(sched, scanner.source)
+        # Sweep fired; the soon-due entry was advanced so it does
+        # not trigger a back-to-back flip after the sweep ends.
+        assert len(scanner.active_window_calls) == 1
+        post_tick_now = loop.time()
+        new_due = next(iter(entries.values()))
+        assert new_due > soon_due_at
+        assert new_due == pytest.approx(post_tick_now + 300.0, abs=1.0)
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_worker_tick_coalesces_overlapping_requests() -> None:
     """Multiple requests for the same address coalesce on max scan_duration."""
     manager = get_manager()

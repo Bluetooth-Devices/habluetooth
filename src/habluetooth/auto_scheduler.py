@@ -351,24 +351,30 @@ class _ScannerWorker:
     ) -> tuple[
         list[tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]],
         list[ActiveScanRequest],
+        bool,
     ]:
         """
-        Return (due_buckets, all_due) for addresses this scanner owns.
+        Return (due_buckets, all_due, any_immediate) for addresses owned.
 
         ``due_buckets`` is the (address, entries, due) triples to
         advance after the window; ``all_due`` is the flattened list
-        used to coalesce the window duration. The address is carried
-        in each tuple so the connecting-fallback path in ``_tick`` can
-        look up an alternate scanner per address without re-walking
-        ``_needs``. Prunes orphan ``_needs`` entries (history None) in
-        passing.
+        used to coalesce the window duration; ``any_immediate`` is
+        True iff at least one collected entry is ``t <= now``.
+        Prunes orphan ``_needs`` entries (history None) in passing.
 
-        Lookahead: entries due within ``_AUTO_COALESCE_LOOKAHEAD``
-        seconds of ``now`` are also collected and advanced so devices
-        registered at staggered times do not trigger back-to-back
-        active flips a few seconds apart. The bucket is only returned
-        if at least one entry is immediately due (``t <= now``); a
-        scanner that only has soon-due entries does not tick early.
+        Lookahead: every entry due within
+        ``_AUTO_COALESCE_LOOKAHEAD`` seconds of ``now`` is collected
+        regardless of ``any_immediate``. Caller decides whether to
+        fire — typically when ``any_immediate or sweep_due`` — so
+        soon-due entries also ride a sweep window when it fires
+        alone (any active radio captures every advertiser in range,
+        so pulling them in is free). A scanner with only soon-due
+        entries does not tick early on its own; ``_tick``'s gate
+        enforces that.
+
+        Invariant: ``_AUTO_COALESCE_LOOKAHEAD >= max window
+        duration`` so a window can never outlive its lookahead and
+        leave a device overdue when it ends.
         """
         source = self._scanner.source
         needs = self._scheduler._needs
@@ -399,9 +405,7 @@ class _ScannerWorker:
                 continue
             due_buckets.append((address, entries, due))
             all_due.extend(due)
-        if not any_immediate:
-            return [], []
-        return due_buckets, all_due
+        return due_buckets, all_due, any_immediate
 
     def _advance_due(
         self,
@@ -445,9 +449,12 @@ class _ScannerWorker:
             return
         self._window_end = 0.0
         try:
-            due_buckets, all_due = self._collect_due_buckets(now)
+            due_buckets, all_due, any_immediate = self._collect_due_buckets(now)
             sweep_due = now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
-            if not all_due and not sweep_due:
+            # Gate on any_immediate (per-device hit now) or sweep_due
+            # (12 h floor). Soon-due-only entries ride a window that
+            # one of those triggers, but never trigger one alone.
+            if not any_immediate and not sweep_due:
                 return
             if self._scanner._connections_in_progress() > 0:
                 # Per-address advance happens inside _dispatch_to_fallback
