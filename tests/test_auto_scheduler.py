@@ -4989,6 +4989,9 @@ async def test_async_request_active_scan_no_op_when_every_dispatch_declines() ->
     async def _fail_on_sleep(delay: float) -> None:
         pytest.fail(f"async_request_active_scan slept for {delay}s on NOOP")
 
+    sched = manager._auto_scheduler
+    dec_worker = sched._workers[decliner.source]
+    raise_worker = sched._workers[raiser.source]
     try:
         before = loop.time()
         with patch("asyncio.sleep", new=_fail_on_sleep):
@@ -4999,9 +5002,51 @@ async def test_async_request_active_scan_no_op_when_every_dispatch_declines() ->
         assert loop.time() - before < 0.5
         assert manager._auto_scheduler._on_demand_sweep_future is None
         assert manager._auto_scheduler._on_demand_sweep_end == 0.0
+        # _window_end was pre-bumped for each worker but reverted post-result
+        # so the worker is not locked out of its own ticks. New workers start
+        # with _window_end == 0.0 and the flip should leave them there.
+        assert dec_worker._window_end == 0.0
+        assert raise_worker._window_end == 0.0
     finally:
         c_dec()
         c_raise()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_window_end_kept_for_succeeding() -> None:
+    """
+    Mixed True/False results: the True scanner keeps its bumped _window_end.
+
+    A decliner runs alongside a scanner that returns True. The
+    decliner's pre-bumped _window_end is reverted while the True
+    scanner keeps the bump so its periodic worker tick stays
+    suppressed for the duration of the real radio window.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+
+    class _DecliningScanner(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            self.active_window_calls.append(duration)
+            return False
+
+    decliner = _DecliningScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    good = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+    c_dec = manager.async_register_scanner(decliner)
+    c_good = manager.async_register_scanner(good)
+    dec_worker = sched._workers[decliner.source]
+    good_worker = sched._workers[good.source]
+    try:
+        async with _no_real_sleep():
+            await manager.async_request_active_scan(duration=5.0)
+        assert decliner.active_window_calls == [5.0]
+        assert good.active_window_calls == [5.0]
+        # Decliner reverted to 0.0; succeeding scanner retains the bump.
+        assert dec_worker._window_end == 0.0
+        assert good_worker._window_end > 0.0
+    finally:
+        c_dec()
+        c_good()
 
 
 @pytest.mark.asyncio

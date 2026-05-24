@@ -903,32 +903,49 @@ class AutoScanScheduler:
         tick during the window; ``_sweep_last_completed`` is bumped
         post-await only on ``True`` so a declined/raised flip leaves
         the 12 h rediscovery floor unsatisfied for that scanner.
+        Per-target ``_window_end`` is reverted to its pre-bump value
+        on a non-``True`` result (when our bump still holds) so a
+        declined / raised scanner does not stay locked out of its
+        own ticks for the on-demand duration with no actual radio
+        window open.
         """
         if TYPE_CHECKING:
             assert self._loop is not None
         now = self._loop.time()
         window_end = now + duration
-        targets: list[tuple[_ScannerWorker, BaseHaScanner]] = []
+        targets: list[tuple[_ScannerWorker, BaseHaScanner, float]] = []
         for worker in self._workers.values():
             scanner = worker._scanner
             if scanner._connections_in_progress() > 0:
                 continue
-            if worker._window_end < window_end:
+            previous_window_end = worker._window_end
+            if previous_window_end < window_end:
                 worker._window_end = window_end
-            targets.append((worker, scanner))
+            targets.append((worker, scanner, previous_window_end))
         if not targets:
             return False
         results = await asyncio.gather(
-            *(scanner.async_request_active_window(duration) for _, scanner in targets),
+            *(
+                scanner.async_request_active_window(duration)
+                for _, scanner, _ in targets
+            ),
             return_exceptions=True,
         )
         any_opened = False
-        for (worker, scanner), result in zip(targets, results, strict=True):
+        for (worker, scanner, previous_window_end), result in zip(
+            targets, results, strict=True
+        ):
             if result is True:
                 any_opened = True
                 if worker._sweep_last_completed < now:
                     worker._sweep_last_completed = now
                 continue
+            # No window opened for this scanner; if our bump still
+            # holds, revert so the worker can tick normally. A
+            # concurrent extension that pushed past us, or a _tick
+            # finally that cleared to 0, is left alone.
+            if worker._window_end == window_end:
+                worker._window_end = previous_window_end
             if isinstance(result, Exception):
                 _LOGGER.warning(
                     "%s: error running on-demand active window of %.1fs: %s",

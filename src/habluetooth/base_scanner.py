@@ -721,13 +721,22 @@ class BaseHaScanner:
         Run an active scan for ``duration`` seconds, then restore prior mode.
 
         Default no-op returning False. Subclasses that can flip the
-        underlying adapter / proxy into active scanning on demand should
-        override; ``True`` indicates the override actually flipped the
-        radio, ``False`` that the request was ignored. The current
-        scheduler does not branch on the return value (entries advance
-        by ``scan_interval`` regardless to avoid busy-looping a stuck
-        scanner), but the contract leaves room for callers that want
-        to surface a failed window.
+        underlying adapter / proxy into active scanning on demand
+        should override; ``True`` indicates the override actually
+        flipped the radio, ``False`` that the request was ignored.
+
+        The auto scheduler branches on the return value: per-device
+        ``_needs`` entries still advance by ``scan_interval``
+        regardless (to avoid busy-looping a stuck scanner), but a
+        ``True`` is what advances ``_sweep_last_completed`` (satisfies
+        the 12 h rediscovery floor) and counts toward the on-demand
+        sweep's "at least one window opened" predicate that lets the
+        leader's caller actually wait for the window. A ``False`` /
+        raised result reverts the on-demand pre-bumped
+        ``_window_end`` so the worker is not locked out of its own
+        ticks for a window that never opened. Implementations should
+        therefore return ``True`` only when the radio actually
+        entered active mode for the requested duration.
         """
         _LOGGER.debug(
             "%s: scanner does not support on-demand active windows", self.name
