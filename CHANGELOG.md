@@ -1,5 +1,16 @@
 # Changelog
 
+## v6.7.1 (2026-05-24)
+
+### Bug fixes
+
+
+- Address late review comments on async_request_active_scan ([`5ddc407`](https://github.com/Bluetooth-Devices/habluetooth/commit/5ddc40766b2be02999984b029edca2c3b82dcdc3))
+
+
+- Coalesce near-future due entries into the current window ([`e556e32`](https://github.com/Bluetooth-Devices/habluetooth/commit/e556e32511ca041938f1ad6e152c5fd7bc8de52e))
+
+
 ## v6.7.0 (2026-05-23)
 
 ### Features
