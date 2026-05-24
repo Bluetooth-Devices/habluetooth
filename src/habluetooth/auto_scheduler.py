@@ -175,12 +175,9 @@ _AUTO_COALESCE_LOOKAHEAD = AUTO_COALESCE_LOOKAHEAD
 # that we don't busy-loop while it's in flight.
 _AUTO_CONNECTING_DEFER = 30.0
 
-# Slop on the joiner-extension threshold: a joiner whose requested
-# end-time exceeds the in-flight window's end by less than this
-# margin does not trigger an extension. Absorbs sub-second task-start
-# jitter when concurrent same-duration callers race for the leader
-# slot, so two callers asking for the same duration cannot bogusly
-# re-flip the radio.
+# Joiner-extension threshold: a desired end-time within this margin
+# of the in-flight window's end does not trigger an extension.
+# Absorbs sub-second task-start jitter for same-duration callers.
 _ON_DEMAND_EXTENSION_SLOP = 1.0
 
 
@@ -686,24 +683,16 @@ class AutoScanScheduler:
         cancelled tasks finish before new workers spawn on the same
         sources; HA's flow never does this.
 
-        Also resolves the in-flight on-demand sweep future and
-        clears the related state: the leader task is a caller (not
-        a worker), so ``worker.stop()`` does not reach it. Without
-        this, an orphaned leader sleeping on the old loop would
-        wake later and wipe a fresh sweep's state set by a
-        subsequent ``start(new_loop)``, or any joiners parked on
-        ``asyncio.shield`` of the future would never resolve if
-        the loop is torn down before the leader's ``finally``.
+        Also resolves any in-flight on-demand sweep future since the
+        leader is a caller task that ``worker.stop()`` cannot reach.
         """
         self._running = False
         for worker in self._workers.values():
             worker.stop()
         self._workers.clear()
         self._needs.clear()
-        # The leader clears ``_on_demand_sweep_future`` before
-        # calling ``set_result`` in its finally, so a non-None
-        # value here means the leader has not yet entered its
-        # finally — the future is still pending, safe to resolve.
+        # Leader clears _on_demand_sweep_future before set_result,
+        # so non-None here means it is still pending.
         if self._on_demand_sweep_future is not None:
             self._on_demand_sweep_future.set_result(None)
         self._on_demand_sweep_future = None
@@ -901,13 +890,10 @@ class AutoScanScheduler:
         so the same helper serves both leader and joiner-extension.
         Caller must guard ``self._loop is not None``.
 
-        Pre-await each target's ``_window_end`` is bumped so the
-        worker's own ``_tick`` is suppressed during the in-flight
-        window. ``_sweep_last_completed`` is only bumped after the
-        flip resolves: a scanner whose ``async_request_active_window``
-        returned ``False`` (declined) or raised did not actually go
-        ACTIVE, so its 12 h rediscovery floor stays unsatisfied and
-        the worker's own periodic sweep can still fire as a retry.
+        Pre-await bumps ``_window_end`` to suppress the worker's own
+        tick during the window; ``_sweep_last_completed`` is bumped
+        post-await only on ``True`` so a declined/raised flip leaves
+        the 12 h rediscovery floor unsatisfied for that scanner.
         """
         if TYPE_CHECKING:
             assert self._loop is not None
@@ -932,11 +918,8 @@ class AutoScanScheduler:
                 if worker._sweep_last_completed < now:
                     worker._sweep_last_completed = now
                 continue
-            # return_exceptions=True captures CancelledError as a
-            # result; CancelledError is not a subclass of Exception
-            # in 3.8+, so the isinstance check skips it and the
-            # cancelled scanner is silently dropped (best-effort
-            # intent — the rest of the sweep keeps going).
+            # CancelledError is not a subclass of Exception in 3.8+,
+            # so the isinstance check silently drops it (best-effort).
             if isinstance(result, Exception):
                 _LOGGER.warning(
                     "%s: error running on-demand active window of %.1fs: %s",
@@ -945,8 +928,6 @@ class AutoScanScheduler:
                     result,
                 )
             else:
-                # Declined (returned False). Leave the sweep floor
-                # unsatisfied so the worker's periodic sweep retries.
                 _LOGGER.debug(
                     "%s: declined on-demand active window of %.1fs",
                     scanner.name,
@@ -1010,16 +991,12 @@ class AutoScanScheduler:
                     break
                 await asyncio.sleep(remaining)
         finally:
-            # Only clear state that is still ours: ``stop()`` may
-            # have resolved the future and a subsequent
-            # ``start(new_loop)`` may have installed a fresh one
-            # that this orphan leader must not clobber.
+            # Identity check so a stop+start(new_loop) cycle does
+            # not let this orphan leader clobber the fresh state.
             if self._on_demand_sweep_future is future:
                 self._on_demand_sweep_future = None
                 self._on_demand_sweep_end = 0.0
-            # ``stop()`` resolves the future before the leader's
-            # finally fires; guard against the InvalidStateError
-            # that would otherwise raise here.
+            # stop() may have already resolved the future.
             if not future.done():
                 future.set_result(None)
 

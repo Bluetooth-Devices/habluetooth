@@ -5014,15 +5014,7 @@ async def test_async_request_active_scan_leader_cancellation_releases_joiners() 
 async def test_async_request_active_scan_declined_does_not_advance_sweep_floor() -> (
     None
 ):
-    """
-    A scanner that declines the flip (returns False) leaves the sweep floor alone.
-
-    The radio never went ACTIVE for a declined flip, so
-    ``_sweep_last_completed`` must stay at its prior value; the
-    worker's own periodic sweep then fires later as a retry rather
-    than being suppressed for the full 12 h rediscovery cadence on
-    a scanner that did not actually flip.
-    """
+    """A False flip leaves _sweep_last_completed alone so the periodic sweep retries."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -5078,12 +5070,7 @@ async def test_async_request_active_scan_exception_does_not_advance_sweep_floor(
 
 @pytest.mark.asyncio
 async def test_async_request_active_scan_does_not_shrink_existing_window_end() -> None:
-    """
-    A pre-existing longer ``_window_end`` is not shrunk by a new flip.
-
-    Covers the false branch of ``worker._window_end < window_end``
-    in the pre-await suppression bump.
-    """
+    """A pre-existing longer _window_end is not shrunk by a new flip."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -5102,12 +5089,7 @@ async def test_async_request_active_scan_does_not_shrink_existing_window_end() -
 
 @pytest.mark.asyncio
 async def test_async_request_active_scan_does_not_move_sweep_floor_backwards() -> None:
-    """
-    A pre-existing later ``_sweep_last_completed`` is not moved backwards.
-
-    Covers the false branch of ``worker._sweep_last_completed < now``
-    in the success path.
-    """
+    """A pre-existing later _sweep_last_completed is not moved backwards."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
@@ -5126,15 +5108,7 @@ async def test_async_request_active_scan_does_not_move_sweep_floor_backwards() -
 
 @pytest.mark.asyncio
 async def test_stop_resolves_in_flight_on_demand_sweep_future() -> None:
-    """
-    ``stop()`` called during a sweep resolves the future and clears state.
-
-    The leader task is a caller, not a worker, so ``worker.stop()``
-    cannot reach it; without explicit cleanup any joiner parked on
-    ``asyncio.shield`` of the future would never resolve. Also
-    confirms the leader's own ``finally`` runs without raising
-    ``InvalidStateError`` after ``stop()`` resolved the future.
-    """
+    """stop() resolves the future, frees joiners, leader's finally tolerates it."""
     manager = get_manager()
     sched = manager._auto_scheduler
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
@@ -5183,16 +5157,7 @@ async def test_stop_is_safe_without_in_flight_on_demand_sweep() -> None:
 
 @pytest.mark.asyncio
 async def test_orphan_leader_does_not_clobber_fresh_sweep_state() -> None:
-    """
-    A leader orphaned by ``stop()`` + ``start()`` does not clear a fresh future.
-
-    Sequence: leader L1 runs, ``stop()`` resolves L1's future,
-    ``start()`` re-arms the scheduler, fresh sweep state is
-    installed as if a new leader L2 had won the next dedup check,
-    and only then does L1's ``finally`` execute. L1 must observe
-    ``_on_demand_sweep_future is not future`` and leave L2's state
-    untouched.
-    """
+    """A leader orphaned by stop()+start() does not clear a fresh future."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
