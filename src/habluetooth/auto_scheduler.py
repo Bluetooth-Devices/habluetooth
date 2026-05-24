@@ -996,11 +996,14 @@ class AutoScanScheduler:
         future and take down the siblings or the leader's
         ``set_result``.
 
-        Fast-return: when the leader's flip dispatches no targets
-        (no AUTO workers, or every one mid-connect) it skips the
-        sleep loop and returns immediately rather than blocking the
-        caller for a window that never opens; an extension whose
-        re-flip dispatches nothing reverts its eager
+        Fast-return: when the leader's flip neither opens a window
+        itself (no AUTO workers, every one mid-connect, or every
+        dispatched scanner declined / raised) nor sees a concurrent
+        joiner that did (``_on_demand_sweep_end`` was not pushed
+        past the leader's ``desired_end`` during the await), it
+        skips the sleep loop and returns immediately rather than
+        blocking the caller for a window that never opens. An
+        extension whose re-flip opens nothing reverts its eager
         ``_on_demand_sweep_end`` push for the same reason.
         """
         # Capture loop locally so a concurrent stop() (which nulls
@@ -1024,12 +1027,13 @@ class AutoScanScheduler:
                 flipped = await asyncio.shield(
                     self._flip_scanners_for_sweep(desired_end - now)
                 )
-                # No targets accepted the extension (every worker is
-                # now mid-connect); revert the eager push so the
-                # leader does not sleep past the in-flight radio
-                # window for nothing. Guarded so a peer joiner that
-                # pushed end further during our shielded await is
-                # not clobbered.
+                # No scanner opened or extended a window for us
+                # (every worker mid-connect, or every dispatched
+                # scanner declined / raised); revert the eager push
+                # so the leader does not sleep past the in-flight
+                # radio window for nothing. Guarded so a peer joiner
+                # that pushed end further during our shielded await
+                # is not clobbered.
                 if not flipped and self._on_demand_sweep_end == desired_end:
                     self._on_demand_sweep_end = previous_end
             await asyncio.shield(in_flight)
@@ -1038,10 +1042,20 @@ class AutoScanScheduler:
         self._on_demand_sweep_future = future
         self._on_demand_sweep_end = desired_end
         try:
-            if not await self._flip_scanners_for_sweep(duration):
-                # No AUTO workers, or every one is mid-connect; no
-                # radio activity was kicked off so awaiting `duration`
-                # would block callers for a window that never opens.
+            flipped = await self._flip_scanners_for_sweep(duration)
+            if not flipped and self._on_demand_sweep_end <= desired_end:
+                # No scanner opened a window bus-wide (no AUTO
+                # workers, every one mid-connect, or every dispatched
+                # scanner declined / raised) and no joiner that
+                # interleaved during our await opened or extended a
+                # window past our end; skip the sleep loop rather
+                # than block callers for a window that never opens.
+                # A joiner that succeeded would have pushed
+                # `_on_demand_sweep_end` past `desired_end`; honor it
+                # by falling through to the sleep loop so the leader
+                # sleeps until that joiner's end (the joiner is
+                # parked on the shared future and would otherwise be
+                # cut short by the leader's finally).
                 return
             while True:
                 remaining = self._on_demand_sweep_end - loop.time()

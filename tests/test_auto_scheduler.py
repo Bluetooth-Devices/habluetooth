@@ -5079,6 +5079,88 @@ async def test_async_request_active_scan_window_end_kept_for_succeeding() -> Non
 
 
 @pytest.mark.asyncio
+async def test_async_request_active_scan_leader_honors_joiner_success_on_decline() -> (
+    None
+):
+    """
+    Leader's all-declined flip must not wipe state while a joiner has opened a window.
+
+    Sequence:
+    1. Leader flips X (eligible, blocks on its window call); Y is
+       mid-connect and skipped.
+    2. While leader is parked in its gather, Y finishes connecting
+       and a joiner arrives wanting a longer window. The joiner
+       extends ``_on_demand_sweep_end`` and re-flips; Y returns
+       True, the joiner does not revert, then parks on the shared
+       future.
+    3. X unblocks and returns False; the leader's flip therefore
+       returns False (only X was dispatched, X declined).
+    4. ``_on_demand_sweep_end`` was pushed past the leader's
+       ``desired_end`` by the joiner, so the leader must NOT
+       fast-return: it falls through to the sleep loop and sleeps
+       until the joiner's end, otherwise the joiner is cut short
+       and the radio window is orphaned from scheduler bookkeeping.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    with freeze_time() as frozen:
+        x = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+        y = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+        x._return_value = False
+        x._block_event = asyncio.Event()
+        c_x = manager.async_register_scanner(x)
+        c_y = manager.async_register_scanner(y)
+        wx = sched._workers[x.source]
+        wy = sched._workers[y.source]
+        # Silence each worker's own tick so it cannot pollute
+        # active_window_calls during the on-demand sweep.
+        wx.stop()
+        wy.stop()
+        await asyncio.sleep(0)
+        # Y starts mid-connect so the leader's flip skips it entirely.
+        y._add_connecting("11:22:33:44:55:66")
+        try:
+            leader = asyncio.create_task(
+                manager.async_request_active_scan(duration=5.0)
+            )
+            for _ in range(3):
+                await asyncio.sleep(0)
+            # Leader is now blocked inside X's flip; Y was skipped.
+            assert x.active_window_calls == [5.0]
+            assert y.active_window_calls == []
+            # Free Y so a joiner can dispatch it.
+            y._finished_connecting("11:22:33:44:55:66", connected=False)
+            joiner = asyncio.create_task(
+                manager.async_request_active_scan(duration=20.0)
+            )
+            for _ in range(3):
+                await asyncio.sleep(0)
+            # Joiner extended end and dispatched Y; Y opened a window.
+            assert y.active_window_calls == [20.0]
+            joiner_end = sched._on_demand_sweep_end
+            assert joiner_end > 0.0
+            # Unblock X; leader's flip resolves with all-declined.
+            x._block_event.set()
+            for _ in range(5):
+                await asyncio.sleep(0)
+            # Without the joiner-extension guard, the leader would
+            # have fast-returned and zeroed _on_demand_sweep_end /
+            # resolved the shared future. With the guard, both tasks
+            # are still parked and the end is intact.
+            assert not leader.done()
+            assert not joiner.done()
+            assert sched._on_demand_sweep_end == joiner_end
+            # Advance past the joiner's end; both tasks complete.
+            frozen.tick(20.1)
+            await leader
+            await joiner
+            assert sched._on_demand_sweep_future is None
+        finally:
+            c_x()
+            c_y()
+
+
+@pytest.mark.asyncio
 async def test_async_request_active_scan_joiner_cancel_during_extension() -> None:
     """
     Joiner cancelled mid-extension still finishes the all-or-nothing re-flip.
