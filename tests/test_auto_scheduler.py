@@ -235,8 +235,8 @@ async def test_worker_tick_coalesces_near_future_due_entries() -> None:
     try:
         _inject(scanner, addr_a)
         _inject(scanner, addr_b)
-        # A is due now; B is due 10s from now (within the 15s
-        # lookahead). One tick should serve both.
+        # A is due now; B is due 10s from now (within the lookahead).
+        # One tick should serve both.
         now = loop.time()
         entries_a = sched._needs[addr_a]
         entries_b = sched._needs[addr_b]
@@ -295,16 +295,16 @@ async def test_worker_tick_does_not_fire_when_only_soon_due_no_immediate() -> No
 
 
 @pytest.mark.asyncio
-async def test_worker_tick_coalesces_when_window_longer_than_short_lookahead() -> None:
+async def test_worker_tick_coalesces_near_max_window_boundary() -> None:
     """
-    Lookahead covers the maximum window so long windows do not cascade.
+    Lookahead covers the max window so a 30s window never outlives it.
 
-    A scan_duration of 30s (the public-boundary clamp ceiling)
-    opens a 30s window. With the lookahead bounded by max window +
-    slop, a second device due at now+25 — past the previous 15s
-    lookahead but inside the new one — is pulled into the same
-    window and advances together, avoiding the back-to-back flip
-    when the 30s window ends.
+    A scan_duration of 30s (the public-boundary clamp ceiling) opens
+    a 30s window. The lookahead invariant
+    ``AUTO_COALESCE_LOOKAHEAD > AUTO_WINDOW_MAX_DURATION`` guarantees
+    a second device due at now+25 is still inside the lookahead and
+    rides this window, so the worker does not re-tick milliseconds
+    after passive transition.
     """
     manager = get_manager()
     sched = manager._auto_scheduler
@@ -336,6 +336,64 @@ async def test_worker_tick_coalesces_when_window_longer_than_short_lookahead() -
         cancel_a()
         cancel_b()
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_fallback_dispatch_rides_soon_due_entries() -> None:
+    """
+    Soon-due entries coalesce into the connecting-fallback dispatch too.
+
+    When the owner is mid-connect, the fallback gets the immediate
+    address's flip; a second address that is only soon-due (within
+    the lookahead) should ride that same dispatch so it does not
+    fire its own back-to-back window after the fallback's flip ends.
+    The soon-due entry is advanced by its full ``scan_interval``.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_a = "11:22:33:44:55:01"
+    addr_b = "11:22:33:44:55:02"
+    cancel_a = manager.async_register_active_scan(
+        addr_a, scan_interval=300.0, scan_duration=10.0
+    )
+    cancel_b = manager.async_register_active_scan(
+        addr_b, scan_interval=300.0, scan_duration=10.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:01:01", BluetoothScanningMode.AUTO)
+    fallback = _DiscoverableAutoScanner("AA:00:00:00:01:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fallback = manager.async_register_scanner(fallback)
+    try:
+        _inject_with_rssi(owner, addr_a, rssi=-50)
+        _inject_with_rssi(owner, addr_b, rssi=-50)
+        fallback.add_discovered(addr_a, rssi=-70)
+        fallback.add_discovered(addr_b, rssi=-70)
+        owner._add_connecting(addr_a)
+        now = loop.time()
+        entries_a = sched._needs[addr_a]
+        entries_b = sched._needs[addr_b]
+        for req in entries_a:
+            entries_a[req] = now - 1.0
+        for req in entries_b:
+            entries_b[req] = now + 10.0
+        await _run_worker_tick(sched, owner.source)
+        # Owner is mid-connect; fallback gets the call(s).
+        assert owner.active_window_calls == []
+        assert len(fallback.active_window_calls) >= 1
+        # Both addresses advanced by their scan_interval — soon-due
+        # rode the fallback dispatch instead of firing separately.
+        post_tick_now = loop.time()
+        a_new_due = next(iter(entries_a.values()))
+        b_new_due = next(iter(entries_b.values()))
+        assert a_new_due == pytest.approx(post_tick_now + 300.0, abs=1.0)
+        assert b_new_due == pytest.approx(post_tick_now + 300.0, abs=1.0)
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        cancel_a()
+        cancel_b()
+        c_owner()
+        c_fallback()
 
 
 @pytest.mark.asyncio
