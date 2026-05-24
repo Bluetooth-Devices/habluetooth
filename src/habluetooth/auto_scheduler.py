@@ -908,6 +908,16 @@ class AutoScanScheduler:
         declined / raised scanner does not stay locked out of its
         own ticks for the on-demand duration with no actual radio
         window open.
+
+        Best-effort caveat (concurrent revert): when a leader's flip
+        and a joiner's extension flip both visit the same worker and
+        both decline, the leader's exact-equality revert guard sees
+        the joiner's bump and skips, while the joiner's revert
+        restores to its observed ``previous_window_end`` (the
+        leader's bumped value). The worker stays bumped to the
+        leader's intended end despite no radio window opening; it
+        self-heals on the next tick at that end. Symmetric to the
+        ``_window_end`` caveat in ``note_window_dispatched``.
         """
         if TYPE_CHECKING:
             assert self._loop is not None
