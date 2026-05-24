@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.7.2 (2026-05-24)
+
+### Bug fixes
+
+
+- Fast-return when on-demand sweep dispatches nothing ([`2f7316d`](https://github.com/Bluetooth-Devices/habluetooth/commit/2f7316d0b1d43052c255cb8429f9bc8ea8f9ea4b))
+
+
 ## v6.7.1 (2026-05-24)
 
 ### Bug fixes
