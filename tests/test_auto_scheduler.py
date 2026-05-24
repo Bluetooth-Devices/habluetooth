@@ -4789,12 +4789,60 @@ async def test_async_request_active_scan_no_op_when_scheduler_stopped() -> None:
 
 @pytest.mark.asyncio
 async def test_async_request_active_scan_no_op_without_auto_scanners() -> None:
-    """With no AUTO workers the sweep still completes its sleep cleanly."""
+    """With no AUTO workers the sweep returns immediately, no sleep."""
     manager = get_manager()
-    # No scanners registered; targets is empty but the sleep still runs.
-    async with _no_real_sleep():
+    loop = asyncio.get_running_loop()
+    sleep_calls: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _recording_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        await real_sleep(0)
+
+    before = loop.time()
+    with patch("asyncio.sleep", new=_recording_sleep):
         await manager.async_request_active_scan(duration=5.0)
+    # Fast-return: no asyncio.sleep call from the leader's sleep loop.
+    assert sleep_calls == []
+    # Bounded wall time confirms we did not block on the 5s duration.
+    assert loop.time() - before < 0.5
     assert manager._auto_scheduler._on_demand_sweep_future is None
+    assert manager._auto_scheduler._on_demand_sweep_end == 0.0
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_no_op_when_all_scanners_connecting() -> None:
+    """Every AUTO scanner mid-connect is the same NOOP; no sleep, fast-return."""
+    manager = get_manager()
+    loop = asyncio.get_running_loop()
+    busy_a = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    busy_b = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(busy_a)
+    c_b = manager.async_register_scanner(busy_b)
+    busy_a._add_connecting("11:22:33:44:55:66")
+    busy_b._add_connecting("11:22:33:44:55:77")
+    sleep_calls: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _recording_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        await real_sleep(0)
+
+    try:
+        before = loop.time()
+        with patch("asyncio.sleep", new=_recording_sleep):
+            await manager.async_request_active_scan(duration=5.0)
+        assert busy_a.active_window_calls == []
+        assert busy_b.active_window_calls == []
+        assert sleep_calls == []
+        assert loop.time() - before < 0.5
+        assert manager._auto_scheduler._on_demand_sweep_future is None
+        assert manager._auto_scheduler._on_demand_sweep_end == 0.0
+    finally:
+        busy_a._finished_connecting("11:22:33:44:55:66", connected=False)
+        busy_b._finished_connecting("11:22:33:44:55:77", connected=False)
+        c_a()
+        c_b()
 
 
 @pytest.mark.asyncio
@@ -4829,6 +4877,59 @@ async def test_async_request_active_scan_awaits_the_full_duration() -> None:
             frozen.tick(5.1)
             await task
             assert task.done()
+        finally:
+            register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_request_active_scan_extension_reverts_end_when_no_targets() -> (
+    None
+):
+    """
+    A joiner extension that finds every worker busy reverts the end push.
+
+    Leader dispatches successfully and parks in its sleep loop. The
+    only scanner then goes mid-connect; the joiner's extension flip
+    has no eligible targets and returns False. The eager
+    ``_on_demand_sweep_end`` push must be reverted to the leader's
+    original end so the leader does not sleep past the in-flight
+    radio window for nothing.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    with freeze_time() as frozen:
+        scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+        register_cancel = manager.async_register_scanner(scanner)
+        worker = sched._workers[scanner.source]
+        worker.stop()
+        await asyncio.sleep(0)
+        try:
+            leader = asyncio.create_task(
+                manager.async_request_active_scan(duration=5.0)
+            )
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert scanner.active_window_calls == [5.0]
+            leader_end = sched._on_demand_sweep_end
+            # Mark the only worker busy before the joiner extension fires.
+            scanner._add_connecting("11:22:33:44:55:66")
+            try:
+                joiner = asyncio.create_task(
+                    manager.async_request_active_scan(duration=20.0)
+                )
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                # Joiner's extension dispatched nothing; only the leader's
+                # flip is recorded and the eager push was reverted.
+                assert scanner.active_window_calls == [5.0]
+                assert sched._on_demand_sweep_end == leader_end
+            finally:
+                scanner._finished_connecting("11:22:33:44:55:66", connected=False)
+            # Advance past the leader's end; leader and joiner both wake.
+            frozen.tick(5.1)
+            await leader
+            await joiner
+            assert sched._on_demand_sweep_future is None
         finally:
             register_cancel()
 

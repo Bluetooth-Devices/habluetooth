@@ -878,9 +878,14 @@ class AutoScanScheduler:
             )
         )
 
-    async def _flip_scanners_for_sweep(self, duration: float) -> None:  # noqa: C901
+    async def _flip_scanners_for_sweep(self, duration: float) -> bool:  # noqa: C901
         """
         Flip every non-busy AUTO scanner into a ``duration``-second window.
+
+        Returns ``True`` if at least one eligible scanner was
+        dispatched to (regardless of per-scanner outcome), ``False``
+        if no AUTO workers are registered or every one is mid-connect
+        so the caller can short-circuit any post-flip sleep.
 
         ``return_exceptions=True`` plus the per-scanner log keeps one
         stuck adapter from aborting the bus-wide sweep while still
@@ -910,7 +915,7 @@ class AutoScanScheduler:
                 worker._window_end = window_end
             targets.append((worker, scanner))
         if not targets:
-            return
+            return False
         results = await asyncio.gather(
             *(scanner.async_request_active_window(duration) for _, scanner in targets),
             return_exceptions=True,
@@ -942,6 +947,7 @@ class AutoScanScheduler:
                     scanner.name,
                     duration,
                 )
+        return True
 
     async def async_request_active_scan(self, duration: float) -> None:
         """
@@ -968,6 +974,13 @@ class AutoScanScheduler:
         the future so a cancelled joiner cannot cancel the shared
         future and take down the siblings or the leader's
         ``set_result``.
+
+        Fast-return: when the leader's flip dispatches no targets
+        (no AUTO workers, or every one mid-connect) it skips the
+        sleep loop and returns immediately rather than blocking the
+        caller for a window that never opens; an extension whose
+        re-flip dispatches nothing reverts its eager
+        ``_on_demand_sweep_end`` push for the same reason.
         """
         # Capture loop locally so a concurrent stop() (which nulls
         # self._loop) during the sleep loop or the flip-await cannot
@@ -981,19 +994,34 @@ class AutoScanScheduler:
         in_flight = self._on_demand_sweep_future
         if in_flight is not None:
             if desired_end - self._on_demand_sweep_end > _ON_DEMAND_EXTENSION_SLOP:
+                previous_end = self._on_demand_sweep_end
                 self._on_demand_sweep_end = desired_end
                 # asyncio.shield the extension flip so a cancelled
                 # joiner does not leave the shared end pushed out
                 # past a partial re-flip; either all non-busy
                 # scanners receive the longer duration or none do.
-                await asyncio.shield(self._flip_scanners_for_sweep(desired_end - now))
+                flipped = await asyncio.shield(
+                    self._flip_scanners_for_sweep(desired_end - now)
+                )
+                # No targets accepted the extension (every worker is
+                # now mid-connect); revert the eager push so the
+                # leader does not sleep past the in-flight radio
+                # window for nothing. Guarded so a peer joiner that
+                # pushed end further during our shielded await is
+                # not clobbered.
+                if not flipped and self._on_demand_sweep_end == desired_end:
+                    self._on_demand_sweep_end = previous_end
             await asyncio.shield(in_flight)
             return
         future = loop.create_future()
         self._on_demand_sweep_future = future
         self._on_demand_sweep_end = desired_end
         try:
-            await self._flip_scanners_for_sweep(duration)
+            if not await self._flip_scanners_for_sweep(duration):
+                # No AUTO workers, or every one is mid-connect; no
+                # radio activity was kicked off so awaiting `duration`
+                # would block callers for a window that never opens.
+                return
             while True:
                 remaining = self._on_demand_sweep_end - loop.time()
                 if remaining <= 0:
