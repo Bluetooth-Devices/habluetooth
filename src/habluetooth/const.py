@@ -67,6 +67,15 @@ AUTO_REDISCOVERY_SWEEP_DURATION: Final = 15.0
 AUTO_WINDOW_MIN_DURATION: Final = 5.0
 AUTO_WINDOW_MAX_DURATION: Final = 30.0
 
+# Per-device entries due within AUTO_COALESCE_LOOKAHEAD of now are
+# pulled into the current window so staggered registrations sync up
+# instead of triggering back-to-back active flips. Must exceed
+# AUTO_WINDOW_MAX_DURATION so a window can never outlive its
+# lookahead; the slop absorbs loop.time drift between bucket
+# collection and window open under a blocked event loop.
+AUTO_COALESCE_LOOKAHEAD_SLOP: Final = 5.0
+AUTO_COALESCE_LOOKAHEAD: Final = AUTO_WINDOW_MAX_DURATION + AUTO_COALESCE_LOOKAHEAD_SLOP
+
 # Minimum values accepted by async_register_active_scan. Anything
 # shorter would just churn the radio without giving the device time to
 # respond on its scan response.

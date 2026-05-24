@@ -147,6 +147,7 @@ from typing import TYPE_CHECKING, Any
 from bleak_retry_connector import NO_RSSI_VALUE
 
 from .const import (
+    AUTO_COALESCE_LOOKAHEAD,
     AUTO_INITIAL_SWEEP_DELAY,
     AUTO_REDISCOVERY_INTERVAL,
     AUTO_REDISCOVERY_SWEEP_DURATION,
@@ -167,6 +168,7 @@ _AUTO_REDISCOVERY_INTERVAL = AUTO_REDISCOVERY_INTERVAL
 _AUTO_REDISCOVERY_SWEEP_DURATION = AUTO_REDISCOVERY_SWEEP_DURATION
 _AUTO_WINDOW_MAX_DURATION = AUTO_WINDOW_MAX_DURATION
 _AUTO_WINDOW_MIN_DURATION = AUTO_WINDOW_MIN_DURATION
+_AUTO_COALESCE_LOOKAHEAD = AUTO_COALESCE_LOOKAHEAD
 
 # Retry delay when the owner is mid-connect: short enough that we
 # retry shortly after a typical connect completes (~10s), long enough
@@ -349,25 +351,32 @@ class _ScannerWorker:
     ) -> tuple[
         list[tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]],
         list[ActiveScanRequest],
+        bool,
     ]:
         """
-        Return (due_buckets, all_due) for addresses this scanner owns.
+        Return (due_buckets, all_due, any_immediate) for addresses owned.
 
-        ``due_buckets`` is the (address, entries, due) triples to
-        advance after the window; ``all_due`` is the flattened list
-        used to coalesce the window duration. The address is carried
-        in each tuple so the connecting-fallback path in ``_tick`` can
-        look up an alternate scanner per address without re-walking
-        ``_needs``. Prunes orphan ``_needs`` entries (history None) in
-        passing.
+        Collects entries due within ``_AUTO_COALESCE_LOOKAHEAD`` of
+        ``now`` regardless of ``any_immediate``, so soon-due entries
+        ride a window the caller decides to open (a per-device hit
+        or the 12 h sweep). Caller must gate on
+        ``any_immediate or sweep_due`` — a scanner with only
+        soon-due entries must not tick early on its own. Prunes
+        orphan entries (history None) in passing.
+
+        Invariant: ``_AUTO_COALESCE_LOOKAHEAD > max window duration``
+        so a window cannot outlive its lookahead and leave a device
+        overdue when it ends.
         """
         source = self._scanner.source
         needs = self._scheduler._needs
         last_service_info = self._manager.async_last_service_info
+        threshold = now + _AUTO_COALESCE_LOOKAHEAD
         due_buckets: list[
             tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]
         ] = []
         all_due: list[ActiveScanRequest] = []
+        any_immediate = False
         for address in list(needs):
             entries = needs.get(address)
             if not entries:
@@ -378,12 +387,17 @@ class _ScannerWorker:
                 continue
             if history.source != source:
                 continue
-            due = [r for r, t in entries.items() if t <= now]
+            due: list[ActiveScanRequest] = []
+            for r, t in entries.items():
+                if t <= threshold:
+                    due.append(r)
+                    if t <= now:
+                        any_immediate = True
             if not due:
                 continue
             due_buckets.append((address, entries, due))
             all_due.extend(due)
-        return due_buckets, all_due
+        return due_buckets, all_due, any_immediate
 
     def _advance_due(
         self,
@@ -427,9 +441,12 @@ class _ScannerWorker:
             return
         self._window_end = 0.0
         try:
-            due_buckets, all_due = self._collect_due_buckets(now)
+            due_buckets, all_due, any_immediate = self._collect_due_buckets(now)
             sweep_due = now >= self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
-            if not all_due and not sweep_due:
+            # Gate on any_immediate (per-device hit now) or sweep_due
+            # (12 h floor). Soon-due-only entries ride a window that
+            # one of those triggers, but never trigger one alone.
+            if not any_immediate and not sweep_due:
                 return
             if self._scanner._connections_in_progress() > 0:
                 # Per-address advance happens inside _dispatch_to_fallback

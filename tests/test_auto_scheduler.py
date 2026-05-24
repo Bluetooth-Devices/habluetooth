@@ -206,6 +206,198 @@ async def test_worker_tick_advances_by_scan_interval_from_window_start() -> None
 
 
 @pytest.mark.asyncio
+async def test_worker_tick_coalesces_near_future_due_entries() -> None:
+    """Staggered registrations sync to one window instead of back-to-back flips."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_a = "11:22:33:44:55:01"
+    addr_b = "11:22:33:44:55:02"
+    cancel_a = manager.async_register_active_scan(
+        addr_a, scan_interval=300.0, scan_duration=10.0
+    )
+    cancel_b = manager.async_register_active_scan(
+        addr_b, scan_interval=300.0, scan_duration=10.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, addr_a)
+        _inject(scanner, addr_b)
+        # A is due now; B is due 10s from now (within the lookahead).
+        # One tick should serve both.
+        now = loop.time()
+        entries_a = sched._needs[addr_a]
+        entries_b = sched._needs[addr_b]
+        for req in entries_a:
+            entries_a[req] = now - 1.0
+        for req in entries_b:
+            entries_b[req] = now + 10.0
+        await _run_worker_tick(sched, scanner.source)
+        # One window covers both — not two back-to-back.
+        assert scanner.active_window_calls == [10.0]
+        # Both advanced from now (~now + 300), so they coalesce again
+        # next tick rather than staying 10s apart forever.
+        post_tick_now = loop.time()
+        a_next = next(iter(entries_a.values()))
+        b_next = next(iter(entries_b.values()))
+        assert a_next == pytest.approx(post_tick_now + 300.0, abs=1.0)
+        assert b_next == pytest.approx(post_tick_now + 300.0, abs=1.0)
+        assert abs(a_next - b_next) < 0.5
+    finally:
+        cancel_a()
+        cancel_b()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_does_not_fire_when_only_soon_due_no_immediate() -> None:
+    """Soon-due entries alone do not trigger an early tick."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=300.0, scan_duration=10.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        entries = sched._needs[address]
+        # Set next_due 5s in the future — within the lookahead but
+        # not immediately due.
+        for req in entries:
+            entries[req] = loop.time() + 5.0
+        await _run_worker_tick(sched, scanner.source)
+        assert scanner.active_window_calls == []
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_coalesces_near_max_window_boundary() -> None:
+    """A 30s window pulls in a device due at now+25; lookahead > max window."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_a = "11:22:33:44:55:01"
+    addr_b = "11:22:33:44:55:02"
+    cancel_a = manager.async_register_active_scan(
+        addr_a, scan_interval=300.0, scan_duration=30.0
+    )
+    cancel_b = manager.async_register_active_scan(
+        addr_b, scan_interval=300.0, scan_duration=30.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, addr_a)
+        _inject(scanner, addr_b)
+        now = loop.time()
+        entries_a = sched._needs[addr_a]
+        entries_b = sched._needs[addr_b]
+        for req in entries_a:
+            entries_a[req] = now - 1.0
+        for req in entries_b:
+            entries_b[req] = now + 25.0
+        await _run_worker_tick(sched, scanner.source)
+        # One 30s window covers both.
+        assert scanner.active_window_calls == [30.0]
+    finally:
+        cancel_a()
+        cancel_b()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_fallback_dispatch_rides_soon_due_entries() -> None:
+    """Soon-due entries coalesce into the connecting-fallback dispatch."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    addr_a = "11:22:33:44:55:01"
+    addr_b = "11:22:33:44:55:02"
+    cancel_a = manager.async_register_active_scan(
+        addr_a, scan_interval=300.0, scan_duration=10.0
+    )
+    cancel_b = manager.async_register_active_scan(
+        addr_b, scan_interval=300.0, scan_duration=10.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:01:01", BluetoothScanningMode.AUTO)
+    fallback = _DiscoverableAutoScanner("AA:00:00:00:01:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fallback = manager.async_register_scanner(fallback)
+    try:
+        _inject_with_rssi(owner, addr_a, rssi=-50)
+        _inject_with_rssi(owner, addr_b, rssi=-50)
+        fallback.add_discovered(addr_a, rssi=-70)
+        fallback.add_discovered(addr_b, rssi=-70)
+        owner._add_connecting(addr_a)
+        now = loop.time()
+        entries_a = sched._needs[addr_a]
+        entries_b = sched._needs[addr_b]
+        for req in entries_a:
+            entries_a[req] = now - 1.0
+        for req in entries_b:
+            entries_b[req] = now + 10.0
+        await _run_worker_tick(sched, owner.source)
+        # Owner is mid-connect; fallback gets exactly one coalesced
+        # call covering both addresses (both scan_duration=10).
+        assert owner.active_window_calls == []
+        assert fallback.active_window_calls == [10.0]
+        # Both addresses advanced by their scan_interval — soon-due
+        # rode the fallback dispatch instead of firing separately.
+        post_tick_now = loop.time()
+        a_new_due = next(iter(entries_a.values()))
+        b_new_due = next(iter(entries_b.values()))
+        assert a_new_due == pytest.approx(post_tick_now + 300.0, abs=1.0)
+        assert b_new_due == pytest.approx(post_tick_now + 300.0, abs=1.0)
+    finally:
+        owner._finished_connecting(addr_a, connected=False)
+        cancel_a()
+        cancel_b()
+        c_owner()
+        c_fallback()
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_sweep_alone_pulls_in_soon_due_entries() -> None:
+    """A sweep-only tick pulls in soon-due entries so they don't fire after."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=300.0, scan_duration=10.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        worker = sched._workers[scanner.source]
+        # Make the sweep due; per-device entry is soon-due but not
+        # immediate.
+        worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
+        entries = sched._needs[address]
+        soon_due_at = loop.time() + 5.0
+        for req in entries:
+            entries[req] = soon_due_at
+        await _run_worker_tick(sched, scanner.source)
+        # Sweep fired; the soon-due entry was advanced so it does
+        # not trigger a back-to-back flip after the sweep ends.
+        assert len(scanner.active_window_calls) == 1
+        post_tick_now = loop.time()
+        new_due = next(iter(entries.values()))
+        assert new_due > soon_due_at
+        assert new_due == pytest.approx(post_tick_now + 300.0, abs=1.0)
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_worker_tick_coalesces_overlapping_requests() -> None:
     """Multiple requests for the same address coalesce on max scan_duration."""
     manager = get_manager()
