@@ -343,9 +343,10 @@ async def test_worker_tick_fallback_dispatch_rides_soon_due_entries() -> None:
         for req in entries_b:
             entries_b[req] = now + 10.0
         await _run_worker_tick(sched, owner.source)
-        # Owner is mid-connect; fallback gets the call(s).
+        # Owner is mid-connect; fallback gets exactly one coalesced
+        # call covering both addresses (both scan_duration=10).
         assert owner.active_window_calls == []
-        assert len(fallback.active_window_calls) >= 1
+        assert fallback.active_window_calls == [10.0]
         # Both addresses advanced by their scan_interval — soon-due
         # rode the fallback dispatch instead of firing separately.
         post_tick_now = loop.time()
