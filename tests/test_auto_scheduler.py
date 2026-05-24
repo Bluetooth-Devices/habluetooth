@@ -4792,18 +4792,16 @@ async def test_async_request_active_scan_no_op_without_auto_scanners() -> None:
     """With no AUTO workers the sweep returns immediately, no sleep."""
     manager = get_manager()
     loop = asyncio.get_running_loop()
-    sleep_calls: list[float] = []
-    real_sleep = asyncio.sleep
 
-    async def _recording_sleep(delay: float) -> None:
-        sleep_calls.append(delay)
-        await real_sleep(0)
+    async def _fail_on_sleep(delay: float) -> None:
+        # Surface a regression as a clean assertion instead of a
+        # pytest-timeout: if the leader's sleep loop runs at all,
+        # fail now rather than spin / block on the patched sleep.
+        pytest.fail(f"async_request_active_scan slept for {delay}s on NOOP")
 
     before = loop.time()
-    with patch("asyncio.sleep", new=_recording_sleep):
+    with patch("asyncio.sleep", new=_fail_on_sleep):
         await manager.async_request_active_scan(duration=5.0)
-    # Fast-return: no asyncio.sleep call from the leader's sleep loop.
-    assert sleep_calls == []
     # Bounded wall time confirms we did not block on the 5s duration.
     assert loop.time() - before < 0.5
     assert manager._auto_scheduler._on_demand_sweep_future is None
@@ -4821,20 +4819,16 @@ async def test_async_request_active_scan_no_op_when_all_scanners_connecting() ->
     c_b = manager.async_register_scanner(busy_b)
     busy_a._add_connecting("11:22:33:44:55:66")
     busy_b._add_connecting("11:22:33:44:55:77")
-    sleep_calls: list[float] = []
-    real_sleep = asyncio.sleep
 
-    async def _recording_sleep(delay: float) -> None:
-        sleep_calls.append(delay)
-        await real_sleep(0)
+    async def _fail_on_sleep(delay: float) -> None:
+        pytest.fail(f"async_request_active_scan slept for {delay}s on NOOP")
 
     try:
         before = loop.time()
-        with patch("asyncio.sleep", new=_recording_sleep):
+        with patch("asyncio.sleep", new=_fail_on_sleep):
             await manager.async_request_active_scan(duration=5.0)
         assert busy_a.active_window_calls == []
         assert busy_b.active_window_calls == []
-        assert sleep_calls == []
         assert loop.time() - before < 0.5
         assert manager._auto_scheduler._on_demand_sweep_future is None
         assert manager._auto_scheduler._on_demand_sweep_end == 0.0
