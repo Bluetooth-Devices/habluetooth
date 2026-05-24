@@ -395,7 +395,7 @@ class _ScannerWorker:
                 continue
             if history.source != source:
                 continue
-            due = []
+            due: list[ActiveScanRequest] = []
             for r, t in entries.items():
                 if t <= threshold:
                     due.append(r)
