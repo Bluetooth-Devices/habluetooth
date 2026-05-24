@@ -4959,6 +4959,52 @@ async def test_async_request_active_scan_logs_per_scanner_flip_failures(
 
 
 @pytest.mark.asyncio
+async def test_async_request_active_scan_no_op_when_every_dispatch_declines() -> None:
+    """
+    All-False / all-raise from dispatched scanners is the same NOOP as no targets.
+
+    The flip dispatches but every scanner declines or raises so no
+    radio window actually opens; the leader must skip the sleep loop
+    rather than block on a window that never opened.
+    """
+    manager = get_manager()
+    loop = asyncio.get_running_loop()
+
+    class _DecliningScanner(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            self.active_window_calls.append(duration)
+            return False
+
+    class _FailingScanner(_RecordingAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            self.active_window_calls.append(duration)
+            msg = "boom"
+            raise RuntimeError(msg)
+
+    decliner = _DecliningScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    raiser = _FailingScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
+    c_dec = manager.async_register_scanner(decliner)
+    c_raise = manager.async_register_scanner(raiser)
+
+    async def _fail_on_sleep(delay: float) -> None:
+        pytest.fail(f"async_request_active_scan slept for {delay}s on NOOP")
+
+    try:
+        before = loop.time()
+        with patch("asyncio.sleep", new=_fail_on_sleep):
+            await manager.async_request_active_scan(duration=5.0)
+        # Both scanners were dispatched to; neither opened a window.
+        assert decliner.active_window_calls == [5.0]
+        assert raiser.active_window_calls == [5.0]
+        assert loop.time() - before < 0.5
+        assert manager._auto_scheduler._on_demand_sweep_future is None
+        assert manager._auto_scheduler._on_demand_sweep_end == 0.0
+    finally:
+        c_dec()
+        c_raise()
+
+
+@pytest.mark.asyncio
 async def test_async_request_active_scan_joiner_cancel_during_extension() -> None:
     """
     Joiner cancelled mid-extension still finishes the all-or-nothing re-flip.

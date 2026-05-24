@@ -882,10 +882,12 @@ class AutoScanScheduler:
         """
         Flip every non-busy AUTO scanner into a ``duration``-second window.
 
-        Returns ``True`` if at least one eligible scanner was
-        dispatched to (regardless of per-scanner outcome), ``False``
-        if no AUTO workers are registered or every one is mid-connect
-        so the caller can short-circuit any post-flip sleep.
+        Returns ``True`` if at least one scanner actually opened a
+        window (per-scanner result was ``True``), ``False`` if no
+        AUTO workers are registered, every one is mid-connect, or
+        every dispatched scanner declined / raised so the caller
+        can short-circuit any post-flip sleep on a window that
+        never opened.
 
         ``return_exceptions=True`` plus the per-scanner log keeps one
         stuck adapter from aborting the bus-wide sweep while still
@@ -920,8 +922,10 @@ class AutoScanScheduler:
             *(scanner.async_request_active_window(duration) for _, scanner in targets),
             return_exceptions=True,
         )
+        any_opened = False
         for (worker, scanner), result in zip(targets, results, strict=True):
             if result is True:
+                any_opened = True
                 if worker._sweep_last_completed < now:
                     worker._sweep_last_completed = now
                 continue
@@ -947,7 +951,7 @@ class AutoScanScheduler:
                     scanner.name,
                     duration,
                 )
-        return True
+        return any_opened
 
     async def async_request_active_scan(self, duration: float) -> None:
         """
