@@ -878,9 +878,16 @@ class AutoScanScheduler:
             )
         )
 
-    async def _flip_scanners_for_sweep(self, duration: float) -> None:  # noqa: C901
+    async def _flip_scanners_for_sweep(self, duration: float) -> bool:  # noqa: C901
         """
         Flip every non-busy AUTO scanner into a ``duration``-second window.
+
+        Returns ``True`` if at least one scanner actually opened a
+        window (per-scanner result was ``True``), ``False`` if no
+        AUTO workers are registered, every one is mid-connect, or
+        every dispatched scanner declined / raised so the caller
+        can short-circuit any post-flip sleep on a window that
+        never opened.
 
         ``return_exceptions=True`` plus the per-scanner log keeps one
         stuck adapter from aborting the bus-wide sweep while still
@@ -896,30 +903,59 @@ class AutoScanScheduler:
         tick during the window; ``_sweep_last_completed`` is bumped
         post-await only on ``True`` so a declined/raised flip leaves
         the 12 h rediscovery floor unsatisfied for that scanner.
+        Per-target ``_window_end`` is reverted to its pre-bump value
+        on a non-``True`` result (when our bump still holds) so a
+        declined / raised scanner does not stay locked out of its
+        own ticks for the on-demand duration with no actual radio
+        window open.
+
+        Best-effort caveat (concurrent revert): when a leader's flip
+        and a joiner's extension flip both visit the same worker and
+        both decline, the leader's exact-equality revert guard sees
+        the joiner's bump and skips, while the joiner's revert
+        restores to its observed ``previous_window_end`` (the
+        leader's bumped value). The worker stays bumped to the
+        leader's intended end despite no radio window opening; it
+        self-heals on the next tick at that end. Symmetric to the
+        ``_window_end`` caveat in ``note_window_dispatched``.
         """
         if TYPE_CHECKING:
             assert self._loop is not None
         now = self._loop.time()
         window_end = now + duration
-        targets: list[tuple[_ScannerWorker, BaseHaScanner]] = []
+        targets: list[tuple[_ScannerWorker, BaseHaScanner, float]] = []
         for worker in self._workers.values():
             scanner = worker._scanner
             if scanner._connections_in_progress() > 0:
                 continue
-            if worker._window_end < window_end:
+            previous_window_end = worker._window_end
+            if previous_window_end < window_end:
                 worker._window_end = window_end
-            targets.append((worker, scanner))
+            targets.append((worker, scanner, previous_window_end))
         if not targets:
-            return
+            return False
         results = await asyncio.gather(
-            *(scanner.async_request_active_window(duration) for _, scanner in targets),
+            *(
+                scanner.async_request_active_window(duration)
+                for _, scanner, _ in targets
+            ),
             return_exceptions=True,
         )
-        for (worker, scanner), result in zip(targets, results, strict=True):
+        any_opened = False
+        for (worker, scanner, previous_window_end), result in zip(
+            targets, results, strict=True
+        ):
             if result is True:
+                any_opened = True
                 if worker._sweep_last_completed < now:
                     worker._sweep_last_completed = now
                 continue
+            # No window opened for this scanner; if our bump still
+            # holds, revert so the worker can tick normally. A
+            # concurrent extension that pushed past us, or a _tick
+            # finally that cleared to 0, is left alone.
+            if worker._window_end == window_end:
+                worker._window_end = previous_window_end
             if isinstance(result, Exception):
                 _LOGGER.warning(
                     "%s: error running on-demand active window of %.1fs: %s",
@@ -942,6 +978,7 @@ class AutoScanScheduler:
                     scanner.name,
                     duration,
                 )
+        return any_opened
 
     async def async_request_active_scan(self, duration: float) -> None:
         """
@@ -968,6 +1005,16 @@ class AutoScanScheduler:
         the future so a cancelled joiner cannot cancel the shared
         future and take down the siblings or the leader's
         ``set_result``.
+
+        Fast-return: when the leader's flip neither opens a window
+        itself (no AUTO workers, every one mid-connect, or every
+        dispatched scanner declined / raised) nor sees a concurrent
+        joiner that did (``_on_demand_sweep_end`` was not pushed
+        past the leader's ``desired_end`` during the await), it
+        skips the sleep loop and returns immediately rather than
+        blocking the caller for a window that never opens. An
+        extension whose re-flip opens nothing reverts its eager
+        ``_on_demand_sweep_end`` push for the same reason.
         """
         # Capture loop locally so a concurrent stop() (which nulls
         # self._loop) during the sleep loop or the flip-await cannot
@@ -981,19 +1028,45 @@ class AutoScanScheduler:
         in_flight = self._on_demand_sweep_future
         if in_flight is not None:
             if desired_end - self._on_demand_sweep_end > _ON_DEMAND_EXTENSION_SLOP:
+                previous_end = self._on_demand_sweep_end
                 self._on_demand_sweep_end = desired_end
                 # asyncio.shield the extension flip so a cancelled
                 # joiner does not leave the shared end pushed out
                 # past a partial re-flip; either all non-busy
                 # scanners receive the longer duration or none do.
-                await asyncio.shield(self._flip_scanners_for_sweep(desired_end - now))
+                flipped = await asyncio.shield(
+                    self._flip_scanners_for_sweep(desired_end - now)
+                )
+                # No scanner opened or extended a window for us
+                # (every worker mid-connect, or every dispatched
+                # scanner declined / raised); revert the eager push
+                # so the leader does not sleep past the in-flight
+                # radio window for nothing. Guarded so a peer joiner
+                # that pushed end further during our shielded await
+                # is not clobbered.
+                if not flipped and self._on_demand_sweep_end == desired_end:
+                    self._on_demand_sweep_end = previous_end
             await asyncio.shield(in_flight)
             return
         future = loop.create_future()
         self._on_demand_sweep_future = future
         self._on_demand_sweep_end = desired_end
         try:
-            await self._flip_scanners_for_sweep(duration)
+            flipped = await self._flip_scanners_for_sweep(duration)
+            if not flipped and self._on_demand_sweep_end <= desired_end:
+                # No scanner opened a window bus-wide (no AUTO
+                # workers, every one mid-connect, or every dispatched
+                # scanner declined / raised) and no joiner that
+                # interleaved during our await opened or extended a
+                # window past our end; skip the sleep loop rather
+                # than block callers for a window that never opens.
+                # A joiner that succeeded would have pushed
+                # `_on_demand_sweep_end` past `desired_end`; honor it
+                # by falling through to the sleep loop so the leader
+                # sleeps until that joiner's end (the joiner is
+                # parked on the shared future and would otherwise be
+                # cut short by the leader's finally).
+                return
             while True:
                 remaining = self._on_demand_sweep_end - loop.time()
                 if remaining <= 0:
