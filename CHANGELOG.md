@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.7.3 (2026-05-25)
+
+### Bug fixes
+
+
+- Bluez backend construction under bleak 3.x ([`05e2ff7`](https://github.com/Bluetooth-Devices/habluetooth/commit/05e2ff7f8ab5ed47bfb27984162009bf765bf14f))
+
+
 ## v6.7.2 (2026-05-24)
 
 ### Bug fixes
