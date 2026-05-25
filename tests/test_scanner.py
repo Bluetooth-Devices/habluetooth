@@ -2913,3 +2913,109 @@ async def test_scanner_watchdog_log_includes_side_channel_state(
             assert "MGMT side channel up but hci0 unregistered" in caplog.text
         finally:
             await ha_scanner.async_stop()
+
+
+@pytest.mark.usefixtures("force_linux_scanner_mode")
+@pytest.mark.asyncio
+async def test_auto_scanner_current_mode_reports_passive_on_linux() -> None:
+    """
+    AUTO must surface as PASSIVE in current_mode on Linux.
+
+    AUTO is a habluetooth scheduling concept; the BlueZ radio is
+    actually running in passive until the scheduler opens an active
+    window. Remote scanners (ESPHome) already report the real radio
+    state, and local adapters used to report AUTO and look stuck.
+    """
+    with patch_bleak_scanner_factory(MockBleakScanner):
+        ha_scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:A0")
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        try:
+            assert ha_scanner.requested_mode is BluetoothScanningMode.AUTO
+            assert ha_scanner.current_mode is BluetoothScanningMode.PASSIVE
+        finally:
+            await ha_scanner.async_stop()
+
+
+@pytest.fixture
+def force_macos_scanner_mode() -> Generator[None, None, None]:
+    """Force scanner.IS_LINUX=False / IS_MACOS=True for the AUTO->ACTIVE path."""
+    with (
+        patch("habluetooth.scanner.IS_LINUX", False),
+        patch("habluetooth.scanner.IS_MACOS", True),
+    ):
+        yield
+
+
+@pytest.mark.usefixtures("force_macos_scanner_mode")
+@pytest.mark.asyncio
+async def test_auto_scanner_current_mode_reports_active_on_macos() -> None:
+    """
+    AUTO must surface as ACTIVE in current_mode on macOS.
+
+    CoreBluetooth has no passive mode so AUTO collapses to permanent
+    active; current_mode should reflect that, not the AUTO scheduling
+    label.
+    """
+    with patch_bleak_scanner_factory(MockBleakScanner):
+        ha_scanner = HaScanner(
+            BluetoothScanningMode.AUTO, "Core Bluetooth", "AA:BB:CC:DD:EE:A1"
+        )
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        try:
+            assert ha_scanner.requested_mode is BluetoothScanningMode.AUTO
+            assert ha_scanner.current_mode is BluetoothScanningMode.ACTIVE
+        finally:
+            await ha_scanner.async_stop()
+
+
+@pytest.mark.usefixtures("force_linux_scanner_mode")
+@pytest.mark.asyncio
+async def test_auto_scanner_current_mode_active_during_active_window() -> None:
+    """
+    Opening an AUTO active window flips current_mode to ACTIVE.
+
+    Split from the post-window assertion to avoid mypy narrowing
+    ``current_mode`` to a single literal across both transitions.
+    """
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: MockBleakScanner(),
+    ):
+        ha_scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:A2")
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        try:
+            assert await ha_scanner.async_request_active_window(10.0) is True
+            assert ha_scanner.current_mode is BluetoothScanningMode.ACTIVE
+            assert ha_scanner._scan_mode_override is BluetoothScanningMode.ACTIVE
+        finally:
+            await ha_scanner.async_stop()
+
+
+@pytest.mark.usefixtures("force_linux_scanner_mode")
+@pytest.mark.asyncio
+async def test_auto_scanner_current_mode_passive_after_active_window() -> None:
+    """
+    After an AUTO active window ends current_mode returns to PASSIVE.
+
+    The end-of-window toggle restores the real radio state, which on
+    Linux/BlueZ is passive. current_mode must follow the radio rather
+    than reverting to the AUTO label.
+    """
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: MockBleakScanner(),
+    ):
+        ha_scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:A3")
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        try:
+            assert await ha_scanner.async_request_active_window(1e-9) is True
+            for _ in range(6):
+                await asyncio.sleep(0)
+            assert ha_scanner.current_mode is BluetoothScanningMode.PASSIVE
+            assert ha_scanner._scan_mode_override is None
+        finally:
+            await ha_scanner.async_stop()
