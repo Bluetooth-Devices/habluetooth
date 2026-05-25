@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -2236,6 +2237,53 @@ async def test_backend_name_from_class(
         wrapped_backend = client._async_get_best_available_backend_and_device(manager)
         assert wrapped_backend.backend_name == "type"
         assert wrapped_backend.client == FakeBleakClient
+
+    cancel_hci0()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="dbus_fast (BlueZ backend) does not import on Windows",
+)
+@pytest.mark.asyncio
+async def test_connect_uses_real_bluez_backend_signature(
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """
+    Ensure backend kwargs satisfy the real bleak BlueZ signature.
+
+    Regression: kwargs passed to the backend client must satisfy the
+    real bleak backend signature, not just FakeBleakClient's ``**kwargs``.
+
+    bleak 3.0 made ``bluez`` a required keyword-only arg on
+    ``BleakClientBlueZDBus.__init__``; because HaBleakClientWrapper bypasses
+    ``BleakClient.__init__`` and constructs the backend directly, the default
+    supplied by the high-level constructor never reaches the backend. The
+    rest of the suite mocks the platform backend with FakeBleakClient (which
+    accepts ``**kwargs``) so signature drift slips through. This test wires
+    in the real BlueZ backend class so a future required kwarg fails here.
+    """
+    from bleak.backends.bluezdbus.client import (  # noqa: PLC0415
+        BleakClientBlueZDBus,
+    )
+
+    hci0_device_advs, cancel_hci0, _ = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+
+    with (
+        patch(
+            "habluetooth.wrappers.get_platform_client_backend_type",
+            return_value=BleakClientBlueZDBus,
+        ),
+        patch.object(BleakClientBlueZDBus, "connect", AsyncMock(return_value=True)),
+        patch.object(BleakClientBlueZDBus, "is_connected", True),
+        patch.object(BleakClientBlueZDBus, "disconnect", AsyncMock(return_value=True)),
+    ):
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+        assert isinstance(client._backend, BleakClientBlueZDBus)
+        await client.disconnect()
 
     cancel_hci0()
 
