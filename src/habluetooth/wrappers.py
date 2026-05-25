@@ -445,6 +445,7 @@ class HaBleakClientWrapper(BleakClient):
                 else set(map(normalize_uuid_str, self.__services))
             ),
             timeout=self.__timeout,
+            bluez={},
         )
         description = ""
         rssi = None
