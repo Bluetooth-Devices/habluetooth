@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.7.4 (2026-05-25)
+
+### Bug fixes
+
+
+- Report passive or active for local scanner current_mode under auto ([`e2bd7c4`](https://github.com/Bluetooth-Devices/habluetooth/commit/e2bd7c429661fd94657aee4980d3c63ee554a88a))
+
+
 ## v6.7.3 (2026-05-25)
 
 ### Bug fixes
