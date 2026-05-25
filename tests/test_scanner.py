@@ -2972,6 +2972,30 @@ async def test_auto_scanner_current_mode_reports_active_on_macos() -> None:
 
 @pytest.mark.usefixtures("force_linux_scanner_mode")
 @pytest.mark.asyncio
+async def test_auto_scanner_current_mode_active_during_active_window() -> None:
+    """
+    Opening an AUTO active window flips current_mode to ACTIVE.
+
+    Split from the post-window assertion to avoid mypy narrowing
+    ``current_mode`` to a single literal across both transitions.
+    """
+    with patch(
+        "habluetooth.scanner.OriginalBleakScanner",
+        side_effect=lambda *_a, **_kw: MockBleakScanner(),
+    ):
+        ha_scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:A2")
+        ha_scanner.async_setup()
+        await ha_scanner.async_start()
+        try:
+            assert await ha_scanner.async_request_active_window(10.0) is True
+            assert ha_scanner.current_mode is BluetoothScanningMode.ACTIVE
+            assert ha_scanner._scan_mode_override is BluetoothScanningMode.ACTIVE
+        finally:
+            await ha_scanner.async_stop()
+
+
+@pytest.mark.usefixtures("force_linux_scanner_mode")
+@pytest.mark.asyncio
 async def test_auto_scanner_current_mode_passive_after_active_window() -> None:
     """
     After an AUTO active window ends current_mode returns to PASSIVE.
@@ -2984,14 +3008,12 @@ async def test_auto_scanner_current_mode_passive_after_active_window() -> None:
         "habluetooth.scanner.OriginalBleakScanner",
         side_effect=lambda *_a, **_kw: MockBleakScanner(),
     ):
-        ha_scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:A2")
+        ha_scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:A3")
         ha_scanner.async_setup()
         await ha_scanner.async_start()
         try:
-            assert ha_scanner.current_mode is BluetoothScanningMode.PASSIVE
             assert await ha_scanner.async_request_active_window(1e-9) is True
-            assert ha_scanner.current_mode is BluetoothScanningMode.ACTIVE
-            for _ in range(6):  # type: ignore[unreachable]
+            for _ in range(6):
                 await asyncio.sleep(0)
             assert ha_scanner.current_mode is BluetoothScanningMode.PASSIVE
             assert ha_scanner._scan_mode_override is None
