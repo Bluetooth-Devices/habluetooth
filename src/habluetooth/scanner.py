@@ -119,6 +119,26 @@ SCANNING_MODE_TO_BLEAK = {
     BluetoothScanningMode.AUTO: "passive",
 }
 
+
+def _resolve_radio_mode(
+    mode: BluetoothScanningMode | None,
+) -> BluetoothScanningMode | None:
+    """
+    Resolve AUTO to the underlying mode the radio actually runs in.
+
+    AUTO is a habluetooth scheduling concept, not a radio state. The
+    backend always runs in either passive or active. current_mode is
+    supposed to reflect that real state so diagnostics and the manager
+    callbacks line up with what remote scanners (e.g. ESPHome) already
+    report; otherwise local adapters look stuck on "auto" forever.
+    """
+    if mode is BluetoothScanningMode.AUTO:
+        return (
+            BluetoothScanningMode.ACTIVE if IS_MACOS else BluetoothScanningMode.PASSIVE
+        )
+    return mode
+
+
 # The minimum number of seconds to know
 # the adapter has not had advertisements
 # and we already tried to restart the scanner
@@ -411,7 +431,8 @@ class HaScanner(BaseHaScanner):
         ), "Loop is not set, call async_setup first"
 
         effective_mode = self._effective_mode()
-        self.set_current_mode(effective_mode)
+        radio_mode = _resolve_radio_mode(effective_mode)
+        self.set_current_mode(radio_mode)
         # 1st attempt - no auto reset
         # 2nd attempt - try to reset the adapter and wait a bit
         # 3th attempt - no auto reset
@@ -420,7 +441,7 @@ class HaScanner(BaseHaScanner):
         if (
             IS_LINUX
             and attempt == START_ATTEMPTS
-            and effective_mode is BluetoothScanningMode.ACTIVE
+            and radio_mode is BluetoothScanningMode.ACTIVE
         ):
             _LOGGER.debug(
                 "%s: Falling back to passive scanning mode "
@@ -512,7 +533,7 @@ class HaScanner(BaseHaScanner):
         finally:
             self._start_future = None
 
-        self._log_start_success(attempt, effective_mode)
+        self._log_start_success(attempt, radio_mode)
         self._on_start_success()
         return True
 
@@ -525,14 +546,14 @@ class HaScanner(BaseHaScanner):
         )
 
     def _log_start_success(
-        self, attempt: int, effective_mode: BluetoothScanningMode | None
+        self, attempt: int, radio_mode: BluetoothScanningMode | None
     ) -> None:
-        # Compare against the mode we *tried* to start in (effective_mode)
-        # rather than requested_mode: an AUTO scanner mid-active-window
-        # has requested_mode=AUTO but effective_mode=ACTIVE, and we
+        # Compare against the resolved radio mode we *tried* to start
+        # in rather than requested_mode: an AUTO scanner mid-active-
+        # window has requested_mode=AUTO but radio_mode=ACTIVE, and we
         # don't want to warn "fell back to passive" when the active
         # restart actually succeeded.
-        if self.current_mode is not effective_mode:
+        if self.current_mode is not radio_mode:
             _LOGGER.warning(
                 "%s: Successful fall-back to passive scanning mode "
                 "after active scanning failed (%s/%s)",
@@ -956,7 +977,7 @@ class HaScanner(BaseHaScanner):
             self.scanning = False
             return False
         self.scanning = True
-        self.set_current_mode(effective_mode)
+        self.set_current_mode(_resolve_radio_mode(effective_mode))
         return True
 
     async def _async_stop_scanner(self) -> None:
