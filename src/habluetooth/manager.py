@@ -101,6 +101,20 @@ def _dispatch_bleak_callback(
         _LOGGER.exception("Error in callback: %s", bleak_callback.callback)
 
 
+def _resolve_waiters(
+    waiters: list[asyncio.Future[None]], exc: BaseException | None
+) -> None:
+    """Resolve pending refresh waiters with a result or exception."""
+    if exc is None:
+        for w in waiters:
+            if not w.done():
+                w.set_result(None)
+        return
+    for w in waiters:
+        if not w.done():
+            w.set_exception(exc)
+
+
 class BleakCallback:
     """Bleak callback."""
 
@@ -321,20 +335,16 @@ class BluetoothManager:
             # Map cancellation onto a non-cancellation exception for waiters
             # so the leader's cancel does not transitively cancel unrelated
             # callers parked on this refresh.
-            cancel_exc = RuntimeError("Adapter refresh cancelled before completion")
-            for w in waiters:
-                if not w.done():
-                    w.set_exception(cancel_exc)
+            _resolve_waiters(
+                waiters,
+                RuntimeError("Adapter refresh cancelled before completion"),
+            )
             raise
         except BaseException as ex:
-            for w in waiters:
-                if not w.done():
-                    w.set_exception(ex)
+            _resolve_waiters(waiters, ex)
             raise
         else:
-            for w in waiters:
-                if not w.done():
-                    w.set_result(None)
+            _resolve_waiters(waiters, None)
         finally:
             self._adapter_refresh_waiters = None
 
