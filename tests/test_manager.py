@@ -5,7 +5,7 @@ import time
 from collections.abc import Iterable
 from datetime import timedelta
 from typing import Any
-from unittest.mock import ANY, AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, PropertyMock, patch
 
 import pytest
 from bleak_retry_connector import AllocationChange, Allocations, BleakSlotManager
@@ -1681,4 +1681,57 @@ async def test_async_refresh_adapters_waiter_cancellation_does_not_break_leader(
         release_refresh.set()
         await leader
         await waiter_b
+    assert manager._adapter_refresh_future is None
+
+
+@pytest.mark.asyncio
+async def test_async_refresh_adapters_adapters_property_failure_propagates() -> None:
+    """Property access failure after refresh() must not strand waiters."""
+    manager = get_manager()
+    assert manager._bluetooth_adapters is not None
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+
+    async def slow_refresh() -> None:
+        refresh_started.set()
+        await release_refresh.wait()
+
+    failing_adapters = PropertyMock(side_effect=RuntimeError("adapters boom"))
+    with (
+        patch.object(manager._bluetooth_adapters, "refresh", new=slow_refresh),
+        patch.object(type(manager._bluetooth_adapters), "adapters", failing_adapters),
+    ):
+        leader = asyncio.create_task(manager._async_refresh_adapters())
+        await refresh_started.wait()
+        waiter = asyncio.create_task(manager._async_refresh_adapters())
+        await asyncio.sleep(0)
+        release_refresh.set()
+        with pytest.raises(RuntimeError, match="adapters boom"):
+            await leader
+        with pytest.raises(RuntimeError, match="adapters boom"):
+            await waiter
+    assert manager._adapter_refresh_future is None
+
+
+@pytest.mark.asyncio
+async def test_async_refresh_adapters_recovers_after_prior_failure() -> None:
+    """Sequential call after a failed refresh must start fresh and succeed."""
+    manager = get_manager()
+    assert manager._bluetooth_adapters is not None
+    call_count = 0
+
+    async def flaky_refresh() -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            msg = "first boom"
+            raise RuntimeError(msg)
+
+    with patch.object(manager._bluetooth_adapters, "refresh", new=flaky_refresh):
+        with pytest.raises(RuntimeError, match="first boom"):
+            await manager._async_refresh_adapters()
+        assert manager._adapter_refresh_future is None
+        # Second call must start a fresh refresh, not reuse stale future state.
+        await manager._async_refresh_adapters()
+    assert call_count == 2
     assert manager._adapter_refresh_future is None

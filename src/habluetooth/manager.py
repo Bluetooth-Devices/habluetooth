@@ -317,15 +317,16 @@ class BluetoothManager:
         self._adapter_refresh_future = future = self._loop.create_future()
         try:
             await self._bluetooth_adapters.refresh()
+            self._adapters = self._bluetooth_adapters.adapters
         except BaseException as ex:
             # Store exception as the future's result (HA loader.py pattern)
             # so waiters can read it via future.result() and re-raise. Using
             # set_result avoids "exception was never retrieved" warnings
-            # when no waiters are parked.
+            # when no waiters are parked. Covers both refresh() and the
+            # adapters property access so waiters never hang.
             future.set_result(ex)
             raise
         else:
-            self._adapters = self._bluetooth_adapters.adapters
             future.set_result(None)
         finally:
             self._adapter_refresh_future = None
