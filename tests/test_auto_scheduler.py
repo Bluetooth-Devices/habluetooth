@@ -684,7 +684,7 @@ async def test_dispatch_drops_tracking_for_unseen_address() -> None:
         manager._connectable_history.pop(address, None)
         await _run_worker_tick(sched, scanner.source)
         assert address not in sched._needs
-        assert address not in sched._owner_by_address
+        assert address not in sched._ownership._owner_by_address
         assert address not in sched._workers[scanner.source]._owned_needs
     finally:
         cancel()
@@ -5569,9 +5569,9 @@ async def test_owned_needs_populated_for_owner_on_add_request_with_history() -> 
         # history-gating finds it.
         _inject(scanner, address)
         # Drop the entry add_request seeded so we can re-add through
-        # add_request and observe its _assign_owner side-effect.
+        # add_request and observe its _ownership.assign side-effect.
         sched._needs.pop(address, None)
-        sched._owner_by_address.pop(address, None)
+        sched._ownership._owner_by_address.pop(address, None)
         sched._workers[scanner.source]._owned_needs.pop(address, None)
         cancel = manager.async_register_active_scan(address, scan_interval=60.0)
         try:
@@ -5581,7 +5581,7 @@ async def test_owned_needs_populated_for_owner_on_add_request_with_history() -> 
             # _needs and _owned_needs so _advance_due mutations apply
             # to both views.
             assert owned[address] is sched._needs[address]
-            assert sched._owner_by_address[address] == scanner.source
+            assert sched._ownership._owner_by_address[address] == scanner.source
         finally:
             cancel()
     finally:
@@ -5600,7 +5600,7 @@ async def test_add_request_without_history_leaves_owned_needs_empty() -> None:
         cancel = manager.async_register_active_scan(address, scan_interval=60.0)
         try:
             assert address not in sched._needs
-            assert address not in sched._owner_by_address
+            assert address not in sched._ownership._owner_by_address
             assert address not in sched._workers[scanner.source]._owned_needs
         finally:
             cancel()
@@ -5623,7 +5623,7 @@ async def test_on_advertisement_bootstraps_owned_needs() -> None:
             owned = sched._workers[scanner.source]._owned_needs
             assert address in owned
             assert owned[address] is sched._needs[address]
-            assert sched._owner_by_address[address] == scanner.source
+            assert sched._ownership._owner_by_address[address] == scanner.source
         finally:
             cancel()
     finally:
@@ -5647,7 +5647,7 @@ async def test_ownership_flip_moves_entry_between_owned_needs() -> None:
         worker_b = sched._workers[s_b.source]
         assert address in worker_a._owned_needs
         assert address not in worker_b._owned_needs
-        assert sched._owner_by_address[address] == s_a.source
+        assert sched._ownership._owner_by_address[address] == s_a.source
 
         # B with much stronger RSSI triggers ownership flip in the
         # manager; scheduler's on_advertisement reassigns owner.
@@ -5655,7 +5655,7 @@ async def test_ownership_flip_moves_entry_between_owned_needs() -> None:
         assert address not in worker_a._owned_needs
         assert address in worker_b._owned_needs
         assert worker_b._owned_needs[address] is sched._needs[address]
-        assert sched._owner_by_address[address] == s_b.source
+        assert sched._ownership._owner_by_address[address] == s_b.source
     finally:
         c_a()
         c_b()
@@ -5677,7 +5677,7 @@ async def test_remove_request_clears_owner_when_bucket_empties() -> None:
         assert address in worker._owned_needs
         cancel()
         assert address not in sched._needs
-        assert address not in sched._owner_by_address
+        assert address not in sched._ownership._owner_by_address
         assert address not in worker._owned_needs
     finally:
         register_cancel()
@@ -5699,11 +5699,11 @@ async def test_remove_request_preserves_owner_when_other_requests_remain() -> No
         assert len(sched._needs[address]) == 2
         cancel1()
         assert address in sched._needs
-        assert sched._owner_by_address[address] == scanner.source
+        assert sched._ownership._owner_by_address[address] == scanner.source
         assert address in worker._owned_needs
         cancel2()
         assert address not in sched._needs
-        assert address not in sched._owner_by_address
+        assert address not in sched._ownership._owner_by_address
         assert address not in worker._owned_needs
     finally:
         register_cancel()
@@ -5721,10 +5721,10 @@ async def test_remove_scanner_clears_owner_and_needs() -> None:
     try:
         _inject(scanner, address)
         assert address in sched._needs
-        assert sched._owner_by_address[address] == scanner.source
+        assert sched._ownership._owner_by_address[address] == scanner.source
         register_cancel()
         assert address not in sched._needs
-        assert address not in sched._owner_by_address
+        assert address not in sched._ownership._owner_by_address
         assert scanner.source not in sched._workers
     finally:
         cancel()
@@ -5745,7 +5745,7 @@ async def test_stop_clears_all_owned_needs_state() -> None:
         assert address in worker._owned_needs
         sched.stop()
         assert sched._needs == {}
-        assert sched._owner_by_address == {}
+        assert sched._ownership._owner_by_address == {}
         # Worker dropped from registry; the cleared dict is on the
         # detached instance still held by the local. Confirm both.
         assert sched._workers == {}
@@ -5780,14 +5780,14 @@ async def test_start_replay_populates_owned_needs() -> None:
         try:
             # Pre-start: only _requests_by_address is populated.
             assert address not in sched._needs
-            assert address not in sched._owner_by_address
+            assert address not in sched._ownership._owner_by_address
             sched.start(loop)
             try:
                 # After start, the replay seeded _needs and assigned
                 # the owner.
                 worker = sched._workers[scanner.source]
                 assert address in sched._needs
-                assert sched._owner_by_address[address] == scanner.source
+                assert sched._ownership._owner_by_address[address] == scanner.source
                 assert address in worker._owned_needs
                 assert worker._owned_needs[address] is sched._needs[address]
             finally:
@@ -5816,7 +5816,7 @@ async def test_spawn_worker_picks_up_preassigned_owner() -> None:
     # synthetic history entry is more wiring than the invariant needs.
     request = next(iter(sched._requests_by_address[address]))
     sched._needs[address] = {request: loop.time()}
-    sched._owner_by_address[address] = source
+    sched._ownership._owner_by_address[address] = source
     try:
         scanner = _RecordingAutoScanner(source, BluetoothScanningMode.AUTO)
         register_cancel = manager.async_register_scanner(scanner)
@@ -5913,7 +5913,7 @@ async def test_collect_due_buckets_resyncs_owned_view_on_drift() -> None:
         assert s_a.active_window_calls == []
         assert address not in worker_a._owned_needs
         assert address in worker_b._owned_needs
-        assert sched._owner_by_address[address] == s_b.source
+        assert sched._ownership._owner_by_address[address] == s_b.source
     finally:
         c_a()
         c_b()
@@ -5937,7 +5937,7 @@ async def test_assign_owner_noop_when_source_unchanged() -> None:
         # Second injection from the same scanner: owner unchanged,
         # owned-view aliasing preserved (same dict object).
         _inject(scanner, address)
-        assert sched._owner_by_address[address] == scanner.source
+        assert sched._ownership._owner_by_address[address] == scanner.source
         assert worker._owned_needs[address] is owned_before
         assert sched._needs[address] is entries
     finally:
@@ -5946,32 +5946,46 @@ async def test_assign_owner_noop_when_source_unchanged() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attach_to_worker_tolerates_missing_state() -> None:
-    """_attach_to_worker no-ops when needs entry or worker is absent."""
+async def test_ownership_assign_tolerates_missing_needs_or_worker() -> None:
+    """assign() records the owner even when needs entry or worker is absent."""
     manager = get_manager()
     sched = manager._auto_scheduler
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
         worker = sched._workers[scanner.source]
-        # No _needs entry for this address — defensive early return.
-        sched._attach_to_worker(scanner.source, "AA:00:00:00:00:99")
+        # No _needs entry for this address — attach path early-returns.
+        sched._ownership.assign("AA:00:00:00:00:99", scanner.source)
         assert "AA:00:00:00:00:99" not in worker._owned_needs
-        # Worker not registered for this source — also a no-op.
+        assert sched._ownership._owner_by_address["AA:00:00:00:00:99"] == (
+            scanner.source
+        )
+        # Worker not registered for this source — also a no-op on the
+        # attach side, but the owner mapping is still recorded.
         sched._needs["BB:00:00:00:00:99"] = {}
-        sched._attach_to_worker("ZZ:99:99:99:99:99", "BB:00:00:00:00:99")
+        sched._ownership.assign("BB:00:00:00:00:99", "ZZ:99:99:99:99:99")
+        assert sched._ownership._owner_by_address["BB:00:00:00:00:99"] == (
+            "ZZ:99:99:99:99:99"
+        )
         sched._needs.pop("BB:00:00:00:00:99", None)
+        # Clean up the synthetic owner mappings so other tests do not
+        # see foreign state.
+        sched._ownership.assign("AA:00:00:00:00:99", None)
+        sched._ownership.assign("BB:00:00:00:00:99", None)
     finally:
         register_cancel()
 
 
 @pytest.mark.asyncio
-async def test_detach_from_worker_tolerates_missing_worker() -> None:
-    """_detach_from_worker no-ops when the worker has been removed."""
+async def test_ownership_assign_tolerates_missing_old_worker() -> None:
+    """Reassigning away from a source whose worker is gone must not raise."""
     manager = get_manager()
     sched = manager._auto_scheduler
-    # No scanner registered for this source — helper must not raise.
-    sched._detach_from_worker("ZZ:99:99:99:99:99", "AA:00:00:00:00:99")
+    # Forge an owner mapping for an unregistered source so the detach
+    # branch hits a missing-worker path.
+    sched._ownership._owner_by_address["AA:00:00:00:00:99"] = "ZZ:99:99:99:99:99"
+    sched._ownership.assign("AA:00:00:00:00:99", None)
+    assert "AA:00:00:00:00:99" not in sched._ownership._owner_by_address
 
 
 @pytest.mark.asyncio
@@ -6023,7 +6037,7 @@ async def test_spawn_worker_skips_foreign_preassigned_owners() -> None:
     foreign_source = "AA:BB:CC:DD:EE:FF"
     request_b = next(iter(sched._requests_by_address[address_b]))
     sched._needs[address_b] = {request_b: loop.time()}
-    sched._owner_by_address[address_b] = foreign_source
+    sched._ownership._owner_by_address[address_b] = foreign_source
     try:
         scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
         register_cancel = manager.async_register_scanner(scanner)

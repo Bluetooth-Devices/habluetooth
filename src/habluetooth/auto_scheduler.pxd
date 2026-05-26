@@ -54,6 +54,7 @@ cdef class _ScannerWorker:
     @cython.locals(
         source=str,
         scheduler=AutoScanScheduler,
+        ownership=_OwnershipIndex,
         needs=dict,
         owned=dict,
         address=str,
@@ -76,12 +77,19 @@ cdef class _ScannerWorker:
     cpdef void _advance_due(self, list due_buckets, double from_time)
 
 
+cdef class _OwnershipIndex:
+
+    cdef public dict _needs
+    cdef public dict _workers
+    cdef public dict _owner_by_address
+
+
 cdef class AutoScanScheduler:
 
     cdef public object _manager
     cdef public dict _requests_by_address
     cdef public dict _needs
-    cdef public dict _owner_by_address
+    cdef public _OwnershipIndex _ownership
     cdef public dict _workers
     cdef public object _loop
     cdef public bint _running
@@ -99,7 +107,6 @@ cdef class AutoScanScheduler:
 
     @cython.locals(
         source=str,
-        address=str,
     )
     cpdef void remove_scanner(self, object scanner)
 
