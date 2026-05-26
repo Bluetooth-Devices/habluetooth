@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from collections.abc import Iterable
 from datetime import timedelta
 from typing import Any
 from unittest.mock import ANY, AsyncMock, Mock, patch
@@ -230,6 +231,51 @@ async def test_async_register_disappeared_callback(
 
     cancel1()
     cancel2()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_check_unavailable_materializes_each_scanner_once() -> None:
+    """
+    _async_check_unavailable must hit each scanner's discovered_addresses once.
+
+    Regression for https://github.com/Bluetooth-Devices/habluetooth/issues/505:
+    the prior two-pass loop accessed every connectable scanner twice per
+    cycle, and ``HaScanner.discovered_addresses`` rebuilds bleak's
+    discovered-devices dict on every access.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:12"
+
+    connectable_calls = 0
+    non_connectable_calls = 0
+
+    class CountingConnectable(FakeScanner):
+        @property
+        def discovered_addresses(self) -> Iterable[str]:
+            nonlocal connectable_calls
+            connectable_calls += 1
+            return (address,)
+
+    class CountingNonConnectable(FakeScanner):
+        @property
+        def discovered_addresses(self) -> Iterable[str]:
+            nonlocal non_connectable_calls
+            non_connectable_calls += 1
+            return (address,)
+
+    connectable = CountingConnectable("hci0", "hci0", connectable=True)
+    non_connectable = CountingNonConnectable("hci1", "hci1", connectable=False)
+    cancel_c = manager.async_register_scanner(connectable)
+    cancel_n = manager.async_register_scanner(non_connectable)
+
+    manager._async_check_unavailable()
+
+    assert connectable_calls == 1
+    assert non_connectable_calls == 1
+
+    cancel_c()
+    cancel_n()
 
 
 @pytest.mark.asyncio
