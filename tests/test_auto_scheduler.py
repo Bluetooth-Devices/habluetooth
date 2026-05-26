@@ -18,7 +18,7 @@ from habluetooth import (
     BluetoothServiceInfoBleak,
     get_manager,
 )
-from habluetooth.auto_scheduler import ActiveScanRequest
+from habluetooth.auto_scheduler import ActiveScanRequest, _OwnershipIndex
 from habluetooth.const import (
     AUTO_INITIAL_SWEEP_DELAY,
     AUTO_REDISCOVERY_INTERVAL,
@@ -6050,3 +6050,57 @@ async def test_spawn_worker_skips_foreign_preassigned_owners() -> None:
     finally:
         cancel_a()
         cancel_b()
+
+
+def test_ownership_index_hook_worker_missing_worker() -> None:
+    """hook_worker returns cleanly when the source has no registered worker."""
+    needs: dict[str, dict[ActiveScanRequest, float]] = {}
+    workers: dict[str, Any] = {}
+    idx = _OwnershipIndex(needs, workers)
+    idx._owner_by_address["AA:00:00:00:00:99"] = "ghost"
+    # No worker registered for "ghost" — defensive guard returns early.
+    idx.hook_worker("ghost")
+    assert idx._owner_by_address["AA:00:00:00:00:99"] == "ghost"
+
+
+def test_ownership_index_hook_worker_skips_address_without_needs() -> None:
+    """hook_worker skips an owned address that has no _needs entry."""
+
+    class _StubWorker:
+        def __init__(self) -> None:
+            self._owned_needs: dict[str, dict[ActiveScanRequest, float]] = {}
+
+    needs: dict[str, dict[ActiveScanRequest, float]] = {}
+    worker = _StubWorker()
+    workers: dict[str, Any] = {"src": worker}
+    idx = _OwnershipIndex(needs, workers)
+    # Owner mapping exists but the address has no needs entry yet.
+    idx._owner_by_address["AA:00:00:00:00:99"] = "src"
+    idx.hook_worker("src")
+    assert worker._owned_needs == {}
+
+
+def test_ownership_index_clear_source_no_match() -> None:
+    """clear_source over an index with no addresses for the source is a no-op."""
+
+    class _StubWorker:
+        def __init__(self) -> None:
+            self._owned_needs: dict[str, dict[ActiveScanRequest, float]] = {}
+
+    needs: dict[str, dict[ActiveScanRequest, float]] = {}
+    worker = _StubWorker()
+    workers: dict[str, Any] = {"src": worker}
+    idx = _OwnershipIndex(needs, workers)
+    idx.clear_source("src")
+    assert idx._owner_by_address == {}
+    assert worker._owned_needs == {}
+
+
+def test_ownership_index_clear_no_workers() -> None:
+    """clear() over an index with no workers leaves state empty."""
+    needs: dict[str, dict[ActiveScanRequest, float]] = {}
+    workers: dict[str, Any] = {}
+    idx = _OwnershipIndex(needs, workers)
+    idx._owner_by_address["AA:00:00:00:00:99"] = "ghost"
+    idx.clear()
+    assert idx._owner_by_address == {}
