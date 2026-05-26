@@ -142,7 +142,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from bleak_retry_connector import NO_RSSI_VALUE
 
@@ -383,14 +383,20 @@ class _ScannerWorker:
                 continue
             history = last_service_info(address, False)
             if history is None:
-                # Orphan: history aged out.
+                # Orphan: history aged out. Drop from this worker's
+                # view explicitly: assign(None) may early-return if
+                # _owner_by_address disagrees, leaving a stale entry.
                 ownership.assign(address, None)
+                owned.pop(address, None)
                 needs.pop(address, None)
                 continue
             if history.source != source:
                 # Owner drifted; reassign and wake the new owner so it
-                # can re-evaluate its next event time promptly.
+                # can re-evaluate its next event time promptly. Drop
+                # from this worker's view explicitly for the same
+                # early-return reason as the orphan branch.
                 ownership.assign(address, history.source)
+                owned.pop(address, None)
                 scheduler._wake_worker(history.source)
                 continue
             due: list[ActiveScanRequest] = []
@@ -619,8 +625,11 @@ class _OwnershipIndex:
 
     Single source of truth for which scanner owns each address and
     for the aliased subset of ``_needs`` each owner's worker sees on
-    its hot path. Invariant: an address has an owner iff
-    ``_needs[address]`` is non-empty.
+    its hot path. Owner mappings track the manager's history-reported
+    source for each address; the aliased per-worker entry only exists
+    when ``_needs[address]`` is non-empty (assign() records the owner
+    either way, but skips attaching an entry when ``_needs`` is empty
+    so the worker view stays consistent with what ``_needs`` holds).
     """
 
     __slots__ = ("_needs", "_owner_by_address", "_workers")
@@ -635,7 +644,15 @@ class _OwnershipIndex:
         self._workers = workers
         self._owner_by_address: dict[str, str] = {}
 
-    def assign(self, address: str, new_source: str | None) -> None:
+    # `Optional[str]` (not `str | None`) for the .pxd `cpdef` cross-check:
+    # under `from __future__ import annotations` Cython 3 treats the PEP 604
+    # form as a non-nullable `str`, which conflicts with the `object` param
+    # in the matching .pxd signature.
+    def assign(
+        self,
+        address: str,
+        new_source: Optional[str],  # noqa: UP045
+    ) -> None:
         """Move ownership of ``address`` to ``new_source`` (None clears)."""
         old_source = self._owner_by_address.get(address)
         if old_source == new_source:

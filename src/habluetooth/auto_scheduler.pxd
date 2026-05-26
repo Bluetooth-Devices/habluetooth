@@ -83,6 +83,34 @@ cdef class _OwnershipIndex:
     cdef public dict _workers
     cdef public dict _owner_by_address
 
+    @cython.locals(
+        old_source=str,
+        old_worker=_ScannerWorker,
+        new_worker=_ScannerWorker,
+        entries=dict,
+    )
+    cpdef void assign(self, str address, object new_source)
+
+    @cython.locals(
+        owner_by_address=dict,
+        needs=dict,
+        address=str,
+        worker=_ScannerWorker,
+    )
+    cpdef void clear_source(self, str source)
+
+    @cython.locals(
+        worker=_ScannerWorker,
+        owned_needs=dict,
+        needs=dict,
+        address=str,
+        owner=str,
+        entries=dict,
+    )
+    cpdef void hook_worker(self, str source)
+
+    cpdef void clear(self)
+
 
 cdef class AutoScanScheduler:
 
