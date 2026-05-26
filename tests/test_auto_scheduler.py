@@ -5918,3 +5918,57 @@ async def test_collect_due_buckets_resyncs_owned_view_on_drift() -> None:
         c_a()
         c_b()
         cancel()
+
+
+@pytest.mark.asyncio
+async def test_assign_owner_noop_when_source_unchanged() -> None:
+    """Repeated on_advertisement from the same scanner is a no-op."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        worker = sched._workers[scanner.source]
+        entries = sched._needs[address]
+        owned_before = worker._owned_needs[address]
+        # Second injection from the same scanner: owner unchanged,
+        # owned-view aliasing preserved (same dict object).
+        _inject(scanner, address)
+        assert sched._owner_by_address[address] == scanner.source
+        assert worker._owned_needs[address] is owned_before
+        assert sched._needs[address] is entries
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_attach_to_worker_tolerates_missing_state() -> None:
+    """_attach_to_worker no-ops when needs entry or worker is absent."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        # No _needs entry for this address — defensive early return.
+        sched._attach_to_worker(scanner.source, "AA:00:00:00:00:99")
+        assert "AA:00:00:00:00:99" not in worker._owned_needs
+        # Worker not registered for this source — also a no-op.
+        sched._needs["BB:00:00:00:00:99"] = {}
+        sched._attach_to_worker("ZZ:99:99:99:99:99", "BB:00:00:00:00:99")
+        sched._needs.pop("BB:00:00:00:00:99", None)
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_detach_from_worker_tolerates_missing_worker() -> None:
+    """_detach_from_worker no-ops when the worker has been removed."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    # No scanner registered for this source — helper must not raise.
+    sched._detach_from_worker("ZZ:99:99:99:99:99", "AA:00:00:00:00:99")

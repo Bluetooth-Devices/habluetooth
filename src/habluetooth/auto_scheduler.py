@@ -772,20 +772,15 @@ class AutoScanScheduler:
             len(self._workers) * _AUTO_REDISCOVERY_SWEEP_DURATION
         ) % _AUTO_INITIAL_SWEEP_DELAY
         worker.start(self._loop, offset)
-        self._workers[scanner.source] = worker
+        source = scanner.source
+        self._workers[source] = worker
         # Hook up entries already owned by this source (e.g., an
         # on_advertisement that arrived before the scanner registered,
         # or the start() replay loop seeding requests before workers
         # were created in some other ordering).
-        source = scanner.source
-        owned_needs = worker._owned_needs
-        needs = self._needs
         for address, owner in self._owner_by_address.items():
-            if owner != source:
-                continue
-            entries = needs.get(address)
-            if entries is not None:
-                owned_needs[address] = entries
+            if owner == source:
+                self._attach_to_worker(source, address)
 
     def add_request(self, request: ActiveScanRequest) -> None:
         """
@@ -873,34 +868,52 @@ class AutoScanScheduler:
         """
         Move address ownership to ``new_source`` (or clear if None).
 
-        Single mutation point for ``_owner_by_address`` and the
-        per-worker ``_owned_needs`` view. The inner dict aliased into
-        ``_owned_needs`` is the same object as ``_needs[address]``,
-        so in-place mutations of due-times remain visible.
-
-        Tolerates a missing worker for ``new_source`` (e.g., a worker
-        not yet spawned at start-time); ``_owner_by_address`` is set
-        unconditionally so ``_spawn_worker`` can hook the entry on
-        registration. Tolerates a missing ``_needs`` entry (e.g.,
-        ownership cleared via remove_request before reassignment).
+        Thin coordinator: tracks the transition in
+        ``_owner_by_address`` and delegates the per-worker view
+        touches to ``_detach_from_worker`` / ``_attach_to_worker``.
         """
         old_source = self._owner_by_address.get(address)
         if old_source == new_source:
             return
         if old_source is not None:
-            old_worker = self._workers.get(old_source)
-            if old_worker is not None:
-                old_worker._owned_needs.pop(address, None)
+            self._detach_from_worker(old_source, address)
         if new_source is None:
             self._owner_by_address.pop(address, None)
             return
         self._owner_by_address[address] = new_source
+        self._attach_to_worker(new_source, address)
+
+    def _detach_from_worker(self, source: str, address: str) -> None:
+        """
+        Drop ``address`` from ``source``'s per-worker owned view.
+
+        Tolerates a missing worker (e.g., the scanner was removed
+        and its worker popped from ``_workers`` before the address
+        ownership got reassigned).
+        """
+        worker = self._workers.get(source)
+        if worker is not None:
+            worker._owned_needs.pop(address, None)
+
+    def _attach_to_worker(self, source: str, address: str) -> None:
+        """
+        Hook ``address`` into ``source``'s per-worker owned view.
+
+        The aliased inner dict is the same object as
+        ``_needs[address]``, so in-place mutations of due-times by
+        ``_advance_due`` / ``_dispatch_to_fallback`` stay visible
+        through both views. Tolerates a missing ``_needs`` entry
+        (e.g., owner pre-assigned via ``on_advertisement`` before
+        any request was registered) and a missing worker
+        (e.g., ``new_source`` not yet spawned at ``start()`` time —
+        ``_spawn_worker`` will hook the entry on registration).
+        """
         entries = self._needs.get(address)
         if entries is None:
             return
-        new_worker = self._workers.get(new_source)
-        if new_worker is not None:
-            new_worker._owned_needs[address] = entries
+        worker = self._workers.get(source)
+        if worker is not None:
+            worker._owned_needs[address] = entries
 
     def _resolve_fallback_for_address(
         self, address: str, exclude_source: str
