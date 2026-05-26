@@ -451,9 +451,9 @@ class BaseHaScanner:
     def _discovered_device_timestamps(self) -> dict[str, float]:
         """Return a dict of discovered device timestamps."""
         warnings.warn(
-            "BaseHaRemoteScanner._discovered_device_timestamps is deprecated "
+            "BaseHaScanner._discovered_device_timestamps is deprecated "
             "and will be removed in a future version of habluetooth, use "
-            "BaseHaRemoteScanner.discovered_device_timestamps instead",
+            "BaseHaScanner.discovered_device_timestamps instead",
             FutureWarning,
             stacklevel=2,
         )

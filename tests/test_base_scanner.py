@@ -420,7 +420,9 @@ async def test_remote_scanner_discovered_device_timestamps_deprecated() -> None:
     cancel = manager.async_register_scanner(scanner)
     scanner.inject_advertisement(switchbot_device, switchbot_device_adv)
 
-    with pytest.warns(FutureWarning, match="_discovered_device_timestamps"):
+    with pytest.warns(
+        FutureWarning, match=r"BaseHaScanner\._discovered_device_timestamps"
+    ):
         legacy = scanner._discovered_device_timestamps
 
     assert legacy == scanner.discovered_device_timestamps
