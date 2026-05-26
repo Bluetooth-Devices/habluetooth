@@ -247,7 +247,8 @@ class _ScannerWorker:
         self._failed_window: bool = False
         self._warned_no_fallback: bool = False
         # Owned subset of _needs; inner dicts aliased so in-place
-        # advances stay visible. Mutated only by _assign_owner.
+        # advances stay visible. Populated/updated via _assign_owner;
+        # cleared on stop/remove_scanner.
         self._owned_needs: dict[str, dict[ActiveScanRequest, float]] = {}
 
     def start(
@@ -387,8 +388,10 @@ class _ScannerWorker:
                 needs.pop(address, None)
                 continue
             if history.source != source:
-                # Owner drifted; rightful owner picks it up next tick.
+                # Owner drifted; reassign and wake the new owner so it
+                # can re-evaluate its next event time promptly.
                 scheduler._assign_owner(address, history.source)
+                scheduler._wake_worker(history.source)
                 continue
             due: list[ActiveScanRequest] = []
             for r, t in entries.items():
