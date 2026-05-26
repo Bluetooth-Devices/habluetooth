@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.7.5 (2026-05-26)
+
+### Bug fixes
+
+
+- Correct class name in _discovered_device_timestamps deprecation warning ([`ba8632d`](https://github.com/Bluetooth-Devices/habluetooth/commit/ba8632d21938d5fac8f902f0991fbec3bbabea2b))
+
+
+### Testing
+
+
+- Benchmarks for _async_check_unavailable (issue #505) ([`baff661`](https://github.com/Bluetooth-Devices/habluetooth/commit/baff66138f06229979d7f4ea563fdfa43e2f886d))
+
+
 ## v6.7.4 (2026-05-25)
 
 ### Bug fixes
