@@ -12,7 +12,6 @@ from habluetooth import (
     BluetoothScanningMode,
     get_manager,
 )
-from habluetooth.const import CALLBACK_TYPE
 
 from . import generate_advertisement_data, generate_ble_device
 
@@ -21,6 +20,8 @@ if TYPE_CHECKING:
 
     from bleak.backends.scanner import AdvertisementData, BLEDevice
     from pytest_codspeed import BenchmarkFixture
+
+    from habluetooth.const import CALLBACK_TYPE
 
 pytestmark = pytest.mark.timeout(60)
 
