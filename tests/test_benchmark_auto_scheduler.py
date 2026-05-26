@@ -12,6 +12,7 @@ from habluetooth import (
     BluetoothScanningMode,
     get_manager,
 )
+from habluetooth.const import CALLBACK_TYPE
 
 from . import generate_advertisement_data, generate_ble_device
 
@@ -88,7 +89,7 @@ def _inject(scanner: _AutoScanner, address: str, now: float) -> None:
 
 def _setup_scheduler(
     num_scanners: int, num_devices: int
-) -> tuple[list[_AutoScanner], list, list]:
+) -> tuple[list[_AutoScanner], list[CALLBACK_TYPE], list[CALLBACK_TYPE]]:
     """
     Register ``num_scanners`` AUTO scanners and ``num_devices`` scan requests.
 
@@ -101,12 +102,12 @@ def _setup_scheduler(
     loop = asyncio.get_running_loop()
     now = loop.time()
     scanners: list[_AutoScanner] = []
-    scanner_cancels = []
+    scanner_cancels: list[CALLBACK_TYPE] = []
     for i in range(num_scanners):
         scanner = _AutoScanner(_make_source(i))
         scanners.append(scanner)
         scanner_cancels.append(manager.async_register_scanner(scanner))
-    request_cancels = []
+    request_cancels: list[CALLBACK_TYPE] = []
     for i in range(num_devices):
         address = _make_address(i)
         request_cancels.append(
@@ -117,6 +118,17 @@ def _setup_scheduler(
         # from history.source on both the old and new code paths.
         _inject(scanners[i % num_scanners], address, now)
     return scanners, scanner_cancels, request_cancels
+
+
+def _teardown_scheduler(
+    scanner_cancels: list[CALLBACK_TYPE],
+    request_cancels: list[CALLBACK_TYPE],
+) -> None:
+    """Release scanner and active-scan registrations from ``_setup_scheduler``."""
+    for cancel in request_cancels:
+        cancel()
+    for cancel in scanner_cancels:
+        cancel()
 
 
 @pytest.mark.asyncio
@@ -134,7 +146,9 @@ async def test_next_event_at_single_worker_8_scanners_200_devices(
     single-worker hot path so any regression in ``_next_event_at`` cost
     shows up immediately.
     """
-    _setup_scheduler(num_scanners=8, num_devices=200)
+    _, scanner_cancels, request_cancels = _setup_scheduler(
+        num_scanners=8, num_devices=200
+    )
     manager = get_manager()
     scheduler = manager._auto_scheduler
     worker = next(iter(scheduler._workers.values()))
@@ -143,6 +157,8 @@ async def test_next_event_at_single_worker_8_scanners_200_devices(
     @benchmark
     def run() -> None:
         worker._next_event_at(loop.time())
+
+    _teardown_scheduler(scanner_cancels, request_cancels)
 
 
 @pytest.mark.asyncio
@@ -157,7 +173,9 @@ async def test_next_event_at_burst_8_scanners_200_devices(
     optimization makes the total work O(N) because each worker only
     visits its owned subset. This benchmark captures the headline win.
     """
-    _setup_scheduler(num_scanners=8, num_devices=200)
+    _, scanner_cancels, request_cancels = _setup_scheduler(
+        num_scanners=8, num_devices=200
+    )
     manager = get_manager()
     scheduler = manager._auto_scheduler
     workers = list(scheduler._workers.values())
@@ -168,6 +186,8 @@ async def test_next_event_at_burst_8_scanners_200_devices(
         now = loop.time()
         for worker in workers:
             worker._next_event_at(now)
+
+    _teardown_scheduler(scanner_cancels, request_cancels)
 
 
 @pytest.mark.asyncio
@@ -184,7 +204,9 @@ async def test_collect_due_buckets_single_worker_8_scanners_200_devices(
     With entries scheduled well into the future, this exercises the
     no-dispatch read path that runs on every tick.
     """
-    _setup_scheduler(num_scanners=8, num_devices=200)
+    _, scanner_cancels, request_cancels = _setup_scheduler(
+        num_scanners=8, num_devices=200
+    )
     manager = get_manager()
     scheduler = manager._auto_scheduler
     worker = next(iter(scheduler._workers.values()))
@@ -194,13 +216,17 @@ async def test_collect_due_buckets_single_worker_8_scanners_200_devices(
     def run() -> None:
         worker._collect_due_buckets(loop.time())
 
+    _teardown_scheduler(scanner_cancels, request_cancels)
+
 
 @pytest.mark.asyncio
 async def test_collect_due_buckets_burst_8_scanners_200_devices(
     benchmark: BenchmarkFixture,
 ) -> None:
     """All 8 workers collect due buckets — burst variant of the read path."""
-    _setup_scheduler(num_scanners=8, num_devices=200)
+    _, scanner_cancels, request_cancels = _setup_scheduler(
+        num_scanners=8, num_devices=200
+    )
     manager = get_manager()
     scheduler = manager._auto_scheduler
     workers = list(scheduler._workers.values())
@@ -211,3 +237,5 @@ async def test_collect_due_buckets_burst_8_scanners_200_devices(
         now = loop.time()
         for worker in workers:
             worker._collect_due_buckets(now)
+
+    _teardown_scheduler(scanner_cancels, request_cancels)
