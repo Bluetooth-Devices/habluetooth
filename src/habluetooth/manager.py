@@ -7,7 +7,6 @@ import itertools
 import logging
 import math
 import platform
-from contextlib import suppress
 from dataclasses import asdict
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final
@@ -204,7 +203,7 @@ class BluetoothManager:
         self.has_advertising_side_channel = False
         self._side_channel_scanners: dict[int, HaScanner] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._adapter_refresh_future: asyncio.Future[None] | None = None
+        self._adapter_refresh_future: asyncio.Future[BaseException | None] | None = None
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
         self._disappeared_callbacks: set[Callable[[str], None]] = set()
         self._allocations_callbacks: dict[
@@ -305,21 +304,29 @@ class BluetoothManager:
 
     async def _async_refresh_adapters(self) -> None:
         """Refresh the adapters."""
-        if self._adapter_refresh_future:
-            await self._adapter_refresh_future
+        if (future := self._adapter_refresh_future) is not None:
+            # asyncio.wait does not propagate cancellation of the awaiting
+            # task onto the shared future, so a cancelled waiter cannot
+            # poison the leader or its siblings.
+            await asyncio.wait((future,))
+            if (result := future.result()) is not None:
+                raise result
             return
         if TYPE_CHECKING:
             assert self._loop is not None
-        self._adapter_refresh_future = self._loop.create_future()
+        self._adapter_refresh_future = future = self._loop.create_future()
         try:
             await self._bluetooth_adapters.refresh()
-            self._adapters = self._bluetooth_adapters.adapters
-            self._adapter_refresh_future.set_result(None)
         except BaseException as ex:
-            self._adapter_refresh_future.set_exception(ex)
-            with suppress(BaseException):
-                self._adapter_refresh_future.result()
+            # Store exception as the future's result (HA loader.py pattern)
+            # so waiters can read it via future.result() and re-raise. Using
+            # set_result avoids "exception was never retrieved" warnings
+            # when no waiters are parked.
+            future.set_result(ex)
             raise
+        else:
+            self._adapters = self._bluetooth_adapters.adapters
+            future.set_result(None)
         finally:
             self._adapter_refresh_future = None
 

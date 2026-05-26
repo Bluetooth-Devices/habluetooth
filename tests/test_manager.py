@@ -1648,7 +1648,37 @@ async def test_async_refresh_adapters_leader_cancellation_does_not_silently_succ
         leader.cancel()
         with pytest.raises(asyncio.CancelledError):
             await leader
-        # Waiter must observe a failure, not silently complete.
-        with pytest.raises(BaseException):  # noqa: B017, PT011
+        # Waiter must observe a CancelledError, not silently complete.
+        with pytest.raises(asyncio.CancelledError):
             await waiter
+    assert manager._adapter_refresh_future is None
+
+
+@pytest.mark.asyncio
+async def test_async_refresh_adapters_waiter_cancellation_does_not_break_leader() -> (
+    None
+):
+    """Cancelling one waiter must not strand the leader or other siblings."""
+    manager = get_manager()
+    assert manager._bluetooth_adapters is not None
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+
+    async def slow_refresh() -> None:
+        refresh_started.set()
+        await release_refresh.wait()
+
+    with patch.object(manager._bluetooth_adapters, "refresh", new=slow_refresh):
+        leader = asyncio.create_task(manager._async_refresh_adapters())
+        await refresh_started.wait()
+        waiter_a = asyncio.create_task(manager._async_refresh_adapters())
+        waiter_b = asyncio.create_task(manager._async_refresh_adapters())
+        await asyncio.sleep(0)
+        waiter_a.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter_a
+        # Leader and surviving waiter must still complete normally.
+        release_refresh.set()
+        await leader
+        await waiter_b
     assert manager._adapter_refresh_future is None
