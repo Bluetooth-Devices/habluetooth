@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.7.6 (2026-05-26)
+
+### Bug fixes
+
+
+- Make scanner unregister idempotent ([`44722dd`](https://github.com/Bluetooth-Devices/habluetooth/commit/44722dd276c3054e8bb1cb87ddb67b9d4b2716f3))
+
+
+### Testing
+
+
+- Benchmarks for auto_scheduler per-worker owned-needs (#506) ([`5d4b90c`](https://github.com/Bluetooth-Devices/habluetooth/commit/5d4b90c16cab38047381800d90c88ea31df34fff))
+
+
 ## v6.7.5 (2026-05-26)
 
 ### Bug fixes
