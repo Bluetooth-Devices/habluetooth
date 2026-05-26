@@ -304,17 +304,33 @@ class BluetoothManager:
 
     async def _async_refresh_adapters(self) -> None:
         """Refresh the adapters."""
-        if self._adapter_refresh_future:
-            await self._adapter_refresh_future
+        if (in_flight := self._adapter_refresh_future) is not None:
+            # ``shield`` so a cancelled waiter does not strand siblings or
+            # the leader still mid-refresh.
+            await asyncio.shield(in_flight)
             return
         if TYPE_CHECKING:
             assert self._loop is not None
-        self._adapter_refresh_future = self._loop.create_future()
+        future = self._adapter_refresh_future = self._loop.create_future()
         try:
             await self._bluetooth_adapters.refresh()
             self._adapters = self._bluetooth_adapters.adapters
+        except asyncio.CancelledError:
+            # Map cancellation onto a non-cancellation exception for waiters
+            # so the leader's cancel does not transitively cancel unrelated
+            # callers parked on the shared future.
+            if not future.done():
+                future.set_exception(
+                    RuntimeError("Adapter refresh cancelled before completion")
+                )
+            raise
+        except BaseException as ex:
+            if not future.done():
+                future.set_exception(ex)
+            raise
+        else:
+            future.set_result(None)
         finally:
-            self._adapter_refresh_future.set_result(None)
             self._adapter_refresh_future = None
 
     def get_cached_bluetooth_adapters(self) -> dict[str, AdapterDetails] | None:

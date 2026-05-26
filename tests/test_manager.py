@@ -1564,3 +1564,118 @@ async def test_async_get_bluetooth_adapters_cached_false_triggers_refresh() -> N
     ) as mock_refresh:
         await manager.async_get_bluetooth_adapters(cached=False)
     mock_refresh.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_async_refresh_adapters_propagates_exception_to_waiters() -> None:
+    """Concurrent callers must see the refresh exception, not silent success."""
+    manager = get_manager()
+    assert manager._bluetooth_adapters is not None
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+
+    async def slow_failing_refresh() -> None:
+        refresh_started.set()
+        await release_refresh.wait()
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    with patch.object(manager._bluetooth_adapters, "refresh", new=slow_failing_refresh):
+        leader = asyncio.create_task(manager._async_refresh_adapters())
+        await refresh_started.wait()
+        waiter_a = asyncio.create_task(manager._async_refresh_adapters())
+        waiter_b = asyncio.create_task(manager._async_refresh_adapters())
+        # Yield so waiters register on the shared future.
+        await asyncio.sleep(0)
+        release_refresh.set()
+        with pytest.raises(RuntimeError, match="boom"):
+            await leader
+        with pytest.raises(RuntimeError, match="boom"):
+            await waiter_a
+        with pytest.raises(RuntimeError, match="boom"):
+            await waiter_b
+    # Future must be cleared so the next call refreshes again.
+    assert manager._adapter_refresh_future is None
+
+
+@pytest.mark.asyncio
+async def test_async_refresh_adapters_success_resolves_waiters() -> None:
+    """Concurrent callers all see success and share the same refresh call."""
+    manager = get_manager()
+    assert manager._bluetooth_adapters is not None
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+    call_count = 0
+
+    async def slow_refresh() -> None:
+        nonlocal call_count
+        call_count += 1
+        refresh_started.set()
+        await release_refresh.wait()
+
+    with patch.object(manager._bluetooth_adapters, "refresh", new=slow_refresh):
+        leader = asyncio.create_task(manager._async_refresh_adapters())
+        await refresh_started.wait()
+        waiter_a = asyncio.create_task(manager._async_refresh_adapters())
+        waiter_b = asyncio.create_task(manager._async_refresh_adapters())
+        await asyncio.sleep(0)
+        release_refresh.set()
+        await leader
+        await waiter_a
+        await waiter_b
+    assert call_count == 1
+    assert manager._adapter_refresh_future is None
+
+
+@pytest.mark.asyncio
+async def test_async_refresh_adapters_leader_cancellation_does_not_silently_succeed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Leader cancellation must not let waiters proceed as if refresh succeeded."""
+    manager = get_manager()
+    assert manager._bluetooth_adapters is not None
+    refresh_started = asyncio.Event()
+
+    async def hanging_refresh() -> None:
+        refresh_started.set()
+        await asyncio.Event().wait()  # never resolves
+
+    with patch.object(manager._bluetooth_adapters, "refresh", new=hanging_refresh):
+        leader = asyncio.create_task(manager._async_refresh_adapters())
+        await refresh_started.wait()
+        waiter = asyncio.create_task(manager._async_refresh_adapters())
+        await asyncio.sleep(0)
+        leader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await leader
+        # Waiter must observe a failure, not silently complete.
+        with pytest.raises(BaseException):  # noqa: B017, PT011
+            await waiter
+    assert manager._adapter_refresh_future is None
+
+
+@pytest.mark.asyncio
+async def test_async_refresh_adapters_waiter_cancellation_does_not_break_leader() -> (
+    None
+):
+    """A cancelled waiter must not poison the shared refresh future."""
+    manager = get_manager()
+    assert manager._bluetooth_adapters is not None
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+
+    async def slow_refresh() -> None:
+        refresh_started.set()
+        await release_refresh.wait()
+
+    with patch.object(manager._bluetooth_adapters, "refresh", new=slow_refresh):
+        leader = asyncio.create_task(manager._async_refresh_adapters())
+        await refresh_started.wait()
+        waiter = asyncio.create_task(manager._async_refresh_adapters())
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        release_refresh.set()
+        await leader
+    assert manager._adapter_refresh_future is None
