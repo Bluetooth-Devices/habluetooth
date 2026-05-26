@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.7.7 (2026-05-26)
+
+### Performance improvements
+
+
+- Materialize discovered_addresses once per cycle in _async_check_unavailable ([`e29434e`](https://github.com/Bluetooth-Devices/habluetooth/commit/e29434e1f363b08f200c9b4daf9deb9a676c732c))
+
+
 ## v6.7.6 (2026-05-26)
 
 ### Bug fixes
