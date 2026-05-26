@@ -7,6 +7,7 @@ import itertools
 import logging
 import math
 import platform
+from contextlib import suppress
 from dataclasses import asdict
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final
@@ -101,20 +102,6 @@ def _dispatch_bleak_callback(
         _LOGGER.exception("Error in callback: %s", bleak_callback.callback)
 
 
-def _resolve_waiters(
-    waiters: list[asyncio.Future[None]], exc: BaseException | None
-) -> None:
-    """Resolve pending refresh waiters with a result or exception."""
-    if exc is None:
-        for w in waiters:
-            if not w.done():
-                w.set_result(None)
-        return
-    for w in waiters:
-        if not w.done():
-            w.set_exception(exc)
-
-
 class BleakCallback:
     """Bleak callback."""
 
@@ -132,7 +119,7 @@ class BluetoothManager:
     """Manage Bluetooth."""
 
     __slots__ = (
-        "_adapter_refresh_waiters",
+        "_adapter_refresh_future",
         "_adapter_sources",
         "_adapters",
         "_advertisement_tracker",
@@ -217,7 +204,7 @@ class BluetoothManager:
         self.has_advertising_side_channel = False
         self._side_channel_scanners: dict[int, HaScanner] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._adapter_refresh_waiters: list[asyncio.Future[None]] | None = None
+        self._adapter_refresh_future: asyncio.Future[None] | None = None
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
         self._disappeared_callbacks: set[Callable[[str], None]] = set()
         self._allocations_callbacks: dict[
@@ -318,35 +305,23 @@ class BluetoothManager:
 
     async def _async_refresh_adapters(self) -> None:
         """Refresh the adapters."""
+        if self._adapter_refresh_future:
+            await self._adapter_refresh_future
+            return
         if TYPE_CHECKING:
             assert self._loop is not None
-        if (waiters := self._adapter_refresh_waiters) is not None:
-            # Each waiter gets its own future so a cancelled waiter cannot
-            # transitively cancel siblings or the leader.
-            waiter = self._loop.create_future()
-            waiters.append(waiter)
-            await waiter
-            return
-        waiters = self._adapter_refresh_waiters = []
+        self._adapter_refresh_future = self._loop.create_future()
         try:
             await self._bluetooth_adapters.refresh()
             self._adapters = self._bluetooth_adapters.adapters
-        except asyncio.CancelledError:
-            # Map cancellation onto a non-cancellation exception for waiters
-            # so the leader's cancel does not transitively cancel unrelated
-            # callers parked on this refresh.
-            _resolve_waiters(
-                waiters,
-                RuntimeError("Adapter refresh cancelled before completion"),
-            )
-            raise
+            self._adapter_refresh_future.set_result(None)
         except BaseException as ex:
-            _resolve_waiters(waiters, ex)
+            self._adapter_refresh_future.set_exception(ex)
+            with suppress(BaseException):
+                self._adapter_refresh_future.result()
             raise
-        else:
-            _resolve_waiters(waiters, None)
         finally:
-            self._adapter_refresh_waiters = None
+            self._adapter_refresh_future = None
 
     def get_cached_bluetooth_adapters(self) -> dict[str, AdapterDetails] | None:
         """Get cached bluetooth adapters synchronously."""

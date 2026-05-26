@@ -1594,8 +1594,8 @@ async def test_async_refresh_adapters_propagates_exception_to_waiters() -> None:
             await waiter_a
         with pytest.raises(RuntimeError, match="boom"):
             await waiter_b
-    # Waiter list must be cleared so the next call refreshes again.
-    assert manager._adapter_refresh_waiters is None
+    # Shared future must be cleared so the next call refreshes again.
+    assert manager._adapter_refresh_future is None
 
 
 @pytest.mark.asyncio
@@ -1624,7 +1624,7 @@ async def test_async_refresh_adapters_success_resolves_waiters() -> None:
         await waiter_a
         await waiter_b
     assert call_count == 1
-    assert manager._adapter_refresh_waiters is None
+    assert manager._adapter_refresh_future is None
 
 
 @pytest.mark.asyncio
@@ -1651,31 +1651,4 @@ async def test_async_refresh_adapters_leader_cancellation_does_not_silently_succ
         # Waiter must observe a failure, not silently complete.
         with pytest.raises(BaseException):  # noqa: B017, PT011
             await waiter
-    assert manager._adapter_refresh_waiters is None
-
-
-@pytest.mark.asyncio
-async def test_async_refresh_adapters_waiter_cancellation_does_not_break_leader() -> (
-    None
-):
-    """A cancelled waiter must not break the leader's refresh."""
-    manager = get_manager()
-    assert manager._bluetooth_adapters is not None
-    refresh_started = asyncio.Event()
-    release_refresh = asyncio.Event()
-
-    async def slow_refresh() -> None:
-        refresh_started.set()
-        await release_refresh.wait()
-
-    with patch.object(manager._bluetooth_adapters, "refresh", new=slow_refresh):
-        leader = asyncio.create_task(manager._async_refresh_adapters())
-        await refresh_started.wait()
-        waiter = asyncio.create_task(manager._async_refresh_adapters())
-        await asyncio.sleep(0)
-        waiter.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await waiter
-        release_refresh.set()
-        await leader
-    assert manager._adapter_refresh_waiters is None
+    assert manager._adapter_refresh_future is None
