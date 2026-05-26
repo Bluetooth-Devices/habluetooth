@@ -57,7 +57,7 @@ cdef class BluetoothManager:
     cdef public bint _debug
     cdef public bint shutdown
     cdef public object _loop
-    cdef public object _adapter_refresh_future
+    cdef public object _adapter_refresh_waiters
     cdef public object _recovery_lock
     cdef public set _disappeared_callbacks
     cdef public dict _allocations_callbacks

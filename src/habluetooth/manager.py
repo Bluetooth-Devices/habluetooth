@@ -118,7 +118,7 @@ class BluetoothManager:
     """Manage Bluetooth."""
 
     __slots__ = (
-        "_adapter_refresh_future",
+        "_adapter_refresh_waiters",
         "_adapter_sources",
         "_adapters",
         "_advertisement_tracker",
@@ -203,7 +203,7 @@ class BluetoothManager:
         self.has_advertising_side_channel = False
         self._side_channel_scanners: dict[int, HaScanner] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._adapter_refresh_future: asyncio.Future[None] | None = None
+        self._adapter_refresh_waiters: list[asyncio.Future[None]] | None = None
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
         self._disappeared_callbacks: set[Callable[[str], None]] = set()
         self._allocations_callbacks: dict[
@@ -304,32 +304,39 @@ class BluetoothManager:
 
     async def _async_refresh_adapters(self) -> None:
         """Refresh the adapters."""
-        if (in_flight := self._adapter_refresh_future) is not None:
-            # ``shield`` so a cancelled waiter does not strand siblings or
-            # the leader still mid-refresh.
-            await asyncio.shield(in_flight)
-            return
         if TYPE_CHECKING:
             assert self._loop is not None
-        future = self._adapter_refresh_future = self._loop.create_future()
+        if (waiters := self._adapter_refresh_waiters) is not None:
+            # Each waiter gets its own future so a cancelled waiter cannot
+            # transitively cancel siblings or the leader.
+            waiter = self._loop.create_future()
+            waiters.append(waiter)
+            await waiter
+            return
+        waiters = self._adapter_refresh_waiters = []
         try:
             await self._bluetooth_adapters.refresh()
             self._adapters = self._bluetooth_adapters.adapters
         except asyncio.CancelledError:
             # Map cancellation onto a non-cancellation exception for waiters
             # so the leader's cancel does not transitively cancel unrelated
-            # callers parked on the shared future.
-            future.set_exception(
-                RuntimeError("Adapter refresh cancelled before completion")
-            )
+            # callers parked on this refresh.
+            cancel_exc = RuntimeError("Adapter refresh cancelled before completion")
+            for w in waiters:
+                if not w.done():
+                    w.set_exception(cancel_exc)
             raise
         except BaseException as ex:
-            future.set_exception(ex)
+            for w in waiters:
+                if not w.done():
+                    w.set_exception(ex)
             raise
         else:
-            future.set_result(None)
+            for w in waiters:
+                if not w.done():
+                    w.set_result(None)
         finally:
-            self._adapter_refresh_future = None
+            self._adapter_refresh_waiters = None
 
     def get_cached_bluetooth_adapters(self) -> dict[str, AdapterDetails] | None:
         """Get cached bluetooth adapters synchronously."""
