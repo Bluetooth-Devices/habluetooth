@@ -85,8 +85,8 @@ cdef class _OwnershipIndex:
 
     @cython.locals(
         old_source=str,
-        old_worker=_ScannerWorker,
-        new_worker=_ScannerWorker,
+        old_worker=object,
+        new_worker=object,
         entries=dict,
     )
     cpdef void assign(self, str address, object new_source)
@@ -95,12 +95,12 @@ cdef class _OwnershipIndex:
         owner_by_address=dict,
         needs=dict,
         address=str,
-        worker=_ScannerWorker,
+        worker=object,
     )
     cpdef void clear_source(self, str source)
 
     @cython.locals(
-        worker=_ScannerWorker,
+        worker=object,
         owned_needs=dict,
         needs=dict,
         address=str,
