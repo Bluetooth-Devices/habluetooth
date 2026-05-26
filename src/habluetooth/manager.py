@@ -1013,12 +1013,15 @@ class BluetoothManager:
         connection_slots: int | None,
     ) -> None:
         """Unregister a scanner."""
+        if scanner not in scanners:
+            _LOGGER.debug("Scanner %s already unregistered; skipping", scanner.name)
+            return
         _LOGGER.debug("Unregistering scanner %s", scanner.name)
         self._advertisement_tracker.async_remove_source(scanner.source)
-        scanners.remove(scanner)
+        scanners.discard(scanner)
         scanner._clear_connection_history()
-        del self._sources[scanner.source]
-        del self._adapter_sources[scanner.adapter]
+        self._sources.pop(scanner.source, None)
+        self._adapter_sources.pop(scanner.adapter, None)
         self._allocations.pop(scanner.source, None)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)

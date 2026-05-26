@@ -517,6 +517,25 @@ async def test_async_register_scanner_with_connection_slots() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_unregister_scanner_is_idempotent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Double-invoking the cancel callback must not raise."""
+    manager = get_manager()
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    cancel = manager.async_register_scanner(hci3_scanner, connection_slots=5)
+
+    cancel()
+    assert hci3_scanner not in manager.async_current_scanners()
+
+    with caplog.at_level("DEBUG", logger="habluetooth.manager"):
+        cancel()
+
+    assert any("already unregistered" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
 @pytest.mark.usefixtures("enable_bluetooth")
 async def test_diagnostics(register_hci0_scanner: None) -> None:
     """Test bluetooth diagnostics."""
