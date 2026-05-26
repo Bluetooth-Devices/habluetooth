@@ -426,21 +426,6 @@ class BluetoothManager:
             if (device_adv := scanner.get_discovered_device_advertisement_data(address))
         ]
 
-    def _async_all_discovered_addresses(self, connectable: bool) -> Iterable[str]:
-        """
-        Return all of discovered addresses.
-
-        Include addresses from all the scanners including duplicates.
-        """
-        yield from itertools.chain.from_iterable(
-            scanner.discovered_addresses for scanner in self._connectable_scanners
-        )
-        if not connectable:
-            yield from itertools.chain.from_iterable(
-                scanner.discovered_addresses
-                for scanner in self._non_connectable_scanners
-            )
-
     def async_discovered_devices(self, connectable: bool) -> list[BLEDevice]:
         """Return all of combined best path to discovered from all the scanners."""
         histories = self._connectable_history if connectable else self._all_history
@@ -467,6 +452,17 @@ class BluetoothManager:
         tracker = self._advertisement_tracker
         intervals = tracker.intervals
 
+        # Materialize each scanner's discovered_addresses exactly once per
+        # cycle. For local HaScanner this property rebuilds bleak's
+        # discovered-devices dict on every access, so the prior two-pass
+        # iteration paid that cost twice for the connectable scanners.
+        connectable_addrs: set[str] = set()
+        for scanner in self._connectable_scanners:
+            connectable_addrs.update(scanner.discovered_addresses)
+        all_addrs = connectable_addrs.copy()
+        for scanner in self._non_connectable_scanners:
+            all_addrs.update(scanner.discovered_addresses)
+
         for connectable in (True, False):
             if connectable:
                 unavailable_callbacks = self._connectable_unavailable_callbacks
@@ -474,7 +470,7 @@ class BluetoothManager:
                 unavailable_callbacks = self._unavailable_callbacks
             history = connectable_history if connectable else all_history
             disappeared = set(history).difference(
-                self._async_all_discovered_addresses(connectable)
+                connectable_addrs if connectable else all_addrs
             )
             for address in disappeared:
                 if not connectable:
