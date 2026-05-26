@@ -319,14 +319,12 @@ class BluetoothManager:
             # Map cancellation onto a non-cancellation exception for waiters
             # so the leader's cancel does not transitively cancel unrelated
             # callers parked on the shared future.
-            if not future.done():
-                future.set_exception(
-                    RuntimeError("Adapter refresh cancelled before completion")
-                )
+            future.set_exception(
+                RuntimeError("Adapter refresh cancelled before completion")
+            )
             raise
         except BaseException as ex:
-            if not future.done():
-                future.set_exception(ex)
+            future.set_exception(ex)
             raise
         else:
             future.set_result(None)
