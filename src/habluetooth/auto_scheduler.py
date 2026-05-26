@@ -246,11 +246,8 @@ class _ScannerWorker:
         self._sweep_last_completed: float = 0.0
         self._failed_window: bool = False
         self._warned_no_fallback: bool = False
-        # Per-worker view of self._scheduler._needs filtered to addresses
-        # this scanner currently owns. Inner dicts are aliases of the
-        # same dict in _needs, so in-place mutations by _advance_due /
-        # _dispatch_to_fallback are visible without bookkeeping. The
-        # scheduler's _assign_owner is the single mutation point.
+        # Owned subset of _needs; inner dicts aliased so in-place
+        # advances stay visible. Mutated only by _assign_owner.
         self._owned_needs: dict[str, dict[ActiveScanRequest, float]] = {}
 
     def start(
@@ -320,10 +317,7 @@ class _ScannerWorker:
         """
         Return the earliest loop-time at which this worker has work.
 
-        O(M) over *owned* addresses (entries this scanner currently
-        owns), not the global _needs map. Ownership transitions are
-        maintained eagerly by AutoScanScheduler._assign_owner; this
-        path makes no async_last_service_info calls.
+        O(owned), no async_last_service_info call.
         """
         if self._window_end > now:
             return self._window_end
@@ -363,21 +357,13 @@ class _ScannerWorker:
         """
         Return (due_buckets, all_due, any_immediate) for addresses owned.
 
-        Iterates the per-worker owned-needs view (maintained eagerly
-        by AutoScanScheduler._assign_owner) instead of the global
-        _needs map. Collects entries due within
-        ``_AUTO_COALESCE_LOOKAHEAD`` of ``now`` regardless of
-        ``any_immediate``, so soon-due entries ride a window the
-        caller decides to open (a per-device hit or the 12 h sweep).
-        Caller must gate on ``any_immediate or sweep_due`` — a
-        scanner with only soon-due entries must not tick early on its
-        own. Prunes orphan entries (history None) and resyncs entries
-        whose manager-side owner has flipped without an
-        on_advertisement notification (defense-in-depth).
+        Iterates the owned view. Collects entries due within
+        ``_AUTO_COALESCE_LOOKAHEAD`` so soon-due entries ride a window
+        the caller opens; caller must gate on
+        ``any_immediate or sweep_due``. Prunes orphans (history None)
+        and resyncs on owner drift.
 
-        Invariant: ``_AUTO_COALESCE_LOOKAHEAD > max window duration``
-        so a window cannot outlive its lookahead and leave a device
-        overdue when it ends.
+        Invariant: ``_AUTO_COALESCE_LOOKAHEAD > max window duration``.
         """
         source = self._scanner.source
         scheduler = self._scheduler
@@ -396,17 +382,12 @@ class _ScannerWorker:
                 continue
             history = last_service_info(address, False)
             if history is None:
-                # Orphan: history aged out. Drop from owner index and
-                # the global needs map.
+                # Orphan: history aged out.
                 scheduler._assign_owner(address, None)
                 needs.pop(address, None)
                 continue
             if history.source != source:
-                # Owned view is out of sync with manager history
-                # (should be unreachable since on_advertisement keeps
-                # them aligned, but the manager has other histories
-                # mutation paths). Re-sync and skip this tick — the
-                # rightful owner will pick it up.
+                # Owner drifted; rightful owner picks it up next tick.
                 scheduler._assign_owner(address, history.source)
                 continue
             due: list[ActiveScanRequest] = []
@@ -649,9 +630,7 @@ class AutoScanScheduler:
         self._manager = manager
         self._requests_by_address: dict[str, set[ActiveScanRequest]] = {}
         self._needs: dict[str, dict[ActiveScanRequest, float]] = {}
-        # Address -> source string identifying the worker that
-        # currently owns the address. Single source of truth for the
-        # per-worker _owned_needs view; updated only by _assign_owner.
+        # address -> owning source; updated only by _assign_owner.
         self._owner_by_address: dict[str, str] = {}
         self._workers: dict[str, _ScannerWorker] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -774,10 +753,7 @@ class AutoScanScheduler:
         worker.start(self._loop, offset)
         source = scanner.source
         self._workers[source] = worker
-        # Hook up entries already owned by this source (e.g., an
-        # on_advertisement that arrived before the scanner registered,
-        # or the start() replay loop seeding requests before workers
-        # were created in some other ordering).
+        # Attach entries pre-assigned before this scanner registered.
         for address, owner in self._owner_by_address.items():
             if owner == source:
                 self._attach_to_worker(source, address)
@@ -865,13 +841,7 @@ class AutoScanScheduler:
             worker.wake()
 
     def _assign_owner(self, address: str, new_source: str | None) -> None:
-        """
-        Move address ownership to ``new_source`` (or clear if None).
-
-        Thin coordinator: tracks the transition in
-        ``_owner_by_address`` and delegates the per-worker view
-        touches to ``_detach_from_worker`` / ``_attach_to_worker``.
-        """
+        """Move address ownership to ``new_source`` (or clear if None)."""
         old_source = self._owner_by_address.get(address)
         if old_source == new_source:
             return
@@ -884,30 +854,13 @@ class AutoScanScheduler:
         self._attach_to_worker(new_source, address)
 
     def _detach_from_worker(self, source: str, address: str) -> None:
-        """
-        Drop ``address`` from ``source``'s per-worker owned view.
-
-        Tolerates a missing worker (e.g., the scanner was removed
-        and its worker popped from ``_workers`` before the address
-        ownership got reassigned).
-        """
+        """Drop ``address`` from ``source``'s owned view, if worker exists."""
         worker = self._workers.get(source)
         if worker is not None:
             worker._owned_needs.pop(address, None)
 
     def _attach_to_worker(self, source: str, address: str) -> None:
-        """
-        Hook ``address`` into ``source``'s per-worker owned view.
-
-        The aliased inner dict is the same object as
-        ``_needs[address]``, so in-place mutations of due-times by
-        ``_advance_due`` / ``_dispatch_to_fallback`` stay visible
-        through both views. Tolerates a missing ``_needs`` entry
-        (e.g., owner pre-assigned via ``on_advertisement`` before
-        any request was registered) and a missing worker
-        (e.g., ``new_source`` not yet spawned at ``start()`` time —
-        ``_spawn_worker`` will hook the entry on registration).
-        """
+        """Alias ``_needs[address]`` into ``source``'s owned view."""
         entries = self._needs.get(address)
         if entries is None:
             return

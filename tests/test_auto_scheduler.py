@@ -5972,3 +5972,67 @@ async def test_detach_from_worker_tolerates_missing_worker() -> None:
     sched = manager._auto_scheduler
     # No scanner registered for this source — helper must not raise.
     sched._detach_from_worker("ZZ:99:99:99:99:99", "AA:00:00:00:00:99")
+
+
+@pytest.mark.asyncio
+async def test_next_event_at_skips_empty_owned_entries() -> None:
+    """An owned entry with an empty dict is skipped (defensive)."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        worker._owned_needs["AA:00:00:00:00:99"] = {}
+        next_at = worker._next_event_at(loop.time())
+        assert next_at == worker._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_collect_due_buckets_skips_empty_owned_entries() -> None:
+    """An owned entry with an empty dict is skipped (defensive)."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        worker._owned_needs["AA:00:00:00:00:99"] = {}
+        due_buckets, all_due, any_immediate = worker._collect_due_buckets(loop.time())
+        assert due_buckets == []
+        assert all_due == []
+        assert any_immediate is False
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_spawn_worker_skips_foreign_preassigned_owners() -> None:
+    """_spawn_worker only attaches entries owned by the new scanner's source."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address_a = "11:22:33:44:55:66"
+    address_b = "77:88:99:AA:BB:CC"
+    cancel_a = manager.async_register_active_scan(address_a, scan_interval=60.0)
+    cancel_b = manager.async_register_active_scan(address_b, scan_interval=60.0)
+    foreign_source = "AA:BB:CC:DD:EE:FF"
+    request_b = next(iter(sched._requests_by_address[address_b]))
+    sched._needs[address_b] = {request_b: loop.time()}
+    sched._owner_by_address[address_b] = foreign_source
+    try:
+        scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+        register_cancel = manager.async_register_scanner(scanner)
+        try:
+            worker = sched._workers[scanner.source]
+            # Foreign-owned address must not appear in this worker's view.
+            assert address_b not in worker._owned_needs
+        finally:
+            register_cancel()
+    finally:
+        cancel_a()
+        cancel_b()
