@@ -665,18 +665,27 @@ async def test_stop_cancels_worker_tasks() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_drops_tracking_for_unseen_address() -> None:
-    """An address with no history entry is pruned on the next worker tick."""
+    """An address whose history aged out is pruned on the next worker tick."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
-    cancel = manager.async_register_active_scan("AA:BB:CC:DD:EE:FF", scan_interval=60.0)
+    address = "AA:BB:CC:DD:EE:FF"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        request = next(iter(sched._requests_by_address["AA:BB:CC:DD:EE:FF"]))
-        sched._needs["AA:BB:CC:DD:EE:FF"] = {request: loop.time() - 1.0}
+        _inject(scanner, address)
+        request = next(iter(sched._needs[address]))
+        sched._needs[address][request] = loop.time() - 1.0
+        # Simulate the manager's history aging out under the worker's
+        # feet — the orphan-prune branch should clean both _needs and
+        # _owner_by_address.
+        manager._all_history.pop(address, None)
+        manager._connectable_history.pop(address, None)
         await _run_worker_tick(sched, scanner.source)
-        assert "AA:BB:CC:DD:EE:FF" not in sched._needs
+        assert address not in sched._needs
+        assert address not in sched._owner_by_address
+        assert address not in sched._workers[scanner.source]._owned_needs
     finally:
         cancel()
         register_cancel()
@@ -5545,3 +5554,367 @@ async def test_orphan_leader_does_not_clobber_fresh_sweep_state() -> None:
         sched._on_demand_sweep_future = None
         sched._on_demand_sweep_end = 0.0
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_owned_needs_populated_for_owner_on_add_request_with_history() -> None:
+    """add_request hooks the entry into the owner's _owned_needs view."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        # First seed history via an advertisement so add_request's
+        # history-gating finds it.
+        _inject(scanner, address)
+        # Drop the entry add_request seeded so we can re-add through
+        # add_request and observe its _assign_owner side-effect.
+        sched._needs.pop(address, None)
+        sched._owner_by_address.pop(address, None)
+        sched._workers[scanner.source]._owned_needs.pop(address, None)
+        cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+        try:
+            owned = sched._workers[scanner.source]._owned_needs
+            assert address in owned
+            # Inner dict must be the SAME object aliased between
+            # _needs and _owned_needs so _advance_due mutations apply
+            # to both views.
+            assert owned[address] is sched._needs[address]
+            assert sched._owner_by_address[address] == scanner.source
+        finally:
+            cancel()
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_add_request_without_history_leaves_owned_needs_empty() -> None:
+    """add_request without history defers seeding to on_advertisement."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+        try:
+            assert address not in sched._needs
+            assert address not in sched._owner_by_address
+            assert address not in sched._workers[scanner.source]._owned_needs
+        finally:
+            cancel()
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_on_advertisement_bootstraps_owned_needs() -> None:
+    """First advertisement for a tracked address populates owner's view."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+        try:
+            _inject(scanner, address)
+            owned = sched._workers[scanner.source]._owned_needs
+            assert address in owned
+            assert owned[address] is sched._needs[address]
+            assert sched._owner_by_address[address] == scanner.source
+        finally:
+            cancel()
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_ownership_flip_moves_entry_between_owned_needs() -> None:
+    """On migration, the entry moves from old owner's view to new owner's view."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:99"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    s_a = _RecordingAutoScanner("AA:00:00:00:00:01", BluetoothScanningMode.AUTO)
+    s_b = _RecordingAutoScanner("AA:00:00:00:00:02", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(s_a)
+    c_b = manager.async_register_scanner(s_b)
+    try:
+        _inject_with_rssi(s_a, address, rssi=-80)
+        worker_a = sched._workers[s_a.source]
+        worker_b = sched._workers[s_b.source]
+        assert address in worker_a._owned_needs
+        assert address not in worker_b._owned_needs
+        assert sched._owner_by_address[address] == s_a.source
+
+        # B with much stronger RSSI triggers ownership flip in the
+        # manager; scheduler's on_advertisement reassigns owner.
+        _inject_with_rssi(s_b, address, rssi=-30)
+        assert address not in worker_a._owned_needs
+        assert address in worker_b._owned_needs
+        assert worker_b._owned_needs[address] is sched._needs[address]
+        assert sched._owner_by_address[address] == s_b.source
+    finally:
+        c_a()
+        c_b()
+        cancel()
+
+
+@pytest.mark.asyncio
+async def test_remove_request_clears_owner_when_bucket_empties() -> None:
+    """The last remove_request for an address clears owner and _owned_needs."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+        _inject(scanner, address)
+        worker = sched._workers[scanner.source]
+        assert address in worker._owned_needs
+        cancel()
+        assert address not in sched._needs
+        assert address not in sched._owner_by_address
+        assert address not in worker._owned_needs
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_remove_request_preserves_owner_when_other_requests_remain() -> None:
+    """Removing one of N requests on an address keeps the owner mapping intact."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        cancel1 = manager.async_register_active_scan(address, scan_interval=60.0)
+        cancel2 = manager.async_register_active_scan(address, scan_interval=120.0)
+        _inject(scanner, address)
+        worker = sched._workers[scanner.source]
+        assert len(sched._needs[address]) == 2
+        cancel1()
+        assert address in sched._needs
+        assert sched._owner_by_address[address] == scanner.source
+        assert address in worker._owned_needs
+        cancel2()
+        assert address not in sched._needs
+        assert address not in sched._owner_by_address
+        assert address not in worker._owned_needs
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_remove_scanner_clears_owner_and_needs() -> None:
+    """Removing the owning scanner drops the entry from _needs and the owner index."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        assert address in sched._needs
+        assert sched._owner_by_address[address] == scanner.source
+        register_cancel()
+        assert address not in sched._needs
+        assert address not in sched._owner_by_address
+        assert scanner.source not in sched._workers
+    finally:
+        cancel()
+
+
+@pytest.mark.asyncio
+async def test_stop_clears_all_owned_needs_state() -> None:
+    """stop() drains _needs, _owner_by_address, and per-worker _owned_needs."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        worker = sched._workers[scanner.source]
+        assert address in worker._owned_needs
+        sched.stop()
+        assert sched._needs == {}
+        assert sched._owner_by_address == {}
+        # Worker dropped from registry; the cleared dict is on the
+        # detached instance still held by the local. Confirm both.
+        assert sched._workers == {}
+        assert worker._owned_needs == {}
+    finally:
+        cancel()
+        # register_cancel() may double-call but is idempotent on the
+        # manager side; guard against AttributeError nonetheless.
+        with contextlib.suppress(KeyError, ValueError):
+            register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_start_replay_populates_owned_needs() -> None:
+    """A request registered before start() is hooked into the worker's view on start."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        # Seed history via a real injection so the replay loop's
+        # last_service_info check sees a source.
+        _inject(scanner, address)
+        # Wipe scheduler state and stop the running scheduler so we
+        # can drive start() ourselves with pre-registered requests.
+        sched._workers[scanner.source].stop()
+        await asyncio.sleep(0)
+        sched.stop()
+        cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+        try:
+            # Pre-start: only _requests_by_address is populated.
+            assert address not in sched._needs
+            assert address not in sched._owner_by_address
+            sched.start(loop)
+            try:
+                # After start, the replay seeded _needs and assigned
+                # the owner.
+                worker = sched._workers[scanner.source]
+                assert address in sched._needs
+                assert sched._owner_by_address[address] == scanner.source
+                assert address in worker._owned_needs
+                assert worker._owned_needs[address] is sched._needs[address]
+            finally:
+                # Stop the spawned worker tasks so they do not leak.
+                for w in list(sched._workers.values()):
+                    w.stop()
+                await asyncio.sleep(0)
+        finally:
+            cancel()
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_spawn_worker_picks_up_preassigned_owner() -> None:
+    """A scanner registering after on_advertisement gets the entry hooked up."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    source = "AA:BB:CC:DD:EE:00"
+    # Forge an owner mapping for an unregistered source — the same
+    # state that arises when on_advertisement seeds before its scanner
+    # registers as AUTO. We bypass the manager here because plumbing a
+    # synthetic history entry is more wiring than the invariant needs.
+    request = next(iter(sched._requests_by_address[address]))
+    sched._needs[address] = {request: loop.time()}
+    sched._owner_by_address[address] = source
+    try:
+        scanner = _RecordingAutoScanner(source, BluetoothScanningMode.AUTO)
+        register_cancel = manager.async_register_scanner(scanner)
+        try:
+            worker = sched._workers[source]
+            assert address in worker._owned_needs
+            assert worker._owned_needs[address] is sched._needs[address]
+        finally:
+            register_cancel()
+    finally:
+        cancel()
+
+
+@pytest.mark.asyncio
+async def test_next_event_at_skips_other_workers_entries() -> None:
+    """An entry owned by scanner B doesn't lower scanner A's next event."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    s_a = _RecordingAutoScanner("AA:00:00:00:00:01", BluetoothScanningMode.AUTO)
+    s_b = _RecordingAutoScanner("AA:00:00:00:00:02", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(s_a)
+    c_b = manager.async_register_scanner(s_b)
+    try:
+        _inject(s_a, address)
+        # Drive the entry's due time well below A's sweep so any leak
+        # of foreign entries would change B's next_at.
+        entries = sched._needs[address]
+        for req in list(entries):
+            entries[req] = loop.time() + 1.0
+        worker_b = sched._workers[s_b.source]
+        sweep_at_b = worker_b._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
+        assert worker_b._next_event_at(loop.time()) == sweep_at_b
+    finally:
+        c_a()
+        c_b()
+        cancel()
+
+
+@pytest.mark.asyncio
+async def test_next_event_at_makes_no_history_calls() -> None:
+    """The hot path no longer pays a per-entry async_last_service_info lookup."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        worker = sched._workers[scanner.source]
+        with patch.object(
+            manager, "async_last_service_info", side_effect=AssertionError
+        ):
+            # Must not consult the manager's history; iterates owned
+            # entries exclusively.
+            worker._next_event_at(loop.time())
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_collect_due_buckets_resyncs_owned_view_on_drift() -> None:
+    """If owned view disagrees with manager history, _collect_due_buckets resyncs."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    s_a = _RecordingAutoScanner("AA:00:00:00:00:01", BluetoothScanningMode.AUTO)
+    s_b = _RecordingAutoScanner("AA:00:00:00:00:02", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(s_a)
+    c_b = manager.async_register_scanner(s_b)
+    try:
+        _inject(s_a, address)
+        worker_a = sched._workers[s_a.source]
+        worker_b = sched._workers[s_b.source]
+        # Force a drift: manager's history says B owns the address,
+        # scheduler still has it parked under A's view. (Simulates
+        # any future code path that mutates history without notifying
+        # on_advertisement.)
+        info = manager.async_last_service_info(address, False)
+        assert info is not None
+        info.source = s_b.source
+        entries = sched._needs[address]
+        for req in list(entries):
+            entries[req] = loop.time() - 1.0
+        await worker_a._tick()
+        # A skipped (foreign), reassigned ownership to B.
+        assert s_a.active_window_calls == []
+        assert address not in worker_a._owned_needs
+        assert address in worker_b._owned_needs
+        assert sched._owner_by_address[address] == s_b.source
+    finally:
+        c_a()
+        c_b()
+        cancel()

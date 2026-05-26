@@ -34,6 +34,7 @@ cdef class _ScannerWorker:
     cdef public double _sweep_last_completed
     cdef public bint _failed_window
     cdef public bint _warned_no_fallback
+    cdef public dict _owned_needs
 
     cpdef void start(self, object loop, double initial_offset=*)
 
@@ -44,9 +45,6 @@ cdef class _ScannerWorker:
     cpdef void note_window_dispatched(self, double window_end, double now)
 
     @cython.locals(
-        source=str,
-        needs=dict,
-        address=str,
         entries=dict,
         next_at=double,
         earliest=double,
@@ -55,7 +53,9 @@ cdef class _ScannerWorker:
 
     @cython.locals(
         source=str,
+        scheduler=AutoScanScheduler,
         needs=dict,
+        owned=dict,
         address=str,
         entries=dict,
         due=list,
@@ -81,6 +81,7 @@ cdef class AutoScanScheduler:
     cdef public object _manager
     cdef public dict _requests_by_address
     cdef public dict _needs
+    cdef public dict _owner_by_address
     cdef public dict _workers
     cdef public object _loop
     cdef public bint _running
