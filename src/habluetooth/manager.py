@@ -53,7 +53,7 @@ from .models import (
 )
 from .scanner_device import BluetoothScannerDevice
 from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catcher
-from .util import async_reset_adapter
+from .util import async_reset_adapter, coalesce_concurrent_future
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -203,7 +203,7 @@ class BluetoothManager:
         self.has_advertising_side_channel = False
         self._side_channel_scanners: dict[int, HaScanner] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._adapter_refresh_future: asyncio.Future[BaseException | None] | None = None
+        self._adapter_refresh_future: asyncio.Future[None] | None = None
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
         self._disappeared_callbacks: set[Callable[[str], None]] = set()
         self._allocations_callbacks: dict[
@@ -302,34 +302,11 @@ class BluetoothManager:
         self._disappeared_callbacks.add(callback)
         return partial(self._disappeared_callbacks.discard, callback)
 
+    @coalesce_concurrent_future("_adapter_refresh_future")
     async def _async_refresh_adapters(self) -> None:
         """Refresh the adapters."""
-        if (future := self._adapter_refresh_future) is not None:
-            # asyncio.wait does not propagate cancellation of the awaiting
-            # task onto the shared future, so a cancelled waiter cannot
-            # poison the leader or its siblings.
-            await asyncio.wait((future,))
-            if (result := future.result()) is not None:
-                raise result
-            return
-        if TYPE_CHECKING:
-            assert self._loop is not None
-        self._adapter_refresh_future = future = self._loop.create_future()
-        try:
-            await self._bluetooth_adapters.refresh()
-            self._adapters = self._bluetooth_adapters.adapters
-        except BaseException as ex:
-            # Store exception as the future's result (HA loader.py pattern)
-            # so waiters can read it via future.result() and re-raise. Using
-            # set_result avoids "exception was never retrieved" warnings
-            # when no waiters are parked. Covers both refresh() and the
-            # adapters property access so waiters never hang.
-            future.set_result(ex)
-            raise
-        else:
-            future.set_result(None)
-        finally:
-            self._adapter_refresh_future = None
+        await self._bluetooth_adapters.refresh()
+        self._adapters = self._bluetooth_adapters.adapters
 
     def get_cached_bluetooth_adapters(self) -> dict[str, AdapterDetails] | None:
         """Get cached bluetooth adapters synchronously."""
