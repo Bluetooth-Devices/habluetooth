@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.7.8 (2026-05-27)
+
+### Bug fixes
+
+
+- Propagate refresh errors to concurrent adapter refresh waiters ([`ba75c66`](https://github.com/Bluetooth-Devices/habluetooth/commit/ba75c6645326babfa42443c3ebc34fe0760ee3c1))
+
+
 ## v6.7.7 (2026-05-26)
 
 ### Performance improvements
