@@ -1436,50 +1436,6 @@ async def test_next_event_at_returns_earliest_per_device_need() -> None:
 
 
 @pytest.mark.asyncio
-async def test_next_event_at_ignores_empty_or_foreign_entries() -> None:
-    """Empty entry dicts and entries owned by other scanners don't lower next-event."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    loop = asyncio.get_running_loop()
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        worker = sched._workers[scanner.source]
-        # Empty entries: hits the "if not entries: continue" branch.
-        sched._due_at["AA:BB:CC:DD:EE:01"] = {}
-        # No history at all: hits "if history is None or history.source != source".
-        cancel = manager.async_register_active_scan(
-            "AA:BB:CC:DD:EE:02", scan_interval=60.0
-        )
-        request = next(iter(sched._requests_by_address["AA:BB:CC:DD:EE:02"]))
-        sched._due_at["AA:BB:CC:DD:EE:02"] = {request: loop.time() - 1.0}
-        next_at = worker._next_event_at(loop.time())
-        # With no contributing per-device entries the next event reverts
-        # to the sweep cadence (well into the future via initial delay).
-        assert next_at == worker._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
-        cancel()
-        del sched._due_at["AA:BB:CC:DD:EE:01"]
-    finally:
-        register_cancel()
-
-
-@pytest.mark.asyncio
-async def test_dispatch_per_device_skips_empty_entries() -> None:
-    """An address whose entries dict is empty is skipped (no del, no fire)."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        sched._due_at["AA:BB:CC:DD:EE:FF"] = {}
-        await sched._workers[scanner.source]._tick()
-        assert scanner.active_window_calls == []
-        del sched._due_at["AA:BB:CC:DD:EE:FF"]
-    finally:
-        register_cancel()
-
-
-@pytest.mark.asyncio
 async def test_dispatch_per_device_skips_not_yet_due() -> None:
     """Entries with future due times don't fire."""
     manager = get_manager()
@@ -5937,115 +5893,6 @@ async def test_assign_owner_noop_when_source_unchanged() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ownership_assign_tolerates_missing_due_at_or_worker() -> None:
-    """assign() records the owner even when needs entry or worker is absent."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        worker = sched._workers[scanner.source]
-        # No _due_at entry for this address; attach path early-returns.
-        sched._ownership.assign("AA:00:00:00:00:99", scanner.source)
-        assert "AA:00:00:00:00:99" not in worker._owned_due_at
-        assert sched._ownership._owner_by_address["AA:00:00:00:00:99"] == (
-            scanner.source
-        )
-        # Worker not registered for this source; the owner mapping is
-        # still recorded even though no worker can attach.
-        sched._due_at["BB:00:00:00:00:99"] = {}
-        sched._ownership.assign("BB:00:00:00:00:99", "ZZ:99:99:99:99:99")
-        assert sched._ownership._owner_by_address["BB:00:00:00:00:99"] == (
-            "ZZ:99:99:99:99:99"
-        )
-        sched._due_at.pop("BB:00:00:00:00:99", None)
-        # Clean up the synthetic owner mappings so other tests do not
-        # see foreign state.
-        sched._ownership.unown("AA:00:00:00:00:99")
-        sched._ownership.unown("BB:00:00:00:00:99")
-    finally:
-        register_cancel()
-
-
-@pytest.mark.asyncio
-async def test_ownership_assign_tolerates_missing_old_worker() -> None:
-    """assign() reassigning from an unregistered old source must not raise."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        address = "AA:00:00:00:00:99"
-        sched._due_at[address] = {}
-        # Pre-seed an owner mapping pointing at an unregistered source
-        # so the detach branch hits the missing-worker path.
-        sched._ownership._owner_by_address[address] = "ZZ:99:99:99:99:99"
-        sched._ownership.assign(address, scanner.source)
-        assert sched._ownership._owner_by_address[address] == scanner.source
-        sched._due_at.pop(address, None)
-        sched._ownership.unown(address)
-    finally:
-        register_cancel()
-
-
-@pytest.mark.asyncio
-async def test_ownership_unown_tolerates_missing_old_worker() -> None:
-    """unown() against a source whose worker is gone must not raise."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    # Forge an owner mapping for an unregistered source so the detach
-    # branch hits a missing-worker path.
-    sched._ownership._owner_by_address["AA:00:00:00:00:99"] = "ZZ:99:99:99:99:99"
-    sched._ownership.unown("AA:00:00:00:00:99")
-    assert "AA:00:00:00:00:99" not in sched._ownership._owner_by_address
-
-
-@pytest.mark.asyncio
-async def test_ownership_unown_unknown_address_noop() -> None:
-    """unown() on an address with no owner mapping is a no-op."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    sched._ownership.unown("AA:00:00:00:00:99")
-    assert "AA:00:00:00:00:99" not in sched._ownership._owner_by_address
-
-
-@pytest.mark.asyncio
-async def test_next_event_at_skips_empty_owned_entries() -> None:
-    """An owned entry with an empty dict is skipped (defensive)."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    loop = asyncio.get_running_loop()
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        worker = sched._workers[scanner.source]
-        worker._owned_due_at["AA:00:00:00:00:99"] = {}
-        next_at = worker._next_event_at(loop.time())
-        assert next_at == worker._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
-    finally:
-        register_cancel()
-
-
-@pytest.mark.asyncio
-async def test_collect_due_buckets_skips_empty_owned_entries() -> None:
-    """An owned entry with an empty dict is skipped (defensive)."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    loop = asyncio.get_running_loop()
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        worker = sched._workers[scanner.source]
-        worker._owned_due_at["AA:00:00:00:00:99"] = {}
-        due_buckets, all_due, any_immediate = worker._collect_due_buckets(loop.time())
-        assert due_buckets == []
-        assert all_due == []
-        assert any_immediate is False
-    finally:
-        register_cancel()
-
-
-@pytest.mark.asyncio
 async def test_spawn_worker_skips_foreign_preassigned_owners() -> None:
     """_spawn_worker only attaches entries owned by the new scanner's source."""
     manager = get_manager()
@@ -6073,36 +5920,6 @@ async def test_spawn_worker_skips_foreign_preassigned_owners() -> None:
         cancel_b()
 
 
-def test_ownership_index_hook_worker_missing_worker() -> None:
-    """hook_worker returns cleanly when the source has no registered worker."""
-    due_at: dict[str, dict[ActiveScanRequest, float]] = {}
-    workers: dict[str, Any] = {}
-    idx = _OwnershipIndex(due_at, workers)
-    idx._owner_by_address["AA:00:00:00:00:99"] = "ghost"
-    # No worker registered for "ghost" — defensive guard returns early.
-    idx.hook_worker("ghost")
-    assert idx._owner_by_address["AA:00:00:00:00:99"] == "ghost"
-
-
-@pytest.mark.asyncio
-async def test_ownership_index_hook_worker_skips_address_without_due_at() -> None:
-    """hook_worker skips an owned address that has no _due_at entry."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        worker = sched._workers[scanner.source]
-        # Owner mapping exists but the address has no _due_at entry; the
-        # attach helper must early-return without touching the worker.
-        sched._ownership._owner_by_address["AA:00:00:00:00:99"] = scanner.source
-        sched._ownership.hook_worker(scanner.source)
-        assert "AA:00:00:00:00:99" not in worker._owned_due_at
-        sched._ownership._owner_by_address.pop("AA:00:00:00:00:99", None)
-    finally:
-        register_cancel()
-
-
 @pytest.mark.asyncio
 async def test_ownership_index_clear_source_no_match() -> None:
     """clear_source over an index with no addresses for the source is a no-op."""
@@ -6127,3 +5944,23 @@ def test_ownership_index_clear_no_workers() -> None:
     idx._owner_by_address["AA:00:00:00:00:99"] = "ghost"
     idx.clear()
     assert idx._owner_by_address == {}
+
+
+@pytest.mark.asyncio
+async def test_ownership_assign_records_non_auto_owner() -> None:
+    """assign() records ownership for a non-AUTO source despite no worker."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    # ACTIVE scanner does not get an AUTO worker; advertising from it
+    # exercises the ``new_worker is None`` branch in assign().
+    passive = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.PASSIVE)
+    register_cancel = manager.async_register_scanner(passive)
+    try:
+        _inject(passive, address)
+        assert sched._ownership._owner_by_address[address] == passive.source
+        assert passive.source not in sched._workers
+    finally:
+        cancel()
+        register_cancel()

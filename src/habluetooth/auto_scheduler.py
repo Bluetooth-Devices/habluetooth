@@ -339,8 +339,6 @@ class _ScannerWorker:
             return self._window_end
         next_at = self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
         for entries in self._owned_due_at.values():
-            if not entries:
-                continue
             earliest = min(entries.values())
             if earliest < next_at:
                 next_at = earliest
@@ -386,9 +384,7 @@ class _ScannerWorker:
         all_due: list[ActiveScanRequest] = []
         any_immediate = False
         for address in list(self._owned_due_at):
-            entries = self._owned_due_at.get(address)
-            if not entries:
-                continue
+            entries = self._owned_due_at[address]
             history = last_service_info(address, False)
             if history is None:
                 self._scheduler._ownership.unown(address)
@@ -632,10 +628,8 @@ class _OwnershipIndex:
         self._owner_by_address: dict[str, str] = {}
 
     def _attach(self, worker: _ScannerWorker, address: str) -> None:
-        """Attach the ``_due_at`` bucket for ``address`` to ``worker``, if any."""
-        entries = self._due_at.get(address)
-        if entries is not None:
-            worker._attach_owned(address, entries)
+        """Attach the ``_due_at`` bucket for ``address`` to ``worker``."""
+        worker._attach_owned(address, self._due_at[address])
 
     def _detach(self, address: str, source: str) -> None:
         """Detach ``address`` from the worker for ``source``, if it exists."""
@@ -658,10 +652,8 @@ class _OwnershipIndex:
 
     def unown(self, address: str) -> None:
         """Forget ``address`` entirely; drops due_at, owner, and worker view."""
-        self._due_at.pop(address, None)
-        old_source = self._owner_by_address.pop(address, None)
-        if old_source is not None:
-            self._detach(address, old_source)
+        del self._due_at[address]
+        self._detach(address, self._owner_by_address.pop(address))
 
     def clear_source(self, source: str) -> None:
         """Drop owner mappings and ``_due_at`` entries owned by ``source``."""
@@ -675,9 +667,7 @@ class _OwnershipIndex:
 
     def hook_worker(self, source: str) -> None:
         """Attach pre-assigned entries to a newly-registered worker."""
-        worker = self._workers.get(source)
-        if worker is None:
-            return
+        worker = self._workers[source]
         for address, owner in self._owner_by_address.items():
             if owner == source:
                 self._attach(worker, address)
