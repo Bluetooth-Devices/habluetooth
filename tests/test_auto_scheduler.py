@@ -115,6 +115,11 @@ def _assert_schedule_invariant(sched: object) -> None:
        is the *same* dict aliased from ``_due_at`` (not a copy).
     4. Addresses owned by a non-AUTO source do not appear in any
        worker's ``_owned_due_at``.
+    5. Each worker's hot-path ``_next_event_at`` returns without
+       raising. An empty bucket in ``_owned_due_at`` would crash with
+       ``ValueError`` from ``min(())``, so calling it here is the
+       active runtime check for the no-empty-buckets invariant the
+       production code relies on.
     """
     schedule = sched._schedule  # type: ignore[attr-defined]
     workers = sched._workers  # type: ignore[attr-defined]
@@ -147,6 +152,12 @@ def _assert_schedule_invariant(sched: object) -> None:
                     f"non-AUTO owner {source} leaked into worker "
                     f"{worker._scanner.source}'s _owned_due_at"
                 )
+    # Hot-path sanity: would raise ``ValueError`` from ``min(())`` if
+    # any owned bucket were empty. This keeps the guard the source
+    # code removed alive at the test layer.
+    now = asyncio.get_running_loop().time()
+    for worker in workers.values():
+        worker._next_event_at(now)
 
 
 @pytest.mark.asyncio
