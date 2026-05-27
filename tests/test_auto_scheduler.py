@@ -6288,6 +6288,21 @@ async def test_unown_fails_fast_on_missing_owner() -> None:
 
 
 @pytest.mark.asyncio
+async def test_detach_owned_fails_fast_on_missing_address() -> None:
+    """Pin the fail-fast contract: KeyError if worker doesn't own the address."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        with pytest.raises(KeyError):
+            worker._detach_owned("AA:00:00:00:00:99")
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_next_event_at_fails_fast_on_empty_owned_bucket() -> None:
     """Pin the fail-fast contract: ValueError on an empty owned bucket."""
     manager = get_manager()

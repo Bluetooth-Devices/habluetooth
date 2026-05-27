@@ -296,7 +296,7 @@ class _ScannerWorker:
 
     def _detach_owned(self, address: str) -> None:
         """Detach an owned bucket; called only by _ScanSchedule."""
-        self._owned_due_at.pop(address, None)
+        del self._owned_due_at[address]
 
     def _clear_owned(self) -> None:
         """Drop all owned buckets; called only by _ScanSchedule."""
