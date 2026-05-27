@@ -1750,7 +1750,7 @@ async def test_add_request_with_history_wakes_owning_worker() -> None:
         # Populate manager._all_history WITHOUT first registering an
         # active scan, so the inject doesn't go through on_advertisement's
         # wake-on-added path. add_request then sees the history entry
-        # and fires _wake_worker itself.
+        # and assign fires the worker wake itself.
         _inject(scanner, address)
         worker = sched._workers[scanner.source]
         worker._wake.clear()
@@ -1812,15 +1812,6 @@ async def test_start_ignores_non_auto_scanner() -> None:
     finally:
         c_auto()
         c_active()
-
-
-@pytest.mark.asyncio
-async def test_wake_worker_without_worker_is_no_op() -> None:
-    """_wake_worker tolerates being called for an unknown source."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    # No scanner registered for this source; should silently no-op.
-    sched._wake_worker("AA:AA:AA:AA:AA:AA")
 
 
 @pytest.mark.asyncio

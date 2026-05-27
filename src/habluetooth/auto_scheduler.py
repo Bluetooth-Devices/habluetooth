@@ -80,8 +80,9 @@ up the new owner without any address-level rescheduling:
    and then calls ``auto_scheduler.on_advertisement(service_info)``
    *before* the same-payload short-circuit, so the flip is visible to
    the scheduler even for static-payload beacons.
-2. ``on_advertisement`` always calls ``_wake_worker(adv.source)`` when
-   the address has registered requests. B's worker wakes up.
+2. ``on_advertisement`` always calls ``_ownership.assign(adv.address,
+   adv.source)`` when the address has registered requests, which wakes
+   B's worker as part of the assignment.
 3. On B's next ``_tick``, ``_collect_due_buckets`` reads
    ``last_service_info(addr).source`` and sees B; the entry is
    collected and dispatched. A's worker on its own next tick sees
@@ -391,11 +392,9 @@ class _ScannerWorker:
             history = last_service_info(address, False)
             if history is None:
                 self._scheduler._ownership.unown(address)
-                self._scheduler._needs.pop(address, None)
                 continue
             if history.source != source:
                 self._scheduler._ownership.assign(address, history.source)
-                self._scheduler._wake_worker(history.source)
                 continue
             due: list[ActiveScanRequest] = []
             for r, t in entries.items():
@@ -633,24 +632,25 @@ class _OwnershipIndex:
         self._owner_by_address: dict[str, str] = {}
 
     def assign(self, address: str, new_source: str) -> None:
-        """Move ownership of ``address`` to ``new_source``."""
-        old_source = self._owner_by_address.get(address)
-        if old_source == new_source:
-            return
-        if old_source is not None:
-            old_worker = self._workers.get(old_source)
-            if old_worker is not None:
-                old_worker._detach_owned(address)
-        self._owner_by_address[address] = new_source
-        entries = self._needs.get(address)
-        if entries is None:
-            return
+        """Move ownership of ``address`` to ``new_source`` and wake its worker."""
         new_worker = self._workers.get(new_source)
+        old_source = self._owner_by_address.get(address)
+        if old_source != new_source:
+            if old_source is not None:
+                old_worker = self._workers.get(old_source)
+                if old_worker is not None:
+                    old_worker._detach_owned(address)
+            self._owner_by_address[address] = new_source
+            if new_worker is not None:
+                entries = self._needs.get(address)
+                if entries is not None:
+                    new_worker._attach_owned(address, entries)
         if new_worker is not None:
-            new_worker._attach_owned(address, entries)
+            new_worker.wake()
 
     def unown(self, address: str) -> None:
-        """Drop the owner mapping for ``address``."""
+        """Forget ``address`` entirely; drops needs, owner, and worker view."""
+        self._needs.pop(address, None)
         old_source = self._owner_by_address.pop(address, None)
         if old_source is None:
             return
@@ -852,7 +852,6 @@ class AutoScanScheduler:
             return
         existing[request] = self._loop.time() + request.scan_interval
         self._ownership.assign(request.address, history.source)
-        self._wake_worker(history.source)
 
     def remove_request(self, request: ActiveScanRequest) -> None:
         """Drop the request from the index and from any pending tracking."""
@@ -863,7 +862,6 @@ class AutoScanScheduler:
         if (entries := self._needs.get(request.address)) is not None:
             entries.pop(request, None)
             if not entries:
-                del self._needs[request.address]
                 self._ownership.unown(request.address)
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
@@ -884,7 +882,6 @@ class AutoScanScheduler:
             return
         self._seed_requests(address, requests, self._loop.time())
         self._ownership.assign(address, service_info.source)
-        self._wake_worker(service_info.source)
 
     def _seed_requests(
         self,
@@ -902,11 +899,6 @@ class AutoScanScheduler:
         for request in requests:
             if request not in existing:
                 existing[request] = now + request.scan_interval
-
-    def _wake_worker(self, source: str) -> None:
-        """Wake the worker for ``source`` if one is registered."""
-        if (worker := self._workers.get(source)) is not None:
-            worker.wake()
 
     def _resolve_fallback_for_address(
         self, address: str, exclude_source: str
