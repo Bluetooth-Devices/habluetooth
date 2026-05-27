@@ -50,10 +50,15 @@ def coalesce_concurrent_future(
     is used on the waiter side so a cancelled waiter does not transitively
     cancel the shared future and strand the leader or its siblings.
 
+    Cancellation contract: if the leader is cancelled the ``CancelledError``
+    is forwarded as-is to every waiter via ``set_exception`` (matching
+    ``loader.py``); callers that need to be insulated from leader
+    cancellation should wrap their own call in ``asyncio.shield``.
+
     Pre-condition: ``self.<attr>`` must already exist on the instance and
     be initialised to ``None`` before the first call. The decorator reads
     it via ``getattr`` (no default) and resets it to ``None`` in ``finally``
-    once the leader completes. Only usable on instance methods — ``self``
+    once the leader completes. Only usable on instance methods, ``self``
     is taken from ``args[0]``.
     """
 
