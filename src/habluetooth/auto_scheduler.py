@@ -319,8 +319,8 @@ class _ScannerWorker:
           our bump. The optimization is then skipped: this worker
           ticks normally during the delegated window. Correctness is
           preserved (scanner-level ``_active_window_handle`` extends
-          the radio window idempotently; ``_due_at`` is advanced
-          per-address by each worker on its own tick), only the
+          the radio window idempotently; each worker advances its
+          ``_owned_due_at`` entries on its own tick), only the
           intended "skip your own ticks during my window" hint is
           lost. ``_sweep_last_completed`` lives outside the
           ``finally`` and survives.
@@ -438,8 +438,8 @@ class _ScannerWorker:
         window duration is the max of every due per-device duration
         and (if sweep is due) the sweep duration. ``scan_interval``
         runs from window start (now), not window end. Failure of the
-        scanner call still advances ``_due_at`` so a stuck scanner
-        can't busy-loop the worker.
+        scanner call still advances the due times (``_advance_due``
+        ran pre-await) so a stuck scanner can't busy-loop the worker.
 
         If the owner is mid-connect at tick time, dispatch is routed
         to alternate scanners via ``_dispatch_to_fallback``.
@@ -696,7 +696,7 @@ class _ScanSchedule:
                 worker._attach_owned(address, self._due_at[address])
 
     def clear(self) -> None:
-        """Reset the index, every worker's owned view, and ``_due_at``."""
+        """Reset all schedule state and every worker's owned view."""
         for worker in self._workers.values():
             worker._clear_owned()
         self._owner_by_address.clear()
