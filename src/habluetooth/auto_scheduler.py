@@ -23,50 +23,57 @@ would otherwise stay idle.
 Flow
 ====
 
-                     add_request(req)            on_advertisement(adv)
-                        |                            |
-                        | seed _needs[addr][req]     | seed if pruned;
-                        | = now + scan_interval      | always wake
-                        | wake address's owner       | adv.source's worker
-                        v                            v
-                  +------------------------------------------+
-                  |  AutoScanScheduler                       |
-                  |    _requests_by_address                  |
-                  |       addr -> set of ActiveScanRequest   |
-                  |    _needs                                |
-                  |       addr -> {request: next_due_time}   |
-                  |    _workers                              |
-                  |       source -> _ScannerWorker           |
-                  +------------------------------------------+
-                                    |
-                                    | one task per AUTO scanner
-                                    v
-                  +------------------------------------------+
-                  |  _ScannerWorker._run loop                |
-                  |                                          |
-                  |    sleep on _wake with timeout =         |
-                  |      _next_event_at(now) - now           |
-                  |    await _tick()                         |
-                  |                                          |
-                  |  _tick (sync collect, one await):        |
-                  |    1. _collect_due_buckets               |
-                  |       skip addresses whose owner         |
-                  |       (last_service_info.source) is      |
-                  |       not this scanner                   |
-                  |    2. sweep_due = sweep cadence elapsed  |
-                  |    3. if owner has connect in progress:  |
-                  |          dispatch per-address to a       |
-                  |          fallback scanner; return        |
-                  |    4. duration = max(due durations,      |
-                  |       SWEEP_DURATION if sweep_due)       |
-                  |    5. _advance_due (pre-await) so the    |
-                  |       new owner of any of these          |
-                  |       addresses can't double-fire;       |
-                  |       _sweep_last_completed = now (any   |
-                  |       active scan satisfies the floor)   |
-                  |    6. ONE await:                         |
-                  |       scanner.async_request_active_window|
-                  +------------------------------------------+
+                  add_request(req)           on_advertisement(adv)
+                       |                            |
+                       | _schedule.seed(...)        | _schedule.seed(...) per req;
+                       | _schedule.assign(addr,     | _schedule.assign(addr,
+                       |   history.source)          |   adv.source) wakes owner
+                       v                            v
+              +----------------------------------------------+
+              |  AutoScanScheduler                           |
+              |    _requests_by_address                      |
+              |       addr -> set of ActiveScanRequest       |
+              |    _workers                                  |
+              |       source -> _ScannerWorker               |
+              |    _schedule: _ScanSchedule                  |
+              |       _due_at                                |
+              |          addr -> {request: next_due_time}    |
+              |       _owner_by_address                      |
+              |          addr -> source                      |
+              +----------------------------------------------+
+                                |
+                                | aliased per-worker view:
+                                | worker._owned_due_at[addr]
+                                |   is _due_at[addr] for entries
+                                |   this worker owns
+                                v
+              +----------------------------------------------+
+              |  _ScannerWorker._run loop                    |
+              |                                              |
+              |    sleep on _wake with timeout =             |
+              |      _next_event_at(now) - now               |
+              |    await _tick()                             |
+              |                                              |
+              |  _tick (sync collect, one await):            |
+              |    1. _collect_due_buckets iterates          |
+              |       _owned_due_at (owned subset only);     |
+              |       per-address history call is just for   |
+              |       orphan/drift resync, not the owner     |
+              |       check (ownership is the view itself)   |
+              |    2. sweep_due = sweep cadence elapsed      |
+              |    3. if owner has connect in progress:      |
+              |          dispatch per-address to a           |
+              |          fallback scanner; return            |
+              |    4. duration = max(due durations,          |
+              |       SWEEP_DURATION if sweep_due)           |
+              |    5. _advance_due (pre-await) so the        |
+              |       new owner of any of these              |
+              |       addresses can't double-fire;           |
+              |       _sweep_last_completed = now (any       |
+              |       active scan satisfies the floor)       |
+              |    6. ONE await:                             |
+              |       scanner.async_request_active_window    |
+              +----------------------------------------------+
 
 
 Migration
@@ -80,14 +87,18 @@ up the new owner without any address-level rescheduling:
    and then calls ``auto_scheduler.on_advertisement(service_info)``
    *before* the same-payload short-circuit, so the flip is visible to
    the scheduler even for static-payload beacons.
-2. ``on_advertisement`` always calls ``_wake_worker(adv.source)`` when
-   the address has registered requests. B's worker wakes up.
-3. On B's next ``_tick``, ``_collect_due_buckets`` reads
-   ``last_service_info(addr).source`` and sees B; the entry is
-   collected and dispatched. A's worker on its own next tick sees
-   ``last_service_info(addr).source != A`` and skips.
-4. The pre-await ``_advance_due`` in step 5 of ``_tick`` prevents A
-   from double-firing if the flip lands mid-window.
+2. ``on_advertisement`` calls ``_schedule.assign(adv.address,
+   adv.source)``. The schedule detaches the entry from A's
+   ``_owned_due_at``, attaches it to B's ``_owned_due_at`` (same dict
+   object, just a different worker holds the alias), and wakes B's
+   worker. A's worker no longer sees the address at all; B's does.
+3. On B's next ``_tick``, ``_collect_due_buckets`` iterates its
+   ``_owned_due_at``, finds the entry, and dispatches it.
+4. If the flip lands mid-window on A, the pre-await ``_advance_due``
+   in step 5 of ``_tick`` already advanced the entry's due time, so
+   B can't double-fire. The rare orphan/drift branches in
+   ``_collect_due_buckets`` handle the edge case where the manager's
+   history disagrees with the cached owner view.
 
 
 Connecting fallback
@@ -130,7 +141,7 @@ Invariants
   sweep therefore fires only on AUTO scanners that haven't had
   *any* active scan in ``AUTO_REDISCOVERY_INTERVAL`` (12 h).
 * A registration kick-starts tracking immediately; ``on_advertisement``
-  is the fallback that re-creates the entry if the worker pruned it
+  is the fallback that re-creates the entry if a worker ``unown``'d it
   because the device's history was missing at tick time.
 * Every accepted advertisement on a tracked address wakes the source's
   worker so an ownership flip on the same scanner triggers a
@@ -221,6 +232,7 @@ class _ScannerWorker:
     __slots__ = (
         "_failed_window",
         "_manager",
+        "_owned_due_at",
         "_scanner",
         "_scheduler",
         "_sweep_last_completed",
@@ -245,6 +257,10 @@ class _ScannerWorker:
         self._sweep_last_completed: float = 0.0
         self._failed_window: bool = False
         self._warned_no_fallback: bool = False
+        # Subset of _due_at owned by this worker; inner dicts aliased so
+        # in-place advances stay visible. Mutated only via _attach_owned
+        # / _detach_owned / _clear_owned, driven by _ScanSchedule.
+        self._owned_due_at: dict[str, dict[ActiveScanRequest, float]] = {}
 
     def start(
         self, loop: asyncio.AbstractEventLoop, initial_offset: float = 0.0
@@ -272,6 +288,20 @@ class _ScannerWorker:
         """Interrupt the worker's sleep so it re-evaluates pending work."""
         self._wake.set()
 
+    def _attach_owned(
+        self, address: str, entries: dict[ActiveScanRequest, float]
+    ) -> None:
+        """Attach an owned ``_due_at`` bucket; called only by _ScanSchedule."""
+        self._owned_due_at[address] = entries
+
+    def _detach_owned(self, address: str) -> None:
+        """Detach an owned bucket; called only by _ScanSchedule."""
+        del self._owned_due_at[address]
+
+    def _clear_owned(self) -> None:
+        """Drop all owned buckets; called only by _ScanSchedule."""
+        self._owned_due_at.clear()
+
     def note_window_dispatched(self, window_end: float, now: float) -> None:
         """
         Record that another worker delegated an active window here.
@@ -289,8 +319,8 @@ class _ScannerWorker:
           our bump. The optimization is then skipped: this worker
           ticks normally during the delegated window. Correctness is
           preserved (scanner-level ``_active_window_handle`` extends
-          the radio window idempotently; ``_needs`` is advanced
-          per-address by each worker on its own tick), only the
+          the radio window idempotently; each worker advances its
+          ``_owned_due_at`` entries on its own tick), only the
           intended "skip your own ticks during my window" hint is
           lost. ``_sweep_last_completed`` lives outside the
           ``finally`` and survives.
@@ -313,22 +343,12 @@ class _ScannerWorker:
         """
         Return the earliest loop-time at which this worker has work.
 
-        O(M) over tracked addresses per wake. Fine at HA scale (a few
-        dozen devices); replace with a per-worker invariant maintained
-        at add_request/on_advertisement/_advance_due time if M grows.
+        O(owned), no async_last_service_info call.
         """
         if self._window_end > now:
             return self._window_end
         next_at = self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
-        source = self._scanner.source
-        needs = self._scheduler._needs
-        last_service_info = self._manager.async_last_service_info
-        for address, entries in needs.items():
-            if not entries:
-                continue
-            history = last_service_info(address, False)
-            if history is None or history.source != source:
-                continue
+        for entries in self._owned_due_at.values():
             earliest = min(entries.values())
             if earliest < next_at:
                 next_at = earliest
@@ -359,22 +379,13 @@ class _ScannerWorker:
         bool,
     ]:
         """
-        Return (due_buckets, all_due, any_immediate) for addresses owned.
+        Return (due_buckets, all_due, any_immediate) for owned addresses.
 
-        Collects entries due within ``_AUTO_COALESCE_LOOKAHEAD`` of
-        ``now`` regardless of ``any_immediate``, so soon-due entries
-        ride a window the caller decides to open (a per-device hit
-        or the 12 h sweep). Caller must gate on
-        ``any_immediate or sweep_due`` — a scanner with only
-        soon-due entries must not tick early on its own. Prunes
-        orphan entries (history None) in passing.
-
-        Invariant: ``_AUTO_COALESCE_LOOKAHEAD > max window duration``
-        so a window cannot outlive its lookahead and leave a device
-        overdue when it ends.
+        Collects entries due within ``_AUTO_COALESCE_LOOKAHEAD``; caller
+        gates on ``any_immediate or sweep_due``. Prunes orphans and
+        resyncs on owner drift.
         """
         source = self._scanner.source
-        needs = self._scheduler._needs
         last_service_info = self._manager.async_last_service_info
         threshold = now + _AUTO_COALESCE_LOOKAHEAD
         due_buckets: list[
@@ -382,15 +393,13 @@ class _ScannerWorker:
         ] = []
         all_due: list[ActiveScanRequest] = []
         any_immediate = False
-        for address in list(needs):
-            entries = needs.get(address)
-            if not entries:
-                continue
+        for address, entries in self._owned_due_at.copy().items():
             history = last_service_info(address, False)
             if history is None:
-                del needs[address]
+                self._scheduler._schedule.unown(address)
                 continue
             if history.source != source:
+                self._scheduler._schedule.assign(address, history.source)
                 continue
             due: list[ActiveScanRequest] = []
             for r, t in entries.items():
@@ -429,8 +438,8 @@ class _ScannerWorker:
         window duration is the max of every due per-device duration
         and (if sweep is due) the sweep duration. ``scan_interval``
         runs from window start (now), not window end. Failure of the
-        scanner call still advances ``_needs`` so a stuck scanner
-        can't busy-loop the worker.
+        scanner call still advances the due times (``_advance_due``
+        ran pre-await) so a stuck scanner can't busy-loop the worker.
 
         If the owner is mid-connect at tick time, dispatch is routed
         to alternate scanners via ``_dispatch_to_fallback``.
@@ -612,17 +621,107 @@ class _ScannerWorker:
                 )
 
 
+class _ScanSchedule:
+    """
+    Per-address scan schedule: due times, owner, and per-worker view.
+
+    Owns ``_due_at`` (when each request is due), ``_owner_by_address``
+    (which scanner currently sees each address), and maintains an aliased
+    subset of ``_due_at`` on each worker's ``_owned_due_at`` so workers
+    iterate only the addresses they actually own.
+    """
+
+    __slots__ = ("_due_at", "_owner_by_address", "_workers")
+
+    def __init__(self, workers: dict[str, _ScannerWorker]) -> None:
+        """Bind to the scheduler's ``_workers`` dict."""
+        self._workers = workers
+        self._due_at: dict[str, dict[ActiveScanRequest, float]] = {}
+        self._owner_by_address: dict[str, str] = {}
+
+    def seed(self, address: str, request: ActiveScanRequest, due_time: float) -> bool:
+        """Seed ``request`` at ``address``; return True if newly inserted."""
+        existing = self._due_at.setdefault(address, {})
+        if request in existing:
+            return False
+        existing[request] = due_time
+        return True
+
+    def drop(self, address: str, request: ActiveScanRequest) -> None:
+        """Drop ``request`` at ``address``; ``unown`` if it was the last one."""
+        entries = self._due_at.get(address)
+        if entries is None:
+            return
+        entries.pop(request, None)
+        if not entries:
+            self.unown(address)
+
+    def assign(self, address: str, new_source: str) -> None:
+        """Move ownership of ``address`` to ``new_source`` and wake its worker."""
+        new_worker = self._workers.get(new_source)
+        old_source = self._owner_by_address.get(address)
+        if old_source != new_source:
+            if old_source is not None:
+                old_worker = self._workers.get(old_source)
+                if old_worker is not None:
+                    old_worker._detach_owned(address)
+            self._owner_by_address[address] = new_source
+            if new_worker is not None:
+                new_worker._attach_owned(address, self._due_at[address])
+        if new_worker is not None:
+            new_worker.wake()
+
+    def unown(self, address: str) -> None:
+        """Forget ``address`` entirely; drops due_at, owner, and worker view."""
+        del self._due_at[address]
+        old_worker = self._workers.get(self._owner_by_address.pop(address))
+        if old_worker is not None:
+            old_worker._detach_owned(address)
+
+    def clear_source(self, source: str) -> None:
+        """Drop owner mappings and ``_due_at`` entries owned by ``source``."""
+        worker = self._workers.get(source)
+        if worker is not None:
+            # AUTO source: iterate the worker's own view, O(owned-by-source).
+            for address in list(worker._owned_due_at):
+                del self._owner_by_address[address]
+                del self._due_at[address]
+            worker._clear_owned()
+            return
+        # Non-AUTO source (no worker): a PASSIVE / ACTIVE scanner can
+        # still own an address via ``on_advertisement``, so scan
+        # ``_owner_by_address`` to find what it owns.
+        for address in list(self._owner_by_address):
+            if self._owner_by_address[address] == source:
+                del self._owner_by_address[address]
+                del self._due_at[address]
+
+    def attach_worker(self, source: str) -> None:
+        """Attach pre-assigned entries to a newly-registered worker."""
+        worker = self._workers[source]
+        for address, owner in self._owner_by_address.items():
+            if owner == source:
+                worker._attach_owned(address, self._due_at[address])
+
+    def clear(self) -> None:
+        """Reset all schedule state and every worker's owned view."""
+        for worker in self._workers.values():
+            worker._clear_owned()
+        self._owner_by_address.clear()
+        self._due_at.clear()
+
+
 class AutoScanScheduler:
     """Coordinates on-demand active windows across AUTO-mode scanners."""
 
     __slots__ = (
         "_loop",
         "_manager",
-        "_needs",
         "_on_demand_sweep_end",
         "_on_demand_sweep_future",
         "_requests_by_address",
         "_running",
+        "_schedule",
         "_workers",
     )
 
@@ -630,8 +729,8 @@ class AutoScanScheduler:
         """Initialize the scheduler bound to a manager."""
         self._manager = manager
         self._requests_by_address: dict[str, set[ActiveScanRequest]] = {}
-        self._needs: dict[str, dict[ActiveScanRequest, float]] = {}
         self._workers: dict[str, _ScannerWorker] = {}
+        self._schedule = _ScanSchedule(self._workers)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._on_demand_sweep_future: asyncio.Future[None] | None = None
@@ -644,7 +743,7 @@ class AutoScanScheduler:
         Idempotent: no-op if already running. A genuine restart is
         ``stop()`` (which flips ``_running`` to False) then
         ``start(new_loop)``. Also replays any pre-start
-        ``_requests_by_address`` into ``_needs`` so embedders that
+        ``_requests_by_address`` into ``_due_at`` so embedders that
         register before ``async_setup`` still get the kick-start
         cadence; same history-gating as ``add_request``.
         """
@@ -661,9 +760,11 @@ class AutoScanScheduler:
         now = loop.time()
         last_service_info = self._manager.async_last_service_info
         for address, requests in self._requests_by_address.items():
-            if last_service_info(address, False) is None:
+            history = last_service_info(address, False)
+            if history is None:
                 continue
             self._seed_requests(address, requests, now)
+            self._schedule.assign(address, history.source)
 
     def stop(self) -> None:
         """
@@ -672,8 +773,8 @@ class AutoScanScheduler:
         Sync to match ``BluetoothManager.async_stop``;
         ``worker.stop()`` cancels without awaiting. Nulls ``_loop``
         too so post-stop ``add_request`` / ``on_advertisement`` fall
-        back to the record-only path instead of seeding ``_needs``
-        with timestamps from the cancelled loop. Clears ``_needs``
+        back to the record-only path instead of seeding ``_due_at``
+        with timestamps from the cancelled loop. Clears ``_due_at``
         so a later ``start(new_loop)`` re-seeds from
         ``_requests_by_address`` against the new loop's clock base;
         leaving stale due-times would let them fire instantly (or
@@ -689,8 +790,8 @@ class AutoScanScheduler:
         self._running = False
         for worker in self._workers.values():
             worker.stop()
+        self._schedule.clear()
         self._workers.clear()
-        self._needs.clear()
         # done() guard mirrors the leader's finally for symmetry;
         # a future left non-None after completion would otherwise
         # raise InvalidStateError here.
@@ -719,19 +820,15 @@ class AutoScanScheduler:
         """
         Stop the worker for a scanner leaving the manager.
 
-        Also prunes ``_needs`` entries the scanner currently owns so
+        Also prunes ``_due_at`` entries the scanner currently owns so
         a removed-and-not-rediscovered device doesn't keep a tracked
         entry pinned until the next history flip / age-out.
         """
         source = scanner.source
+        self._schedule.clear_source(source)
         worker = self._workers.pop(source, None)
         if worker is not None:
             worker.stop()
-        last_service_info = self._manager.async_last_service_info
-        for address in list(self._needs):
-            history = last_service_info(address, False)
-            if history is not None and history.source == source:
-                del self._needs[address]
 
     def _spawn_worker(self, scanner: BaseHaScanner) -> None:
         assert self._loop is not None  # noqa: S101
@@ -746,7 +843,10 @@ class AutoScanScheduler:
             len(self._workers) * _AUTO_REDISCOVERY_SWEEP_DURATION
         ) % _AUTO_INITIAL_SWEEP_DELAY
         worker.start(self._loop, offset)
-        self._workers[scanner.source] = worker
+        source = scanner.source
+        self._workers[source] = worker
+        # Attach entries pre-assigned before this scanner registered.
+        self._schedule.attach_worker(source)
 
     def add_request(self, request: ActiveScanRequest) -> None:
         """
@@ -769,22 +869,19 @@ class AutoScanScheduler:
             # it anyway); on_advertisement will bootstrap on first
             # sight.
             return
-        existing = self._needs.setdefault(request.address, {})
-        if request in existing:
+        if not self._schedule.seed(
+            request.address, request, self._loop.time() + request.scan_interval
+        ):
             return
-        existing[request] = self._loop.time() + request.scan_interval
-        self._wake_worker(history.source)
+        self._schedule.assign(request.address, history.source)
 
     def remove_request(self, request: ActiveScanRequest) -> None:
-        """Drop the request from the index and from any pending tracking."""
+        """Drop the request from ``_requests_by_address`` and the schedule."""
         if (bucket := self._requests_by_address.get(request.address)) is not None:
             bucket.discard(request)
             if not bucket:
                 del self._requests_by_address[request.address]
-        if (entries := self._needs.get(request.address)) is not None:
-            entries.pop(request, None)
-            if not entries:
-                del self._needs[request.address]
+        self._schedule.drop(request.address, request)
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
         """
@@ -803,7 +900,7 @@ class AutoScanScheduler:
         if requests is None:
             return
         self._seed_requests(address, requests, self._loop.time())
-        self._wake_worker(service_info.source)
+        self._schedule.assign(address, service_info.source)
 
     def _seed_requests(
         self,
@@ -817,15 +914,8 @@ class AutoScanScheduler:
         Shared by ``on_advertisement`` and the ``start()`` replay
         loop. Leaves existing entries' due times untouched.
         """
-        existing = self._needs.setdefault(address, {})
         for request in requests:
-            if request not in existing:
-                existing[request] = now + request.scan_interval
-
-    def _wake_worker(self, source: str) -> None:
-        """Wake the worker for ``source`` if one is registered."""
-        if (worker := self._workers.get(source)) is not None:
-            worker.wake()
+            self._schedule.seed(address, request, now + request.scan_interval)
 
     def _resolve_fallback_for_address(
         self, address: str, exclude_source: str
@@ -1111,7 +1201,7 @@ class AutoScanScheduler:
         last_service_info = self._manager.async_last_service_info
         requests: dict[str, list[dict[str, Any]]] = {}
         for address, bucket in self._requests_by_address.items():
-            entries = self._needs.get(address, {})
+            entries = self._schedule._due_at.get(address, {})
             history = last_service_info(address, False)
             owner_source = history.source if history is not None else None
             requests[address] = [

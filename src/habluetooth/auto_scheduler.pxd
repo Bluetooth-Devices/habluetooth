@@ -34,6 +34,7 @@ cdef class _ScannerWorker:
     cdef public double _sweep_last_completed
     cdef public bint _failed_window
     cdef public bint _warned_no_fallback
+    cdef public dict _owned_due_at
 
     cpdef void start(self, object loop, double initial_offset=*)
 
@@ -41,55 +42,62 @@ cdef class _ScannerWorker:
 
     cpdef void wake(self)
 
+    cpdef void _attach_owned(self, str address, dict entries)
+
+    cpdef void _detach_owned(self, str address)
+
+    cpdef void _clear_owned(self)
+
     cpdef void note_window_dispatched(self, double window_end, double now)
 
     @cython.locals(
-        source=str,
-        needs=dict,
-        address=str,
-        entries=dict,
         next_at=double,
         earliest=double,
     )
     cpdef double _next_event_at(self, double now)
 
     @cython.locals(
-        source=str,
-        needs=dict,
-        address=str,
-        entries=dict,
-        due=list,
-        due_buckets=list,
-        all_due=list,
         threshold=double,
         any_immediate=bint,
         t=double,
     )
     cpdef tuple _collect_due_buckets(self, double now)
 
-    @cython.locals(
-        _address=str,
-        entries=dict,
-        due=list,
-        request=ActiveScanRequest,
-    )
     cpdef void _advance_due(self, list due_buckets, double from_time)
+
+
+cdef class _ScanSchedule:
+
+    cdef public dict _due_at
+    cdef public dict _workers
+    cdef public dict _owner_by_address
+
+    cpdef bint seed(self, str address, ActiveScanRequest request, double due_time)
+
+    cpdef void drop(self, str address, ActiveScanRequest request)
+
+    cpdef void assign(self, str address, str new_source)
+
+    cpdef void unown(self, str address)
+
+    cpdef void clear_source(self, str source)
+
+    cpdef void attach_worker(self, str source)
+
+    cpdef void clear(self)
 
 
 cdef class AutoScanScheduler:
 
     cdef public object _manager
     cdef public dict _requests_by_address
-    cdef public dict _needs
+    cdef public _ScanSchedule _schedule
     cdef public dict _workers
     cdef public object _loop
     cdef public bint _running
     cdef public object _on_demand_sweep_future
     cdef public double _on_demand_sweep_end
 
-    @cython.locals(
-        existing=dict,
-    )
     cpdef void add_request(self, ActiveScanRequest request)
 
     cpdef void remove_request(self, ActiveScanRequest request)
@@ -98,7 +106,6 @@ cdef class AutoScanScheduler:
 
     @cython.locals(
         source=str,
-        address=str,
     )
     cpdef void remove_scanner(self, object scanner)
 
@@ -109,7 +116,6 @@ cdef class AutoScanScheduler:
     cpdef void on_advertisement(self, BluetoothServiceInfoBleak service_info)
 
     @cython.locals(
-        existing=dict,
         request=ActiveScanRequest,
     )
     cpdef void _seed_requests(

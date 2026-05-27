@@ -1099,7 +1099,7 @@ class BluetoothManager:
             scan_duration = DEFAULT_ACTIVE_SCAN_DURATION
         # Reject non-finite values explicitly: NaN compared to anything
         # returns False, so a NaN would slip past the lower-bound
-        # checks below and end up in _needs and call_later as a NaN
+        # checks below and end up in _due_at and call_later as a NaN
         # due-time / duration, busy-looping the worker.
         if not math.isfinite(scan_interval) or scan_interval < MIN_ACTIVE_SCAN_INTERVAL:
             msg = (

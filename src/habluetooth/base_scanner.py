@@ -726,7 +726,7 @@ class BaseHaScanner:
         flipped the radio, ``False`` that the request was ignored.
 
         The auto scheduler branches on the return value: per-device
-        ``_needs`` entries still advance by ``scan_interval``
+        ``_due_at`` entries still advance by ``scan_interval``
         regardless (to avoid busy-looping a stuck scanner), but a
         ``True`` is what advances ``_sweep_last_completed`` (satisfies
         the 12 h rediscovery floor) and counts toward the on-demand
