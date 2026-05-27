@@ -5820,7 +5820,7 @@ async def test_spawn_worker_picks_up_preassigned_owner() -> None:
 
 @pytest.mark.asyncio
 async def test_next_event_at_skips_other_workers_entries() -> None:
-    """An entry owned by scanner B doesn't lower scanner A's next event."""
+    """An entry owned by scanner A doesn't lower scanner B's next event."""
     manager = get_manager()
     sched = manager._auto_scheduler
     loop = asyncio.get_running_loop()
