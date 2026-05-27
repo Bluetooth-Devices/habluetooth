@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.7.9 (2026-05-27)
+
+### Performance improvements
+
+
+- Per-worker owned-due-at view for o(owned) wakes ([`d50defb`](https://github.com/Bluetooth-Devices/habluetooth/commit/d50defb3dfc4563373b8beb8d38b0d14ce911644))
+
+
 ## v6.7.8 (2026-05-27)
 
 ### Bug fixes
