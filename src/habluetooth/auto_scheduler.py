@@ -142,7 +142,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from bleak_retry_connector import NO_RSSI_VALUE
 
@@ -246,8 +246,9 @@ class _ScannerWorker:
         self._sweep_last_completed: float = 0.0
         self._failed_window: bool = False
         self._warned_no_fallback: bool = False
-        # Owned subset of _needs; inner dicts aliased so in-place
-        # advances stay visible. Maintained by _OwnershipIndex.
+        # Subset of _needs owned by this worker; inner dicts aliased so
+        # in-place advances stay visible. Mutated only via _attach_owned
+        # / _detach_owned / _clear_owned, driven by _OwnershipIndex.
         self._owned_needs: dict[str, dict[ActiveScanRequest, float]] = {}
 
     def start(
@@ -275,6 +276,20 @@ class _ScannerWorker:
     def wake(self) -> None:
         """Interrupt the worker's sleep so it re-evaluates pending work."""
         self._wake.set()
+
+    def _attach_owned(
+        self, address: str, entries: dict[ActiveScanRequest, float]
+    ) -> None:
+        """Attach an owned ``_needs`` bucket; called only by _OwnershipIndex."""
+        self._owned_needs[address] = entries
+
+    def _detach_owned(self, address: str) -> None:
+        """Detach an owned bucket; called only by _OwnershipIndex."""
+        self._owned_needs.pop(address, None)
+
+    def _clear_owned(self) -> None:
+        """Drop all owned buckets; called only by _OwnershipIndex."""
+        self._owned_needs.clear()
 
     def note_window_dispatched(self, window_end: float, now: float) -> None:
         """
@@ -379,16 +394,11 @@ class _ScannerWorker:
                 continue
             history = last_service_info(address, False)
             if history is None:
-                # Orphan: history aged out. Drop from owned explicitly;
-                # assign(None) may early-return on owner mismatch.
-                ownership.assign(address, None)
-                owned.pop(address, None)
+                ownership.unown(address)
                 needs.pop(address, None)
                 continue
             if history.source != source:
-                # Owner drifted; reassign, drop locally, wake new owner.
                 ownership.assign(address, history.source)
-                owned.pop(address, None)
                 scheduler._wake_worker(history.source)
                 continue
             due: list[ActiveScanRequest] = []
@@ -626,32 +636,31 @@ class _OwnershipIndex:
         self._workers = workers
         self._owner_by_address: dict[str, str] = {}
 
-    # ``Optional[str]`` (not ``str | None``): PEP 604 under future
-    # annotations parses as non-nullable ``str`` and clashes with the
-    # ``object`` param in the .pxd ``cpdef`` signature.
-    def assign(
-        self,
-        address: str,
-        new_source: Optional[str],  # noqa: UP045
-    ) -> None:
-        """Move ownership of ``address`` to ``new_source`` (None clears)."""
+    def assign(self, address: str, new_source: str) -> None:
+        """Move ownership of ``address`` to ``new_source``."""
         old_source = self._owner_by_address.get(address)
         if old_source == new_source:
             return
         if old_source is not None:
             old_worker = self._workers.get(old_source)
             if old_worker is not None:
-                old_worker._owned_needs.pop(address, None)
-        if new_source is None:
-            self._owner_by_address.pop(address, None)
-            return
+                old_worker._detach_owned(address)
         self._owner_by_address[address] = new_source
         entries = self._needs.get(address)
         if entries is None:
             return
         new_worker = self._workers.get(new_source)
         if new_worker is not None:
-            new_worker._owned_needs[address] = entries
+            new_worker._attach_owned(address, entries)
+
+    def unown(self, address: str) -> None:
+        """Drop the owner mapping for ``address``."""
+        old_source = self._owner_by_address.pop(address, None)
+        if old_source is None:
+            return
+        old_worker = self._workers.get(old_source)
+        if old_worker is not None:
+            old_worker._detach_owned(address)
 
     def clear_source(self, source: str) -> None:
         """Drop owner mappings and ``_needs`` entries owned by ``source``."""
@@ -663,25 +672,24 @@ class _OwnershipIndex:
                 needs.pop(address, None)
         worker = self._workers.get(source)
         if worker is not None:
-            worker._owned_needs.clear()
+            worker._clear_owned()
 
     def hook_worker(self, source: str) -> None:
         """Attach pre-assigned entries to a newly-registered worker."""
         worker = self._workers.get(source)
         if worker is None:
             return
-        owned_needs = worker._owned_needs
         needs = self._needs
         for address, owner in self._owner_by_address.items():
             if owner == source:
                 entries = needs.get(address)
                 if entries is not None:
-                    owned_needs[address] = entries
+                    worker._attach_owned(address, entries)
 
     def clear(self) -> None:
         """Reset the index and every worker's owned view."""
         for worker in self._workers.values():
-            worker._owned_needs.clear()
+            worker._clear_owned()
         self._owner_by_address.clear()
 
 
@@ -863,7 +871,7 @@ class AutoScanScheduler:
             entries.pop(request, None)
             if not entries:
                 del self._needs[request.address]
-                self._ownership.assign(request.address, None)
+                self._ownership.unown(request.address)
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
         """

@@ -42,6 +42,12 @@ cdef class _ScannerWorker:
 
     cpdef void wake(self)
 
+    cpdef void _attach_owned(self, str address, dict entries)
+
+    cpdef void _detach_owned(self, str address)
+
+    cpdef void _clear_owned(self)
+
     cpdef void note_window_dispatched(self, double window_end, double now)
 
     @cython.locals(
@@ -89,7 +95,35 @@ cdef class _OwnershipIndex:
         new_worker=object,
         entries=dict,
     )
-    cpdef void assign(self, str address, object new_source)
+    cpdef void assign(self, str address, str new_source)
+
+    @cython.locals(
+        old_source=str,
+        old_worker=object,
+    )
+    cpdef void unown(self, str address)
+
+    @cython.locals(
+        owner_by_address=dict,
+        needs=dict,
+        address=str,
+        worker=object,
+    )
+    cpdef void clear_source(self, str source)
+
+    @cython.locals(
+        worker=object,
+        needs=dict,
+        address=str,
+        owner=str,
+        entries=dict,
+    )
+    cpdef void hook_worker(self, str source)
+
+    @cython.locals(
+        worker=object,
+    )
+    cpdef void clear(self)
 
 
 cdef class AutoScanScheduler:

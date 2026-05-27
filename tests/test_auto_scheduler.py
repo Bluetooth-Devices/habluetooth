@@ -5954,14 +5954,14 @@ async def test_ownership_assign_tolerates_missing_needs_or_worker() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         worker = sched._workers[scanner.source]
-        # No _needs entry for this address — attach path early-returns.
+        # No _needs entry for this address; attach path early-returns.
         sched._ownership.assign("AA:00:00:00:00:99", scanner.source)
         assert "AA:00:00:00:00:99" not in worker._owned_needs
         assert sched._ownership._owner_by_address["AA:00:00:00:00:99"] == (
             scanner.source
         )
-        # Worker not registered for this source — also a no-op on the
-        # attach side, but the owner mapping is still recorded.
+        # Worker not registered for this source; the owner mapping is
+        # still recorded even though no worker can attach.
         sched._needs["BB:00:00:00:00:99"] = {}
         sched._ownership.assign("BB:00:00:00:00:99", "ZZ:99:99:99:99:99")
         assert sched._ownership._owner_by_address["BB:00:00:00:00:99"] == (
@@ -5970,21 +5970,51 @@ async def test_ownership_assign_tolerates_missing_needs_or_worker() -> None:
         sched._needs.pop("BB:00:00:00:00:99", None)
         # Clean up the synthetic owner mappings so other tests do not
         # see foreign state.
-        sched._ownership.assign("AA:00:00:00:00:99", None)
-        sched._ownership.assign("BB:00:00:00:00:99", None)
+        sched._ownership.unown("AA:00:00:00:00:99")
+        sched._ownership.unown("BB:00:00:00:00:99")
     finally:
         register_cancel()
 
 
 @pytest.mark.asyncio
 async def test_ownership_assign_tolerates_missing_old_worker() -> None:
-    """Reassigning away from a source whose worker is gone must not raise."""
+    """assign() reassigning from an unregistered old source must not raise."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        address = "AA:00:00:00:00:99"
+        sched._needs[address] = {}
+        # Pre-seed an owner mapping pointing at an unregistered source
+        # so the detach branch hits the missing-worker path.
+        sched._ownership._owner_by_address[address] = "ZZ:99:99:99:99:99"
+        sched._ownership.assign(address, scanner.source)
+        assert sched._ownership._owner_by_address[address] == scanner.source
+        sched._needs.pop(address, None)
+        sched._ownership.unown(address)
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_ownership_unown_tolerates_missing_old_worker() -> None:
+    """unown() against a source whose worker is gone must not raise."""
     manager = get_manager()
     sched = manager._auto_scheduler
     # Forge an owner mapping for an unregistered source so the detach
     # branch hits a missing-worker path.
     sched._ownership._owner_by_address["AA:00:00:00:00:99"] = "ZZ:99:99:99:99:99"
-    sched._ownership.assign("AA:00:00:00:00:99", None)
+    sched._ownership.unown("AA:00:00:00:00:99")
+    assert "AA:00:00:00:00:99" not in sched._ownership._owner_by_address
+
+
+@pytest.mark.asyncio
+async def test_ownership_unown_unknown_address_noop() -> None:
+    """unown() on an address with no owner mapping is a no-op."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    sched._ownership.unown("AA:00:00:00:00:99")
     assert "AA:00:00:00:00:99" not in sched._ownership._owner_by_address
 
 
@@ -6068,7 +6098,12 @@ def test_ownership_index_hook_worker_skips_address_without_needs() -> None:
 
     class _StubWorker:
         def __init__(self) -> None:
-            self._owned_needs: dict[str, dict[ActiveScanRequest, float]] = {}
+            self.attached: list[tuple[str, dict[ActiveScanRequest, float]]] = []
+
+        def _attach_owned(
+            self, address: str, entries: dict[ActiveScanRequest, float]
+        ) -> None:
+            self.attached.append((address, entries))
 
     needs: dict[str, dict[ActiveScanRequest, float]] = {}
     worker = _StubWorker()
@@ -6077,7 +6112,7 @@ def test_ownership_index_hook_worker_skips_address_without_needs() -> None:
     # Owner mapping exists but the address has no needs entry yet.
     idx._owner_by_address["AA:00:00:00:00:99"] = "src"
     idx.hook_worker("src")
-    assert worker._owned_needs == {}
+    assert worker.attached == []
 
 
 def test_ownership_index_clear_source_no_match() -> None:
@@ -6085,7 +6120,10 @@ def test_ownership_index_clear_source_no_match() -> None:
 
     class _StubWorker:
         def __init__(self) -> None:
-            self._owned_needs: dict[str, dict[ActiveScanRequest, float]] = {}
+            self.cleared = 0
+
+        def _clear_owned(self) -> None:
+            self.cleared += 1
 
     needs: dict[str, dict[ActiveScanRequest, float]] = {}
     worker = _StubWorker()
@@ -6093,7 +6131,9 @@ def test_ownership_index_clear_source_no_match() -> None:
     idx = _OwnershipIndex(needs, workers)
     idx.clear_source("src")
     assert idx._owner_by_address == {}
-    assert worker._owned_needs == {}
+    # No addresses owned by ``src``, but the worker view is still
+    # cleared defensively in case prior drift left a stale entry.
+    assert worker.cleared == 1
 
 
 def test_ownership_index_clear_no_workers() -> None:
