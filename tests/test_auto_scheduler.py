@@ -104,6 +104,51 @@ async def _run_worker_tick(scheduler: object, source: str) -> None:
     await worker._tick()
 
 
+def _assert_schedule_invariant(sched: object) -> None:
+    """
+    Assert the schedule's three indices are in lock step.
+
+    1. ``_due_at`` and ``_owner_by_address`` have the same keyset.
+    2. Every ``_due_at`` value is a non-empty dict.
+    3. For each AUTO worker, its ``_owned_due_at`` exactly equals the
+       addresses the schedule says it owns, and each entry's dict object
+       is the *same* dict aliased from ``_due_at`` (not a copy).
+    4. Addresses owned by a non-AUTO source do not appear in any
+       worker's ``_owned_due_at``.
+    """
+    schedule = sched._schedule  # type: ignore[attr-defined]
+    workers = sched._workers  # type: ignore[attr-defined]
+    assert set(schedule._due_at) == set(schedule._owner_by_address), (
+        f"_due_at keys {set(schedule._due_at)} != "
+        f"_owner_by_address keys {set(schedule._owner_by_address)}"
+    )
+    for address, entries in schedule._due_at.items():
+        assert entries, f"_due_at[{address}] is empty"
+    for source, worker in workers.items():
+        index_owned = {
+            addr
+            for addr, owner in schedule._owner_by_address.items()
+            if owner == source
+        }
+        worker_owned = set(worker._owned_due_at)
+        assert worker_owned == index_owned, (
+            f"worker {source}: _owned_due_at={worker_owned} "
+            f"!= index-owned={index_owned}"
+        )
+        for addr in worker_owned:
+            assert worker._owned_due_at[addr] is schedule._due_at[addr], (
+                f"worker {source}: _owned_due_at[{addr}] is not the "
+                f"same dict object as _due_at[{addr}]"
+            )
+    for address, source in schedule._owner_by_address.items():
+        if source not in workers:
+            for worker in workers.values():
+                assert address not in worker._owned_due_at, (
+                    f"non-AUTO owner {source} leaked into worker "
+                    f"{worker._scanner.source}'s _owned_due_at"
+                )
+
+
 @pytest.mark.asyncio
 async def test_advertisement_starts_tracking() -> None:
     """A matching address advertisement creates a per-(address, request) entry."""
@@ -6006,3 +6051,231 @@ async def test_ownership_flip_from_non_auto_to_auto_owner() -> None:
         cancel()
         c_passive()
         c_auto()
+
+
+@pytest.mark.asyncio
+async def test_invariant_through_full_lifecycle() -> None:
+    """Schedule invariant holds at every step of a typical request lifecycle."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    _assert_schedule_invariant(sched)
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    _assert_schedule_invariant(sched)
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    _assert_schedule_invariant(sched)
+    _inject(scanner, address)
+    _assert_schedule_invariant(sched)
+    assert address in sched._schedule._due_at
+    assert sched._schedule._owner_by_address[address] == scanner.source
+    cancel()
+    _assert_schedule_invariant(sched)
+    assert address not in sched._schedule._due_at
+    assert address not in sched._schedule._owner_by_address
+    register_cancel()
+    _assert_schedule_invariant(sched)
+
+
+@pytest.mark.asyncio
+async def test_invariant_through_ownership_flips() -> None:
+    """Schedule invariant holds through a sequence of RSSI-driven flips."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    s_a = _RecordingAutoScanner("AA:00:00:00:00:01", BluetoothScanningMode.AUTO)
+    s_b = _RecordingAutoScanner("AA:00:00:00:00:02", BluetoothScanningMode.AUTO)
+    s_c = _RecordingAutoScanner("AA:00:00:00:00:03", BluetoothScanningMode.AUTO)
+    c_a = manager.async_register_scanner(s_a)
+    c_b = manager.async_register_scanner(s_b)
+    c_c = manager.async_register_scanner(s_c)
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    try:
+        _assert_schedule_invariant(sched)
+        # Each step is a >= 40 dB jump (monotonically stronger) so the
+        # manager flips ownership on every inject.
+        for scanner, rssi in (
+            (s_a, -100),
+            (s_b, -60),
+            (s_c, -20),
+        ):
+            _inject_with_rssi(scanner, address, rssi=rssi)
+            _assert_schedule_invariant(sched)
+            assert sched._schedule._owner_by_address[address] == scanner.source
+        # Same scanner re-advertises: same owner; invariant holds.
+        _inject_with_rssi(s_c, address, rssi=-15)
+        _assert_schedule_invariant(sched)
+        assert sched._schedule._owner_by_address[address] == s_c.source
+    finally:
+        cancel()
+        c_a()
+        c_b()
+        c_c()
+    _assert_schedule_invariant(sched)
+
+
+@pytest.mark.asyncio
+async def test_invariant_through_mixed_mode_flips() -> None:
+    """
+    Schedule invariant holds when ownership flips across all scanner modes.
+
+    Mix of ACTIVE, PASSIVE, and AUTO scanners; ownership migrates among
+    them as RSSI climbs. Only the AUTO scanner has a worker, so the
+    invariant exercises both the "owner has worker" and "owner has no
+    worker" branches in the same scenario.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    active = _RecordingAutoScanner("AA:00:00:00:00:0A", BluetoothScanningMode.ACTIVE)
+    passive = _RecordingAutoScanner("AA:00:00:00:00:0B", BluetoothScanningMode.PASSIVE)
+    auto = _RecordingAutoScanner("AA:00:00:00:00:0C", BluetoothScanningMode.AUTO)
+    c_active = manager.async_register_scanner(active)
+    c_passive = manager.async_register_scanner(passive)
+    c_auto = manager.async_register_scanner(auto)
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    try:
+        _assert_schedule_invariant(sched)
+        # Workers exist only for AUTO scanners.
+        assert active.source not in sched._workers
+        assert passive.source not in sched._workers
+        assert auto.source in sched._workers
+        auto_worker = sched._workers[auto.source]
+        # ACTIVE first (no worker for the owner; address is in
+        # _owner_by_address but not in any worker's _owned_due_at).
+        _inject_with_rssi(active, address, rssi=-100)
+        _assert_schedule_invariant(sched)
+        assert sched._schedule._owner_by_address[address] == active.source
+        assert address not in auto_worker._owned_due_at
+        # PASSIVE with stronger RSSI: another non-AUTO owner.
+        _inject_with_rssi(passive, address, rssi=-60)
+        _assert_schedule_invariant(sched)
+        assert sched._schedule._owner_by_address[address] == passive.source
+        assert address not in auto_worker._owned_due_at
+        # AUTO with stronger RSSI: ownership flips to the worker-having
+        # source; the address now appears in the worker's owned view.
+        _inject_with_rssi(auto, address, rssi=-20)
+        _assert_schedule_invariant(sched)
+        assert sched._schedule._owner_by_address[address] == auto.source
+        assert address in auto_worker._owned_due_at
+        # Flip BACK to PASSIVE by unregistering the AUTO scanner: its
+        # owned-view entry is pruned via clear_source. The address goes
+        # away from the schedule entirely (no other scanner advertised
+        # since the AUTO claim).
+        c_auto()
+        _assert_schedule_invariant(sched)
+        assert address not in sched._schedule._owner_by_address
+        # A subsequent PASSIVE advertisement re-bootstraps ownership;
+        # back to non-AUTO-owned state without a worker view.
+        _inject_with_rssi(passive, address, rssi=-50)
+        _assert_schedule_invariant(sched)
+        assert sched._schedule._owner_by_address[address] == passive.source
+    finally:
+        cancel()
+        c_active()
+        c_passive()
+    _assert_schedule_invariant(sched)
+
+
+@pytest.mark.asyncio
+async def test_invariant_through_orphan_prune() -> None:
+    """Schedule invariant holds after a tick prunes an aged-out address."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "AA:BB:CC:DD:EE:FF"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        _assert_schedule_invariant(sched)
+        # Force the entry due so the tick actually inspects history.
+        request = next(iter(sched._schedule._due_at[address]))
+        sched._schedule._due_at[address][request] = loop.time() - 1.0
+        # History ages out under the worker's feet; the tick's orphan
+        # branch should clean every index in lock step.
+        manager._all_history.pop(address, None)
+        manager._connectable_history.pop(address, None)
+        await _run_worker_tick(sched, scanner.source)
+        _assert_schedule_invariant(sched)
+        assert address not in sched._schedule._due_at
+        assert address not in sched._schedule._owner_by_address
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_invariant_through_many_addresses_and_scanners() -> None:
+    """Schedule invariant holds when many scanners and addresses interleave."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanners = [
+        _RecordingAutoScanner(f"AA:00:00:00:00:{i:02X}", BluetoothScanningMode.AUTO)
+        for i in range(4)
+    ]
+    register_cancels = [manager.async_register_scanner(s) for s in scanners]
+    cancels = [
+        manager.async_register_active_scan(
+            f"BB:00:00:00:00:{i:02X}", scan_interval=60.0
+        )
+        for i in range(16)
+    ]
+    addresses = [f"BB:00:00:00:00:{i:02X}" for i in range(16)]
+    try:
+        _assert_schedule_invariant(sched)
+        # Round-robin each address to a scanner, ramping RSSI by 30 dB
+        # per round so every later inject flips ownership.
+        for round_ix, scanner in enumerate(scanners):
+            rssi = -100 + 30 * round_ix
+            for address in addresses:
+                _inject_with_rssi(scanner, address, rssi=rssi)
+            _assert_schedule_invariant(sched)
+        # All addresses now owned by the last scanner (strongest RSSI).
+        last = scanners[-1]
+        for address in addresses:
+            assert sched._schedule._owner_by_address[address] == last.source
+        # Removing the owner scanner prunes the addresses it owned;
+        # the schedule cleans them out without surfacing them anywhere.
+        register_cancels[-1]()
+        _assert_schedule_invariant(sched)
+        for address in addresses:
+            assert address not in sched._schedule._due_at
+    finally:
+        for c in cancels:
+            c()
+        for rc in register_cancels[:-1]:
+            rc()
+    _assert_schedule_invariant(sched)
+
+
+@pytest.mark.asyncio
+async def test_invariant_through_stop_and_restart() -> None:
+    """Schedule invariant holds across stop + start replay."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    try:
+        _inject(scanner, address)
+        _assert_schedule_invariant(sched)
+        sched.stop()
+        _assert_schedule_invariant(sched)
+        assert sched._schedule._due_at == {}
+        assert sched._schedule._owner_by_address == {}
+        # Give the previously running worker task a chance to fully exit
+        # so the post-restart spawn doesn't share its source slot.
+        await asyncio.sleep(0)
+        loop = asyncio.get_running_loop()
+        sched.start(loop)
+        _assert_schedule_invariant(sched)
+        # start() replayed the request and re-assigned via history.
+        assert address in sched._schedule._due_at
+        assert sched._schedule._owner_by_address[address] == scanner.source
+    finally:
+        cancel()
+        register_cancel()
+    _assert_schedule_invariant(sched)
