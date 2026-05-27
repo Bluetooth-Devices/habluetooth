@@ -627,33 +627,27 @@ class _OwnershipIndex:
         self._workers = workers
         self._owner_by_address: dict[str, str] = {}
 
-    def _attach(self, worker: _ScannerWorker, address: str) -> None:
-        """Attach the ``_due_at`` bucket for ``address`` to ``worker``."""
-        worker._attach_owned(address, self._due_at[address])
-
-    def _detach(self, address: str, source: str) -> None:
-        """Detach ``address`` from the worker for ``source``, if it exists."""
-        worker = self._workers.get(source)
-        if worker is not None:
-            worker._detach_owned(address)
-
     def assign(self, address: str, new_source: str) -> None:
         """Move ownership of ``address`` to ``new_source`` and wake its worker."""
         new_worker = self._workers.get(new_source)
         old_source = self._owner_by_address.get(address)
         if old_source != new_source:
             if old_source is not None:
-                self._detach(address, old_source)
+                old_worker = self._workers.get(old_source)
+                if old_worker is not None:
+                    old_worker._detach_owned(address)
             self._owner_by_address[address] = new_source
             if new_worker is not None:
-                self._attach(new_worker, address)
+                new_worker._attach_owned(address, self._due_at[address])
         if new_worker is not None:
             new_worker.wake()
 
     def unown(self, address: str) -> None:
         """Forget ``address`` entirely; drops due_at, owner, and worker view."""
         del self._due_at[address]
-        self._detach(address, self._owner_by_address.pop(address))
+        old_worker = self._workers.get(self._owner_by_address.pop(address))
+        if old_worker is not None:
+            old_worker._detach_owned(address)
 
     def clear_source(self, source: str) -> None:
         """Drop owner mappings and ``_due_at`` entries owned by ``source``."""
@@ -670,7 +664,7 @@ class _OwnershipIndex:
         worker = self._workers[source]
         for address, owner in self._owner_by_address.items():
             if owner == source:
-                self._attach(worker, address)
+                worker._attach_owned(address, self._due_at[address])
 
     def clear(self) -> None:
         """Reset the index, every worker's owned view, and ``_due_at``."""

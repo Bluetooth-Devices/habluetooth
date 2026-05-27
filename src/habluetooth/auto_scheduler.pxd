@@ -72,10 +72,6 @@ cdef class _OwnershipIndex:
     cdef public dict _workers
     cdef public dict _owner_by_address
 
-    cdef void _attach(self, _ScannerWorker worker, str address)
-
-    cdef void _detach(self, str address, str source)
-
     cpdef void assign(self, str address, str new_source)
 
     cpdef void unown(self, str address)
