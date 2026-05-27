@@ -96,7 +96,7 @@ def _setup_scheduler(
 
     Each address is owned by exactly one scanner via a round-robin
     advertisement injection that populates manager history and
-    auto_scheduler._needs (and the per-worker _owned_needs view on
+    auto_scheduler._due_at (and the per-worker _owned_due_at view on
     branches that have it).
     """
     manager = get_manager()
@@ -140,7 +140,7 @@ async def test_next_event_at_single_worker_8_scanners_200_devices(
     One worker computing its next wake among 8 scanners and 200 tracked devices.
 
     Prior to the per-worker owned-needs optimization (PR #508 / issue #506),
-    every wake iterated the global ``_needs`` map (200 entries) and called
+    every wake iterated the global ``_due_at`` map (200 entries) and called
     ``async_last_service_info`` on each to filter by ownership. The
     optimization narrows the iteration to the ~25 entries the worker owns
     and removes the per-entry history lookup. This benchmark exercises the
@@ -199,7 +199,7 @@ async def test_collect_due_buckets_single_worker_8_scanners_200_devices(
     One worker collecting due buckets among 8 scanners and 200 devices.
 
     ``_collect_due_buckets`` shares the same iteration-scope problem as
-    ``_next_event_at``: pre-#508 it iterated the global ``_needs`` and
+    ``_next_event_at``: pre-#508 it iterated the global ``_due_at`` and
     called ``async_last_service_info`` on every address to skip foreign
     owners; post-#508 it iterates the per-worker owned view directly.
     With entries scheduled well into the future, this exercises the

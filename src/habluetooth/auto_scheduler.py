@@ -25,7 +25,7 @@ Flow
 
                      add_request(req)            on_advertisement(adv)
                         |                            |
-                        | seed _needs[addr][req]     | seed if pruned;
+                        | seed _due_at[addr][req]     | seed if pruned;
                         | = now + scan_interval      | always wake
                         | wake address's owner       | adv.source's worker
                         v                            v
@@ -33,7 +33,7 @@ Flow
                   |  AutoScanScheduler                       |
                   |    _requests_by_address                  |
                   |       addr -> set of ActiveScanRequest   |
-                  |    _needs                                |
+                  |    _due_at                                |
                   |       addr -> {request: next_due_time}   |
                   |    _workers                              |
                   |       source -> _ScannerWorker           |
@@ -222,7 +222,7 @@ class _ScannerWorker:
     __slots__ = (
         "_failed_window",
         "_manager",
-        "_owned_needs",
+        "_owned_due_at",
         "_scanner",
         "_scheduler",
         "_sweep_last_completed",
@@ -247,10 +247,10 @@ class _ScannerWorker:
         self._sweep_last_completed: float = 0.0
         self._failed_window: bool = False
         self._warned_no_fallback: bool = False
-        # Subset of _needs owned by this worker; inner dicts aliased so
+        # Subset of _due_at owned by this worker; inner dicts aliased so
         # in-place advances stay visible. Mutated only via _attach_owned
         # / _detach_owned / _clear_owned, driven by _OwnershipIndex.
-        self._owned_needs: dict[str, dict[ActiveScanRequest, float]] = {}
+        self._owned_due_at: dict[str, dict[ActiveScanRequest, float]] = {}
 
     def start(
         self, loop: asyncio.AbstractEventLoop, initial_offset: float = 0.0
@@ -281,16 +281,16 @@ class _ScannerWorker:
     def _attach_owned(
         self, address: str, entries: dict[ActiveScanRequest, float]
     ) -> None:
-        """Attach an owned ``_needs`` bucket; called only by _OwnershipIndex."""
-        self._owned_needs[address] = entries
+        """Attach an owned ``_due_at`` bucket; called only by _OwnershipIndex."""
+        self._owned_due_at[address] = entries
 
     def _detach_owned(self, address: str) -> None:
         """Detach an owned bucket; called only by _OwnershipIndex."""
-        self._owned_needs.pop(address, None)
+        self._owned_due_at.pop(address, None)
 
     def _clear_owned(self) -> None:
         """Drop all owned buckets; called only by _OwnershipIndex."""
-        self._owned_needs.clear()
+        self._owned_due_at.clear()
 
     def note_window_dispatched(self, window_end: float, now: float) -> None:
         """
@@ -309,7 +309,7 @@ class _ScannerWorker:
           our bump. The optimization is then skipped: this worker
           ticks normally during the delegated window. Correctness is
           preserved (scanner-level ``_active_window_handle`` extends
-          the radio window idempotently; ``_needs`` is advanced
+          the radio window idempotently; ``_due_at`` is advanced
           per-address by each worker on its own tick), only the
           intended "skip your own ticks during my window" hint is
           lost. ``_sweep_last_completed`` lives outside the
@@ -338,7 +338,7 @@ class _ScannerWorker:
         if self._window_end > now:
             return self._window_end
         next_at = self._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
-        for entries in self._owned_needs.values():
+        for entries in self._owned_due_at.values():
             if not entries:
                 continue
             earliest = min(entries.values())
@@ -385,8 +385,8 @@ class _ScannerWorker:
         ] = []
         all_due: list[ActiveScanRequest] = []
         any_immediate = False
-        for address in list(self._owned_needs):
-            entries = self._owned_needs.get(address)
+        for address in list(self._owned_due_at):
+            entries = self._owned_due_at.get(address)
             if not entries:
                 continue
             history = last_service_info(address, False)
@@ -433,7 +433,7 @@ class _ScannerWorker:
         window duration is the max of every due per-device duration
         and (if sweep is due) the sweep duration. ``scan_interval``
         runs from window start (now), not window end. Failure of the
-        scanner call still advances ``_needs`` so a stuck scanner
+        scanner call still advances ``_due_at`` so a stuck scanner
         can't busy-loop the worker.
 
         If the owner is mid-connect at tick time, dispatch is routed
@@ -617,32 +617,28 @@ class _ScannerWorker:
 
 
 class _OwnershipIndex:
-    """Per-address scanner ownership and per-worker owned-needs view."""
+    """Per-address scanner ownership and per-worker owned-due-at view."""
 
-    __slots__ = ("_needs", "_owner_by_address", "_workers")
+    __slots__ = ("_due_at", "_owner_by_address", "_workers")
 
     def __init__(
         self,
-        needs: dict[str, dict[ActiveScanRequest, float]],
+        due_at: dict[str, dict[ActiveScanRequest, float]],
         workers: dict[str, _ScannerWorker],
     ) -> None:
-        """Bind to the scheduler's ``_needs`` and ``_workers`` dicts."""
-        self._needs = needs
+        """Bind to the scheduler's ``_due_at`` and ``_workers`` dicts."""
+        self._due_at = due_at
         self._workers = workers
         self._owner_by_address: dict[str, str] = {}
 
-    def _attach(self, worker: Any, address: str) -> None:
-        """Attach the ``_needs`` bucket for ``address`` to ``worker``, if both exist."""
-        if worker is None:
-            return
-        entries = self._needs.get(address)
+    def _attach(self, worker: _ScannerWorker, address: str) -> None:
+        """Attach the ``_due_at`` bucket for ``address`` to ``worker``, if any."""
+        entries = self._due_at.get(address)
         if entries is not None:
             worker._attach_owned(address, entries)
 
-    def _detach(self, address: str, source: str | None) -> None:
-        """Detach ``address`` from the worker for ``source``, if both exist."""
-        if source is None:
-            return
+    def _detach(self, address: str, source: str) -> None:
+        """Detach ``address`` from the worker for ``source``, if it exists."""
         worker = self._workers.get(source)
         if worker is not None:
             worker._detach_owned(address)
@@ -652,23 +648,27 @@ class _OwnershipIndex:
         new_worker = self._workers.get(new_source)
         old_source = self._owner_by_address.get(address)
         if old_source != new_source:
-            self._detach(address, old_source)
+            if old_source is not None:
+                self._detach(address, old_source)
             self._owner_by_address[address] = new_source
-            self._attach(new_worker, address)
+            if new_worker is not None:
+                self._attach(new_worker, address)
         if new_worker is not None:
             new_worker.wake()
 
     def unown(self, address: str) -> None:
-        """Forget ``address`` entirely; drops needs, owner, and worker view."""
-        self._needs.pop(address, None)
-        self._detach(address, self._owner_by_address.pop(address, None))
+        """Forget ``address`` entirely; drops due_at, owner, and worker view."""
+        self._due_at.pop(address, None)
+        old_source = self._owner_by_address.pop(address, None)
+        if old_source is not None:
+            self._detach(address, old_source)
 
     def clear_source(self, source: str) -> None:
-        """Drop owner mappings and ``_needs`` entries owned by ``source``."""
+        """Drop owner mappings and ``_due_at`` entries owned by ``source``."""
         for address in list(self._owner_by_address):
             if self._owner_by_address[address] == source:
                 del self._owner_by_address[address]
-                self._needs.pop(address, None)
+                self._due_at.pop(address, None)
         worker = self._workers.get(source)
         if worker is not None:
             worker._clear_owned()
@@ -683,20 +683,20 @@ class _OwnershipIndex:
                 self._attach(worker, address)
 
     def clear(self) -> None:
-        """Reset the index, every worker's owned view, and ``_needs``."""
+        """Reset the index, every worker's owned view, and ``_due_at``."""
         for worker in self._workers.values():
             worker._clear_owned()
         self._owner_by_address.clear()
-        self._needs.clear()
+        self._due_at.clear()
 
 
 class AutoScanScheduler:
     """Coordinates on-demand active windows across AUTO-mode scanners."""
 
     __slots__ = (
+        "_due_at",
         "_loop",
         "_manager",
-        "_needs",
         "_on_demand_sweep_end",
         "_on_demand_sweep_future",
         "_ownership",
@@ -709,9 +709,9 @@ class AutoScanScheduler:
         """Initialize the scheduler bound to a manager."""
         self._manager = manager
         self._requests_by_address: dict[str, set[ActiveScanRequest]] = {}
-        self._needs: dict[str, dict[ActiveScanRequest, float]] = {}
+        self._due_at: dict[str, dict[ActiveScanRequest, float]] = {}
         self._workers: dict[str, _ScannerWorker] = {}
-        self._ownership = _OwnershipIndex(self._needs, self._workers)
+        self._ownership = _OwnershipIndex(self._due_at, self._workers)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._on_demand_sweep_future: asyncio.Future[None] | None = None
@@ -724,7 +724,7 @@ class AutoScanScheduler:
         Idempotent: no-op if already running. A genuine restart is
         ``stop()`` (which flips ``_running`` to False) then
         ``start(new_loop)``. Also replays any pre-start
-        ``_requests_by_address`` into ``_needs`` so embedders that
+        ``_requests_by_address`` into ``_due_at`` so embedders that
         register before ``async_setup`` still get the kick-start
         cadence; same history-gating as ``add_request``.
         """
@@ -754,8 +754,8 @@ class AutoScanScheduler:
         Sync to match ``BluetoothManager.async_stop``;
         ``worker.stop()`` cancels without awaiting. Nulls ``_loop``
         too so post-stop ``add_request`` / ``on_advertisement`` fall
-        back to the record-only path instead of seeding ``_needs``
-        with timestamps from the cancelled loop. Clears ``_needs``
+        back to the record-only path instead of seeding ``_due_at``
+        with timestamps from the cancelled loop. Clears ``_due_at``
         so a later ``start(new_loop)`` re-seeds from
         ``_requests_by_address`` against the new loop's clock base;
         leaving stale due-times would let them fire instantly (or
@@ -801,7 +801,7 @@ class AutoScanScheduler:
         """
         Stop the worker for a scanner leaving the manager.
 
-        Also prunes ``_needs`` entries the scanner currently owns so
+        Also prunes ``_due_at`` entries the scanner currently owns so
         a removed-and-not-rediscovered device doesn't keep a tracked
         entry pinned until the next history flip / age-out.
         """
@@ -850,7 +850,7 @@ class AutoScanScheduler:
             # it anyway); on_advertisement will bootstrap on first
             # sight.
             return
-        existing = self._needs.setdefault(request.address, {})
+        existing = self._due_at.setdefault(request.address, {})
         if request in existing:
             return
         existing[request] = self._loop.time() + request.scan_interval
@@ -862,7 +862,7 @@ class AutoScanScheduler:
             bucket.discard(request)
             if not bucket:
                 del self._requests_by_address[request.address]
-        if (entries := self._needs.get(request.address)) is not None:
+        if (entries := self._due_at.get(request.address)) is not None:
             entries.pop(request, None)
             if not entries:
                 self._ownership.unown(request.address)
@@ -898,7 +898,7 @@ class AutoScanScheduler:
         Shared by ``on_advertisement`` and the ``start()`` replay
         loop. Leaves existing entries' due times untouched.
         """
-        existing = self._needs.setdefault(address, {})
+        existing = self._due_at.setdefault(address, {})
         for request in requests:
             if request not in existing:
                 existing[request] = now + request.scan_interval
@@ -1187,7 +1187,7 @@ class AutoScanScheduler:
         last_service_info = self._manager.async_last_service_info
         requests: dict[str, list[dict[str, Any]]] = {}
         for address, bucket in self._requests_by_address.items():
-            entries = self._needs.get(address, {})
+            entries = self._due_at.get(address, {})
             history = last_service_info(address, False)
             owner_source = history.source if history is not None else None
             requests[address] = [

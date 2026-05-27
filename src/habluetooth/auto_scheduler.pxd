@@ -34,7 +34,7 @@ cdef class _ScannerWorker:
     cdef public double _sweep_last_completed
     cdef public bint _failed_window
     cdef public bint _warned_no_fallback
-    cdef public dict _owned_needs
+    cdef public dict _owned_due_at
 
     cpdef void start(self, object loop, double initial_offset=*)
 
@@ -68,13 +68,13 @@ cdef class _ScannerWorker:
 
 cdef class _OwnershipIndex:
 
-    cdef public dict _needs
+    cdef public dict _due_at
     cdef public dict _workers
     cdef public dict _owner_by_address
 
-    cdef void _attach(self, object worker, str address)
+    cdef void _attach(self, _ScannerWorker worker, str address)
 
-    cdef void _detach(self, str address, object source)
+    cdef void _detach(self, str address, str source)
 
     cpdef void assign(self, str address, str new_source)
 
@@ -91,7 +91,7 @@ cdef class AutoScanScheduler:
 
     cdef public object _manager
     cdef public dict _requests_by_address
-    cdef public dict _needs
+    cdef public dict _due_at
     cdef public _OwnershipIndex _ownership
     cdef public dict _workers
     cdef public object _loop
