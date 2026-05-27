@@ -355,15 +355,11 @@ class _ScannerWorker:
         bool,
     ]:
         """
-        Return (due_buckets, all_due, any_immediate) for addresses owned.
+        Return (due_buckets, all_due, any_immediate) for owned addresses.
 
-        Iterates the owned view. Collects entries due within
-        ``_AUTO_COALESCE_LOOKAHEAD`` so soon-due entries ride a window
-        the caller opens; caller must gate on
-        ``any_immediate or sweep_due``. Prunes orphans (history None)
-        and resyncs on owner drift.
-
-        Invariant: ``_AUTO_COALESCE_LOOKAHEAD > max window duration``.
+        Collects entries due within ``_AUTO_COALESCE_LOOKAHEAD``; caller
+        gates on ``any_immediate or sweep_due``. Prunes orphans and
+        resyncs on owner drift.
         """
         source = self._scanner.source
         scheduler = self._scheduler
@@ -383,18 +379,14 @@ class _ScannerWorker:
                 continue
             history = last_service_info(address, False)
             if history is None:
-                # Orphan: history aged out. Drop from this worker's
-                # view explicitly: assign(None) may early-return if
-                # _owner_by_address disagrees, leaving a stale entry.
+                # Orphan: history aged out. Drop from owned explicitly;
+                # assign(None) may early-return on owner mismatch.
                 ownership.assign(address, None)
                 owned.pop(address, None)
                 needs.pop(address, None)
                 continue
             if history.source != source:
-                # Owner drifted; reassign and wake the new owner so it
-                # can re-evaluate its next event time promptly. Drop
-                # from this worker's view explicitly for the same
-                # early-return reason as the orphan branch.
+                # Owner drifted; reassign, drop locally, wake new owner.
                 ownership.assign(address, history.source)
                 owned.pop(address, None)
                 scheduler._wake_worker(history.source)
@@ -620,17 +612,7 @@ class _ScannerWorker:
 
 
 class _OwnershipIndex:
-    """
-    Per-address scanner ownership and per-worker owned-needs view.
-
-    Single source of truth for which scanner owns each address and
-    for the aliased subset of ``_needs`` each owner's worker sees on
-    its hot path. Owner mappings track the manager's history-reported
-    source for each address; the aliased per-worker entry only exists
-    when ``_needs[address]`` is non-empty (assign() records the owner
-    either way, but skips attaching an entry when ``_needs`` is empty
-    so the worker view stays consistent with what ``_needs`` holds).
-    """
+    """Per-address scanner ownership and per-worker owned-needs view."""
 
     __slots__ = ("_needs", "_owner_by_address", "_workers")
 
@@ -644,10 +626,9 @@ class _OwnershipIndex:
         self._workers = workers
         self._owner_by_address: dict[str, str] = {}
 
-    # `Optional[str]` (not `str | None`) for the .pxd `cpdef` cross-check:
-    # under `from __future__ import annotations` Cython 3 treats the PEP 604
-    # form as a non-nullable `str`, which conflicts with the `object` param
-    # in the matching .pxd signature.
+    # ``Optional[str]`` (not ``str | None``): PEP 604 under future
+    # annotations parses as non-nullable ``str`` and clashes with the
+    # ``object`` param in the .pxd ``cpdef`` signature.
     def assign(
         self,
         address: str,
