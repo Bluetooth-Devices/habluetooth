@@ -377,10 +377,6 @@ class _ScannerWorker:
         resyncs on owner drift.
         """
         source = self._scanner.source
-        scheduler = self._scheduler
-        ownership = scheduler._ownership
-        needs = scheduler._needs
-        owned = self._owned_needs
         last_service_info = self._manager.async_last_service_info
         threshold = now + _AUTO_COALESCE_LOOKAHEAD
         due_buckets: list[
@@ -388,18 +384,18 @@ class _ScannerWorker:
         ] = []
         all_due: list[ActiveScanRequest] = []
         any_immediate = False
-        for address in list(owned):
-            entries = owned.get(address)
+        for address in list(self._owned_needs):
+            entries = self._owned_needs.get(address)
             if not entries:
                 continue
             history = last_service_info(address, False)
             if history is None:
-                ownership.unown(address)
-                needs.pop(address, None)
+                self._scheduler._ownership.unown(address)
+                self._scheduler._needs.pop(address, None)
                 continue
             if history.source != source:
-                ownership.assign(address, history.source)
-                scheduler._wake_worker(history.source)
+                self._scheduler._ownership.assign(address, history.source)
+                self._scheduler._wake_worker(history.source)
                 continue
             due: list[ActiveScanRequest] = []
             for r, t in entries.items():
@@ -664,12 +660,10 @@ class _OwnershipIndex:
 
     def clear_source(self, source: str) -> None:
         """Drop owner mappings and ``_needs`` entries owned by ``source``."""
-        owner_by_address = self._owner_by_address
-        needs = self._needs
-        for address in list(owner_by_address):
-            if owner_by_address[address] == source:
-                del owner_by_address[address]
-                needs.pop(address, None)
+        for address in list(self._owner_by_address):
+            if self._owner_by_address[address] == source:
+                del self._owner_by_address[address]
+                self._needs.pop(address, None)
         worker = self._workers.get(source)
         if worker is not None:
             worker._clear_owned()
@@ -679,10 +673,9 @@ class _OwnershipIndex:
         worker = self._workers.get(source)
         if worker is None:
             return
-        needs = self._needs
         for address, owner in self._owner_by_address.items():
             if owner == source:
-                entries = needs.get(address)
+                entries = self._needs.get(address)
                 if entries is not None:
                     worker._attach_owned(address, entries)
 

@@ -51,35 +51,18 @@ cdef class _ScannerWorker:
     cpdef void note_window_dispatched(self, double window_end, double now)
 
     @cython.locals(
-        entries=dict,
         next_at=double,
         earliest=double,
     )
     cpdef double _next_event_at(self, double now)
 
     @cython.locals(
-        source=str,
-        scheduler=AutoScanScheduler,
-        ownership=_OwnershipIndex,
-        needs=dict,
-        owned=dict,
-        address=str,
-        entries=dict,
-        due=list,
-        due_buckets=list,
-        all_due=list,
         threshold=double,
         any_immediate=bint,
         t=double,
     )
     cpdef tuple _collect_due_buckets(self, double now)
 
-    @cython.locals(
-        _address=str,
-        entries=dict,
-        due=list,
-        request=ActiveScanRequest,
-    )
     cpdef void _advance_due(self, list due_buckets, double from_time)
 
 
@@ -89,40 +72,14 @@ cdef class _OwnershipIndex:
     cdef public dict _workers
     cdef public dict _owner_by_address
 
-    @cython.locals(
-        old_source=str,
-        old_worker=object,
-        new_worker=object,
-        entries=dict,
-    )
     cpdef void assign(self, str address, str new_source)
 
-    @cython.locals(
-        old_source=str,
-        old_worker=object,
-    )
     cpdef void unown(self, str address)
 
-    @cython.locals(
-        owner_by_address=dict,
-        needs=dict,
-        address=str,
-        worker=object,
-    )
     cpdef void clear_source(self, str source)
 
-    @cython.locals(
-        worker=object,
-        needs=dict,
-        address=str,
-        owner=str,
-        entries=dict,
-    )
     cpdef void hook_worker(self, str source)
 
-    @cython.locals(
-        worker=object,
-    )
     cpdef void clear(self)
 
 
