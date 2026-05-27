@@ -6322,6 +6322,69 @@ async def test_next_event_at_fails_fast_on_empty_owned_bucket() -> None:
 
 
 @pytest.mark.asyncio
+async def test_invariant_through_mode_switches() -> None:
+    """
+    Schedule invariant holds across in-place scanner mode switches.
+
+    HA's UI mode switch is implemented as unregister-old + register-new
+    with the same source. The scheduler has to (a) drop the worker when
+    AUTO leaves, (b) spawn a fresh worker when AUTO arrives, and (c)
+    keep ``_requests_by_address`` intact across the gap so the new
+    worker can be re-bootstrapped. Walk through every transition with
+    invariant checks at each step.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    source = "AA:BB:CC:DD:EE:32"
+    address = "11:22:33:44:55:99"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    _assert_schedule_invariant(sched)
+    try:
+        # 1. PASSIVE first (entering as non-AUTO).
+        passive = _RecordingAutoScanner(source, BluetoothScanningMode.PASSIVE)
+        c_passive = manager.async_register_scanner(passive)
+        _assert_schedule_invariant(sched)
+        assert source not in sched._workers
+        _inject(passive, address)
+        _assert_schedule_invariant(sched)
+        assert sched._schedule._owner_by_address[address] == source
+        # 2. Switch INTO AUTO: unregister PASSIVE, register AUTO at same source.
+        c_passive()
+        _assert_schedule_invariant(sched)
+        # PASSIVE's clear_source removed the owner mapping.
+        assert address not in sched._schedule._owner_by_address
+        # User's registration survived.
+        assert address in sched._requests_by_address
+        auto = _RecordingAutoScanner(source, BluetoothScanningMode.AUTO)
+        c_auto = manager.async_register_scanner(auto)
+        _assert_schedule_invariant(sched)
+        assert source in sched._workers
+        # 3. AUTO sees the device, becomes owner with a worker attached.
+        _inject(auto, address)
+        _assert_schedule_invariant(sched)
+        assert sched._schedule._owner_by_address[address] == source
+        assert address in sched._workers[source]._owned_due_at
+        # 4. Switch OUT of AUTO: unregister AUTO, register ACTIVE same source.
+        c_auto()
+        _assert_schedule_invariant(sched)
+        assert source not in sched._workers
+        assert address not in sched._schedule._owner_by_address
+        active = _RecordingAutoScanner(source, BluetoothScanningMode.ACTIVE)
+        c_active = manager.async_register_scanner(active)
+        _assert_schedule_invariant(sched)
+        assert source not in sched._workers
+        # 5. ACTIVE sees the device; back to a non-AUTO-owned state.
+        _inject(active, address)
+        _assert_schedule_invariant(sched)
+        assert sched._schedule._owner_by_address[address] == source
+        c_active()
+        _assert_schedule_invariant(sched)
+    finally:
+        cancel()
+    _assert_schedule_invariant(sched)
+
+
+@pytest.mark.asyncio
 async def test_invariant_through_stop_and_restart() -> None:
     """Schedule invariant holds across stop + start replay."""
     manager = get_manager()
