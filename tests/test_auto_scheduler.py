@@ -5963,3 +5963,29 @@ async def test_ownership_assign_records_non_auto_owner() -> None:
     finally:
         cancel()
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_ownership_flip_from_non_auto_to_auto_owner() -> None:
+    """assign() handles flipping from a non-AUTO owner whose worker is absent."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(address, scan_interval=60.0)
+    passive = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.PASSIVE)
+    auto = _RecordingAutoScanner("AA:BB:CC:DD:EE:02", BluetoothScanningMode.AUTO)
+    c_passive = manager.async_register_scanner(passive)
+    c_auto = manager.async_register_scanner(auto)
+    try:
+        # PASSIVE first with weak RSSI; records owner mapping with no worker.
+        _inject_with_rssi(passive, address, rssi=-80)
+        assert sched._schedule._owner_by_address[address] == passive.source
+        # AUTO flip with stronger RSSI: old_source has no worker (PASSIVE),
+        # so the detach branch in assign() hits ``old_worker is None``.
+        _inject_with_rssi(auto, address, rssi=-30)
+        assert sched._schedule._owner_by_address[address] == auto.source
+        assert address in sched._workers[auto.source]._owned_due_at
+    finally:
+        cancel()
+        c_passive()
+        c_auto()

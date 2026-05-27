@@ -82,7 +82,7 @@ cdef class _ScanSchedule:
 
     cpdef void clear_source(self, str source)
 
-    cpdef void hook_worker(self, str source)
+    cpdef void attach_worker(self, str source)
 
     cpdef void clear(self)
 

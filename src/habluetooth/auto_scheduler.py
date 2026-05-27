@@ -88,7 +88,7 @@ up the new owner without any address-level rescheduling:
    *before* the same-payload short-circuit, so the flip is visible to
    the scheduler even for static-payload beacons.
 2. ``on_advertisement`` calls ``_schedule.assign(adv.address,
-   adv.source)``. The index detaches the entry from A's
+   adv.source)``. The schedule detaches the entry from A's
    ``_owned_due_at``, attaches it to B's ``_owned_due_at`` (same dict
    object, just a different worker holds the alias), and wakes B's
    worker. A's worker no longer sees the address at all; B's does.
@@ -141,7 +141,7 @@ Invariants
   sweep therefore fires only on AUTO scanners that haven't had
   *any* active scan in ``AUTO_REDISCOVERY_INTERVAL`` (12 h).
 * A registration kick-starts tracking immediately; ``on_advertisement``
-  is the fallback that re-creates the entry if the worker pruned it
+  is the fallback that re-creates the entry if a worker ``unown``'d it
   because the device's history was missing at tick time.
 * Every accepted advertisement on a tracked address wakes the source's
   worker so an ownership flip on the same scanner triggers a
@@ -689,7 +689,7 @@ class _ScanSchedule:
         if worker is not None:
             worker._clear_owned()
 
-    def hook_worker(self, source: str) -> None:
+    def attach_worker(self, source: str) -> None:
         """Attach pre-assigned entries to a newly-registered worker."""
         worker = self._workers[source]
         for address, owner in self._owner_by_address.items():
@@ -839,7 +839,7 @@ class AutoScanScheduler:
         source = scanner.source
         self._workers[source] = worker
         # Attach entries pre-assigned before this scanner registered.
-        self._schedule.hook_worker(source)
+        self._schedule.attach_worker(source)
 
     def add_request(self, request: ActiveScanRequest) -> None:
         """
@@ -869,7 +869,7 @@ class AutoScanScheduler:
         self._schedule.assign(request.address, history.source)
 
     def remove_request(self, request: ActiveScanRequest) -> None:
-        """Drop the request from the index and from any pending tracking."""
+        """Drop the request from ``_requests_by_address`` and the schedule."""
         if (bucket := self._requests_by_address.get(request.address)) is not None:
             bucket.discard(request)
             if not bucket:
