@@ -393,8 +393,7 @@ class _ScannerWorker:
         ] = []
         all_due: list[ActiveScanRequest] = []
         any_immediate = False
-        for address in list(self._owned_due_at):
-            entries = self._owned_due_at[address]
+        for address, entries in self._owned_due_at.copy().items():
             history = last_service_info(address, False)
             if history is None:
                 self._scheduler._schedule.unown(address)
