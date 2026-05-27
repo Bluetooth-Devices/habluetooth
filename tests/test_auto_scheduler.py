@@ -18,7 +18,7 @@ from habluetooth import (
     BluetoothServiceInfoBleak,
     get_manager,
 )
-from habluetooth.auto_scheduler import ActiveScanRequest, _OwnershipIndex
+from habluetooth.auto_scheduler import ActiveScanRequest, _ScanSchedule
 from habluetooth.const import (
     AUTO_INITIAL_SWEEP_DELAY,
     AUTO_REDISCOVERY_INTERVAL,
@@ -117,11 +117,11 @@ async def test_advertisement_starts_tracking() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, "11:22:33:44:55:66")
-        assert "11:22:33:44:55:66" in sched._ownership._due_at
+        assert "11:22:33:44:55:66" in sched._schedule._due_at
     finally:
         cancel()
         register_cancel()
-    assert sched._ownership._due_at == {}
+    assert sched._schedule._due_at == {}
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_advertisement_for_unrelated_address_is_ignored() -> None:
         # The registered address has tracking from add_request; the
         # unrelated advertisement must not create its own entry.
         _inject(scanner, "AA:AA:AA:AA:AA:AA")
-        assert "AA:AA:AA:AA:AA:AA" not in sched._ownership._due_at
+        assert "AA:AA:AA:AA:AA:AA" not in sched._schedule._due_at
     finally:
         cancel()
         register_cancel()
@@ -157,7 +157,7 @@ async def test_worker_tick_fires_active_window() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, "11:22:33:44:55:66")
-        entries = sched._ownership._due_at["11:22:33:44:55:66"]
+        entries = sched._schedule._due_at["11:22:33:44:55:66"]
         request = next(iter(entries))
         entries[request] = loop.time() - 1.0
         await _run_worker_tick(sched, scanner.source)
@@ -190,7 +190,7 @@ async def test_worker_tick_advances_by_scan_interval_from_window_start() -> None
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         request = next(iter(entries))
         entries[request] = loop.time() - 1.0
         before_tick = loop.time()
@@ -227,8 +227,8 @@ async def test_worker_tick_coalesces_near_future_due_entries() -> None:
         # A is due now; B is due 10s from now (within the lookahead).
         # One tick should serve both.
         now = loop.time()
-        entries_a = sched._ownership._due_at[addr_a]
-        entries_b = sched._ownership._due_at[addr_b]
+        entries_a = sched._schedule._due_at[addr_a]
+        entries_b = sched._schedule._due_at[addr_b]
         for req in entries_a:
             entries_a[req] = now - 1.0
         for req in entries_b:
@@ -264,7 +264,7 @@ async def test_worker_tick_does_not_fire_when_only_soon_due_no_immediate() -> No
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         # Set next_due 5s in the future — within the lookahead but
         # not immediately due.
         for req in entries:
@@ -296,8 +296,8 @@ async def test_worker_tick_coalesces_near_max_window_boundary() -> None:
         _inject(scanner, addr_a)
         _inject(scanner, addr_b)
         now = loop.time()
-        entries_a = sched._ownership._due_at[addr_a]
-        entries_b = sched._ownership._due_at[addr_b]
+        entries_a = sched._schedule._due_at[addr_a]
+        entries_b = sched._schedule._due_at[addr_b]
         for req in entries_a:
             entries_a[req] = now - 1.0
         for req in entries_b:
@@ -336,8 +336,8 @@ async def test_worker_tick_fallback_dispatch_rides_soon_due_entries() -> None:
         fallback.add_discovered(addr_b, rssi=-70)
         owner._add_connecting(addr_a)
         now = loop.time()
-        entries_a = sched._ownership._due_at[addr_a]
-        entries_b = sched._ownership._due_at[addr_b]
+        entries_a = sched._schedule._due_at[addr_a]
+        entries_b = sched._schedule._due_at[addr_b]
         for req in entries_a:
             entries_a[req] = now - 1.0
         for req in entries_b:
@@ -380,7 +380,7 @@ async def test_worker_tick_sweep_alone_pulls_in_soon_due_entries() -> None:
         # Make the sweep due; per-device entry is soon-due but not
         # immediate.
         worker._sweep_last_completed = loop.time() - AUTO_REDISCOVERY_INTERVAL - 1.0
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         soon_due_at = loop.time() + 5.0
         for req in entries:
             entries[req] = soon_due_at
@@ -414,7 +414,7 @@ async def test_worker_tick_coalesces_overlapping_requests() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for req in list(entries):
             entries[req] = loop.time() - 1.0
         await _run_worker_tick(sched, scanner.source)
@@ -442,7 +442,7 @@ async def test_multiple_requests_same_address_track_independent_intervals() -> N
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         assert len(entries) == 2
         fast, slow = sorted(entries, key=lambda r: r.scan_interval)
         entries[fast] = loop.time() - 1.0
@@ -596,7 +596,7 @@ async def test_active_scan_registered_before_auto_scanner_wakes_on_register() ->
             _inject(scanner, address)
             assert worker._wake.is_set()
             # The address now has a tracked entry on this scanner.
-            assert address in sched._ownership._due_at
+            assert address in sched._schedule._due_at
         finally:
             register_cancel()
     finally:
@@ -614,9 +614,9 @@ async def test_remove_request_clears_tracking() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        assert address in sched._ownership._due_at
+        assert address in sched._schedule._due_at
         cancel()
-        assert address not in sched._ownership._due_at
+        assert address not in sched._schedule._due_at
         assert sched._requests_by_address == {}
     finally:
         register_cancel()
@@ -675,16 +675,16 @@ async def test_dispatch_drops_tracking_for_unseen_address() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        request = next(iter(sched._ownership._due_at[address]))
-        sched._ownership._due_at[address][request] = loop.time() - 1.0
+        request = next(iter(sched._schedule._due_at[address]))
+        sched._schedule._due_at[address][request] = loop.time() - 1.0
         # Simulate the manager's history aging out under the worker's
         # feet — the orphan-prune branch should clean both _due_at and
         # _owner_by_address.
         manager._all_history.pop(address, None)
         manager._connectable_history.pop(address, None)
         await _run_worker_tick(sched, scanner.source)
-        assert address not in sched._ownership._due_at
-        assert address not in sched._ownership._owner_by_address
+        assert address not in sched._schedule._due_at
+        assert address not in sched._schedule._owner_by_address
         assert address not in sched._workers[scanner.source]._owned_due_at
     finally:
         cancel()
@@ -794,14 +794,14 @@ async def test_remove_scanner_prunes_owned_due_at_entries() -> None:
     try:
         _inject(s_a, address_owned)
         _inject(s_b, address_foreign)
-        assert address_owned in sched._ownership._due_at
-        assert address_foreign in sched._ownership._due_at
+        assert address_owned in sched._schedule._due_at
+        assert address_foreign in sched._schedule._due_at
         # Remove s_a. The owned entry must be pruned; the foreign one
         # (owned by s_b) must remain.
         c_a()
         await asyncio.sleep(0)
-        assert address_owned not in sched._ownership._due_at
-        assert address_foreign in sched._ownership._due_at
+        assert address_owned not in sched._schedule._due_at
+        assert address_foreign in sched._schedule._due_at
     finally:
         cancel_owned()
         cancel_foreign()
@@ -863,10 +863,10 @@ async def test_stop_clears_loop_so_post_stop_add_request_is_record_only() -> Non
         cancel = manager.async_register_active_scan(address, scan_interval=60.0)
         try:
             assert address in sched._requests_by_address
-            assert address not in sched._ownership._due_at
+            assert address not in sched._schedule._due_at
             # on_advertisement after stop is a no-op on _due_at too.
             _inject(scanner, address)
-            assert address not in sched._ownership._due_at
+            assert address not in sched._schedule._due_at
         finally:
             cancel()
     finally:
@@ -904,7 +904,7 @@ async def test_on_advertisement_early_returns_with_no_requests() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, "11:22:33:44:55:66")
-        assert sched._ownership._due_at == {}
+        assert sched._schedule._due_at == {}
         assert sched._requests_by_address == {}
     finally:
         register_cancel()
@@ -924,10 +924,10 @@ async def test_on_advertisement_re_bootstraps_pruned_tracking() -> None:
         # No advertisement has been seen yet, so add_request skipped
         # the _due_at seed (the prune-on-no-history path). Simulate the
         # "pruned" state by ensuring it's not there.
-        sched._ownership._due_at.pop(address, None)
+        sched._schedule._due_at.pop(address, None)
         worker._wake.clear()
         _inject(scanner, address)
-        assert address in sched._ownership._due_at
+        assert address in sched._schedule._due_at
         assert worker._wake.is_set()
     finally:
         cancel()
@@ -1046,7 +1046,7 @@ async def test_add_request_without_history_skips_seed() -> None:
         # Sanity: history doesn't exist for this address yet.
         assert manager.async_last_service_info(address, False) is None
         # _due_at was not seeded -> no entry to prune later.
-        assert address not in sched._ownership._due_at
+        assert address not in sched._schedule._due_at
         # But the request IS recorded for on_advertisement to pick up.
         assert address in sched._requests_by_address
         # First advertisement bootstraps tracking and wakes the
@@ -1054,7 +1054,7 @@ async def test_add_request_without_history_skips_seed() -> None:
         worker = sched._workers[scanner.source]
         worker._wake.clear()
         _inject(scanner, address)
-        assert address in sched._ownership._due_at
+        assert address in sched._schedule._due_at
         assert worker._wake.is_set()
     finally:
         cancel()
@@ -1199,12 +1199,12 @@ async def test_mode_switch_unregister_then_register_picks_up_existing_request() 
     auto_cancel = manager.async_register_scanner(auto_scanner)
     try:
         _inject(auto_scanner, address)
-        assert address in sched._ownership._due_at
+        assert address in sched._schedule._due_at
         assert auto_scanner.source in sched._workers
         # Mode switch in UI -> unregister AUTO scanner.
         auto_cancel()
         assert auto_scanner.source not in sched._workers
-        assert address not in sched._ownership._due_at
+        assert address not in sched._schedule._due_at
         # User's registration is preserved across the switch.
         assert address in sched._requests_by_address
         # Re-register with the SAME source but PASSIVE mode.
@@ -1216,7 +1216,7 @@ async def test_mode_switch_unregister_then_register_picks_up_existing_request() 
             # PASSIVE doesn't get a worker.
             assert passive_scanner.source not in sched._workers
             # Still no _due_at entry (no AUTO scanner owns it).
-            assert address not in sched._ownership._due_at
+            assert address not in sched._schedule._due_at
             passive_cancel()
             # Now switch BACK to AUTO with the same source.
             new_auto = _RecordingAutoScanner(
@@ -1228,7 +1228,7 @@ async def test_mode_switch_unregister_then_register_picks_up_existing_request() 
                 # First advertisement on the new AUTO scanner bootstraps
                 # tracking again from the still-registered request.
                 _inject(new_auto, address)
-                assert address in sched._ownership._due_at
+                assert address in sched._schedule._due_at
             finally:
                 new_auto_cancel()
         except BaseException:
@@ -1275,7 +1275,7 @@ async def test_start_replays_pre_start_requests_into_due_at() -> None:
                 address_no_history, scan_interval=60.0, scan_duration=5.0
             )
             try:
-                assert address_with_history not in sched._ownership._due_at
+                assert address_with_history not in sched._schedule._due_at
                 requests = list(sched._requests_by_address[address_with_history])
                 pre_existing, to_be_inserted = requests
                 # Pre-populate _due_at with one request only. The
@@ -1285,12 +1285,10 @@ async def test_start_replays_pre_start_requests_into_due_at() -> None:
                 # about the absolute value, only that start() leaves
                 # it alone.
                 sentinel = saved_loop.time() + 1.0e9
-                sched._ownership._due_at[address_with_history] = {
-                    pre_existing: sentinel
-                }
+                sched._schedule._due_at[address_with_history] = {pre_existing: sentinel}
                 before_start = saved_loop.time()
                 sched.start(saved_loop)
-                seeded = sched._ownership._due_at[address_with_history]
+                seeded = sched._schedule._due_at[address_with_history]
                 # The pre-existing entry was left alone (covers the
                 # `request not in existing` False branch).
                 assert seeded[pre_existing] == sentinel
@@ -1302,7 +1300,7 @@ async def test_start_replays_pre_start_requests_into_due_at() -> None:
                 )
                 # No-history address: skipped by the
                 # `last_service_info(...) is None` branch.
-                assert address_no_history not in sched._ownership._due_at
+                assert address_no_history not in sched._schedule._due_at
             finally:
                 cancel_with_a()
                 cancel_with_b()
@@ -1357,14 +1355,14 @@ async def test_dispatch_does_not_resurrect_cancelled_request() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         request = next(iter(entries))
         entries[request] = loop.time() - 1.0
         await sched._workers[scanner.source]._tick()
         await gate.wait()
         # remove_request emptied the bucket; the tick must not have
         # re-added the cancelled request.
-        assert address not in sched._ownership._due_at
+        assert address not in sched._schedule._due_at
     finally:
         register_cancel()
 
@@ -1383,7 +1381,7 @@ async def test_dispatch_skips_address_owned_by_other_scanner() -> None:
     c2 = manager.async_register_scanner(other)
     try:
         _inject(owner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for req in list(entries):
             entries[req] = loop.time() - 1.0
         # The "other" scanner runs its tick. The address is owned by
@@ -1427,7 +1425,7 @@ async def test_next_event_at_returns_earliest_per_device_need() -> None:
         worker = sched._workers[scanner.source]
         # Sweep is far in the future (initial delay window). The earliest
         # event for the worker is the per-device next-due.
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         request = next(iter(entries))
         per_device_at = loop.time() + 5.0
         entries[request] = per_device_at
@@ -1450,7 +1448,7 @@ async def test_dispatch_per_device_skips_not_yet_due() -> None:
     try:
         _inject(scanner, address)
         # Push the due time far in the future.
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for request in list(entries):
             entries[request] = loop.time() + 1000.0
         await sched._workers[scanner.source]._tick()
@@ -1600,7 +1598,7 @@ async def test_remove_request_handles_missing_bucket() -> None:
     # Bucket was never added; remove_request must be a no-op.
     sched.remove_request(request)
     assert "AA:BB:CC:DD:EE:99" not in sched._requests_by_address
-    assert "AA:BB:CC:DD:EE:99" not in sched._ownership._due_at
+    assert "AA:BB:CC:DD:EE:99" not in sched._schedule._due_at
 
 
 @pytest.mark.asyncio
@@ -1615,7 +1613,7 @@ async def test_on_advertisement_no_match_no_wake() -> None:
         worker = sched._workers[scanner.source]
         worker._wake.clear()
         _inject(scanner, "AA:AA:AA:AA:AA:AA")
-        assert "AA:AA:AA:AA:AA:AA" not in sched._ownership._due_at
+        assert "AA:AA:AA:AA:AA:AA" not in sched._schedule._due_at
         assert not worker._wake.is_set()
     finally:
         cancel()
@@ -1665,7 +1663,7 @@ async def test_on_advertisement_with_all_requests_already_tracked() -> None:
     req_a = ActiveScanRequest(address, 60.0, 10.0)
     req_b = ActiveScanRequest(address, 120.0, 10.0)
     sched._requests_by_address[address] = {req_a, req_b}
-    sched._ownership._due_at[address] = {req_a: 0.0, req_b: 0.0}
+    sched._schedule._due_at[address] = {req_a: 0.0, req_b: 0.0}
     try:
         si = BluetoothServiceInfoBleak(
             name="x",
@@ -1689,10 +1687,10 @@ async def test_on_advertisement_with_all_requests_already_tracked() -> None:
         # triggers when every request was already in _due_at.
         assert worker._wake.is_set()
         # Sanity: the entries we put in are untouched.
-        assert sched._ownership._due_at[address] == {req_a: 0.0, req_b: 0.0}
+        assert sched._schedule._due_at[address] == {req_a: 0.0, req_b: 0.0}
     finally:
         sched._requests_by_address.pop(address, None)
-        sched._ownership._due_at.pop(address, None)
+        sched._schedule._due_at.pop(address, None)
         register_cancel()
 
 
@@ -1735,8 +1733,8 @@ async def test_next_event_at_skips_per_device_later_than_sweep() -> None:
         sweep_at = worker._sweep_last_completed + AUTO_REDISCOVERY_INTERVAL
         # Push per-device need past the sweep cadence so the earliest <
         # next_at branch is False inside _next_event_at.
-        for req in list(sched._ownership._due_at[address]):
-            sched._ownership._due_at[address][req] = sweep_at + 100.0
+        for req in list(sched._schedule._due_at[address]):
+            sched._schedule._due_at[address][req] = sweep_at + 100.0
         assert worker._next_event_at(loop.time()) == sweep_at
     finally:
         cancel()
@@ -1792,7 +1790,7 @@ async def test_coalesce_three_due_uses_max_clamped() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for req in list(entries):
             entries[req] = loop.time() - 1.0
         await sched._workers[scanner.source]._tick()
@@ -1818,7 +1816,7 @@ async def test_coalesce_clamps_oversize_request() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for req in list(entries):
             entries[req] = loop.time() - 1.0
         await sched._workers[scanner.source]._tick()
@@ -1845,7 +1843,7 @@ async def test_coalesce_only_due_requests_count() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         short_req = next(r for r in entries if r.scan_duration == 5.0)
         long_req = next(r for r in entries if r.scan_duration == 20.0)
         # Only the short request is due; the long one is well in the
@@ -1880,7 +1878,7 @@ async def test_coalesce_distinct_addresses_share_one_window() -> None:
         _inject(scanner, addr_a)
         _inject(scanner, addr_b)
         for address in (addr_a, addr_b):
-            entries = sched._ownership._due_at[address]
+            entries = sched._schedule._due_at[address]
             for req in list(entries):
                 entries[req] = loop.time() - 1.0
         await sched._workers[scanner.source]._tick()
@@ -1907,7 +1905,7 @@ async def test_tick_combines_due_sweep_and_per_device_into_one_window() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for req in list(entries):
             entries[req] = loop.time() - 1.0
         worker = sched._workers[scanner.source]
@@ -1948,7 +1946,7 @@ async def test_three_inkbirds_share_one_scan() -> None:
     try:
         for addr in addresses:
             _inject(scanner, addr)
-            entries = sched._ownership._due_at[addr]
+            entries = sched._schedule._due_at[addr]
             for req in list(entries):
                 entries[req] = loop.time() - 1.0
         await sched._workers[scanner.source]._tick()
@@ -1956,7 +1954,7 @@ async def test_three_inkbirds_share_one_scan() -> None:
         assert scanner.active_window_calls == [15.0]
         # Next-due moved forward by scan_interval for every request.
         for addr in addresses:
-            for due in sched._ownership._due_at[addr].values():
+            for due in sched._schedule._due_at[addr].values():
                 assert due > loop.time() + 250.0
     finally:
         for cancel in cancels:
@@ -1983,7 +1981,7 @@ async def test_dispatch_coalesces_different_durations_to_max() -> None:
     try:
         for addr in (addr_short, addr_long):
             _inject(scanner, addr)
-            entries = sched._ownership._due_at[addr]
+            entries = sched._schedule._due_at[addr]
             for req in list(entries):
                 entries[req] = loop.time() - 1.0
         await sched._workers[scanner.source]._tick()
@@ -2019,7 +2017,7 @@ async def test_three_inkbirds_same_address_coalesce_to_one_scan() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         assert len(entries) == 3
         for req in list(entries):
             entries[req] = loop.time() - 1.0
@@ -2059,13 +2057,13 @@ async def test_three_inkbirds_window_unchanged_after_removal() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         assert len(entries) == 3
         # Cancel one of the three; two should remain in both the registry
         # and the _due_at tracker.
         cancels.pop()()
         assert len(sched._requests_by_address[address]) == 2
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         assert len(entries) == 2
         for req in list(entries):
             entries[req] = loop.time() - 1.0
@@ -2104,7 +2102,7 @@ async def test_only_owning_scanner_fires_among_four() -> None:
     try:
         owner = scanners[2]
         _inject(owner, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for req in list(entries):
             entries[req] = loop.time() - 1.0
         for scanner in scanners:
@@ -2128,7 +2126,7 @@ async def test_add_request_before_start_does_not_seed_due_at() -> None:
     try:
         sched.add_request(ActiveScanRequest(address, 60.0, 10.0))
         assert address in sched._requests_by_address
-        assert address not in sched._ownership._due_at
+        assert address not in sched._schedule._due_at
     finally:
         sched._loop = original_loop
         sched._requests_by_address.pop(address, None)
@@ -2153,11 +2151,11 @@ async def test_add_request_idempotent_keeps_existing_due() -> None:
         sched.add_request(request)
         # Inject so add_request can see history on the second call.
         _inject(scanner, address)
-        sched._ownership._due_at[address][request] = 1234.5
+        sched._schedule._due_at[address][request] = 1234.5
         worker = sched._workers[scanner.source]
         worker._wake.clear()
         sched.add_request(request)
-        assert sched._ownership._due_at[address][request] == 1234.5
+        assert sched._schedule._due_at[address][request] == 1234.5
         # No new entry → no wake.
         assert not worker._wake.is_set()
         sched.remove_request(request)
@@ -2217,7 +2215,7 @@ async def test_owner_flip_during_window_does_not_double_fire() -> None:
     c_b = manager.async_register_scanner(s_b)
     try:
         _inject(s_a, address)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for req in list(entries):
             entries[req] = loop.time() - 1.0
 
@@ -2295,7 +2293,7 @@ async def test_device_migration_between_scanners_fires_on_new_owner() -> None:
 
         # Make the existing tracking entry due and fire the first
         # window on A.
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for req in list(entries):
             entries[req] = loop.time() - 1.0
         await sched._workers[s_a.source]._tick()
@@ -2380,12 +2378,12 @@ async def test_stop_clears_due_at_so_restart_does_not_reuse_stale_due_times() ->
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        assert address in sched._ownership._due_at
+        assert address in sched._schedule._due_at
         original_loop = sched._loop
         sched.stop()
         # _due_at cleared so stale timestamps from the now-defunct loop
         # can't survive into a re-start.
-        assert sched._ownership._due_at == {}
+        assert sched._schedule._due_at == {}
         assert sched._loop is None
         assert sched._workers == {}
         # _requests_by_address is loop-independent and must persist so
@@ -2395,8 +2393,8 @@ async def test_stop_clears_due_at_so_restart_does_not_reuse_stale_due_times() ->
         # a fresh due time from the new loop.time() base.
         assert original_loop is not None
         sched.start(original_loop)
-        assert address in sched._ownership._due_at
-        entries = sched._ownership._due_at[address]
+        assert address in sched._schedule._due_at
+        entries = sched._schedule._due_at[address]
         expected_due = original_loop.time() + 60.0
         assert all(abs(due - expected_due) < 0.5 for due in entries.values())
     finally:
@@ -2432,7 +2430,7 @@ class _DiscoverableAutoScanner(_RecordingAutoScanner):
 
 def _make_due(sched: object, address: str) -> None:
     """Make every tracked request for ``address`` due immediately."""
-    entries = sched._ownership._due_at[address]  # type: ignore[attr-defined]
+    entries = sched._schedule._due_at[address]  # type: ignore[attr-defined]
     loop = asyncio.get_running_loop()
     for req in list(entries):
         entries[req] = loop.time() - 1.0
@@ -3159,7 +3157,7 @@ async def test_worker_tick_advance_pre_dispatch_blocks_double_fire() -> None:
         _make_due(sched, address)
         before = loop.time()
         await _run_worker_tick(sched, owner.source)
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for due in entries.values():
             # Advanced to roughly before + 90s, NOT before - 1.0.
             assert due == pytest.approx(before + 90.0, abs=0.5)
@@ -3686,7 +3684,7 @@ async def test_worker_tick_ownership_flip_during_dispatch_no_double_fire() -> No
         await asyncio.sleep(0)
         # Confirm fallback call is in flight and entries advanced.
         assert fb.active_window_calls == [6.0]
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for due in entries.values():
             assert due == pytest.approx(before + 90.0, abs=0.5)
         # Ownership flips to fb mid-dispatch (much stronger RSSI).
@@ -4008,7 +4006,7 @@ async def test_worker_tick_three_addresses_no_fallback_advance_by_defer() -> Non
         before = loop.time()
         await _run_worker_tick(sched, owner.source)
         for addr in (addr_a, addr_b, addr_c):
-            entries = sched._ownership._due_at[addr]
+            entries = sched._schedule._due_at[addr]
             for due in entries.values():
                 assert due == pytest.approx(before + 30.0, abs=0.5)
                 assert due < before + 60.0
@@ -4141,11 +4139,11 @@ async def test_worker_tick_three_addresses_mixed_outcomes_advance_correctly() ->
         owner._add_connecting(addr_covered)
         before = loop.time()
         await _run_worker_tick(sched, owner.source)
-        for due in sched._ownership._due_at[addr_covered].values():
+        for due in sched._schedule._due_at[addr_covered].values():
             assert due == pytest.approx(before + 120.0, abs=0.5)
-        for due in sched._ownership._due_at[addr_flipped].values():
+        for due in sched._schedule._due_at[addr_flipped].values():
             assert due == pytest.approx(before + 240.0, abs=0.5)
-        for due in sched._ownership._due_at[addr_orphan].values():
+        for due in sched._schedule._due_at[addr_orphan].values():
             assert due == pytest.approx(before + 30.0, abs=0.5)
         assert fb.active_window_calls == [9.0]
         assert active.active_window_calls == []
@@ -4278,7 +4276,7 @@ async def test_worker_tick_failed_fallback_advances_entries_by_full_interval() -
         before = loop.time()
         await _run_worker_tick(sched, owner.source)
         # Entries advanced by full scan_interval, NOT retry_at.
-        for due in sched._ownership._due_at[address].values():
+        for due in sched._schedule._due_at[address].values():
             assert due == pytest.approx(before + 120.0, abs=0.5)
             assert due > before + 60.0  # well past the 30s retry_at
         # fb_worker bumps from note_window_dispatched are preserved.
@@ -5518,9 +5516,9 @@ async def test_owned_due_at_populated_for_owner_on_add_request_with_history() ->
         # history-gating finds it.
         _inject(scanner, address)
         # Drop the entry add_request seeded so we can re-add through
-        # add_request and observe its _ownership.assign side-effect.
-        sched._ownership._due_at.pop(address, None)
-        sched._ownership._owner_by_address.pop(address, None)
+        # add_request and observe its _schedule.assign side-effect.
+        sched._schedule._due_at.pop(address, None)
+        sched._schedule._owner_by_address.pop(address, None)
         sched._workers[scanner.source]._owned_due_at.pop(address, None)
         cancel = manager.async_register_active_scan(address, scan_interval=60.0)
         try:
@@ -5529,8 +5527,8 @@ async def test_owned_due_at_populated_for_owner_on_add_request_with_history() ->
             # Inner dict must be the SAME object aliased between
             # _due_at and _owned_due_at so _advance_due mutations apply
             # to both views.
-            assert owned[address] is sched._ownership._due_at[address]
-            assert sched._ownership._owner_by_address[address] == scanner.source
+            assert owned[address] is sched._schedule._due_at[address]
+            assert sched._schedule._owner_by_address[address] == scanner.source
         finally:
             cancel()
     finally:
@@ -5548,8 +5546,8 @@ async def test_add_request_without_history_leaves_owned_due_at_empty() -> None:
     try:
         cancel = manager.async_register_active_scan(address, scan_interval=60.0)
         try:
-            assert address not in sched._ownership._due_at
-            assert address not in sched._ownership._owner_by_address
+            assert address not in sched._schedule._due_at
+            assert address not in sched._schedule._owner_by_address
             assert address not in sched._workers[scanner.source]._owned_due_at
         finally:
             cancel()
@@ -5571,8 +5569,8 @@ async def test_on_advertisement_bootstraps_owned_due_at() -> None:
             _inject(scanner, address)
             owned = sched._workers[scanner.source]._owned_due_at
             assert address in owned
-            assert owned[address] is sched._ownership._due_at[address]
-            assert sched._ownership._owner_by_address[address] == scanner.source
+            assert owned[address] is sched._schedule._due_at[address]
+            assert sched._schedule._owner_by_address[address] == scanner.source
         finally:
             cancel()
     finally:
@@ -5596,15 +5594,15 @@ async def test_ownership_flip_moves_entry_between_owned_due_at() -> None:
         worker_b = sched._workers[s_b.source]
         assert address in worker_a._owned_due_at
         assert address not in worker_b._owned_due_at
-        assert sched._ownership._owner_by_address[address] == s_a.source
+        assert sched._schedule._owner_by_address[address] == s_a.source
 
         # B with much stronger RSSI triggers ownership flip in the
         # manager; scheduler's on_advertisement reassigns owner.
         _inject_with_rssi(s_b, address, rssi=-30)
         assert address not in worker_a._owned_due_at
         assert address in worker_b._owned_due_at
-        assert worker_b._owned_due_at[address] is sched._ownership._due_at[address]
-        assert sched._ownership._owner_by_address[address] == s_b.source
+        assert worker_b._owned_due_at[address] is sched._schedule._due_at[address]
+        assert sched._schedule._owner_by_address[address] == s_b.source
     finally:
         c_a()
         c_b()
@@ -5625,8 +5623,8 @@ async def test_remove_request_clears_owner_when_bucket_empties() -> None:
         worker = sched._workers[scanner.source]
         assert address in worker._owned_due_at
         cancel()
-        assert address not in sched._ownership._due_at
-        assert address not in sched._ownership._owner_by_address
+        assert address not in sched._schedule._due_at
+        assert address not in sched._schedule._owner_by_address
         assert address not in worker._owned_due_at
     finally:
         register_cancel()
@@ -5645,14 +5643,14 @@ async def test_remove_request_preserves_owner_when_other_requests_remain() -> No
         cancel2 = manager.async_register_active_scan(address, scan_interval=120.0)
         _inject(scanner, address)
         worker = sched._workers[scanner.source]
-        assert len(sched._ownership._due_at[address]) == 2
+        assert len(sched._schedule._due_at[address]) == 2
         cancel1()
-        assert address in sched._ownership._due_at
-        assert sched._ownership._owner_by_address[address] == scanner.source
+        assert address in sched._schedule._due_at
+        assert sched._schedule._owner_by_address[address] == scanner.source
         assert address in worker._owned_due_at
         cancel2()
-        assert address not in sched._ownership._due_at
-        assert address not in sched._ownership._owner_by_address
+        assert address not in sched._schedule._due_at
+        assert address not in sched._schedule._owner_by_address
         assert address not in worker._owned_due_at
     finally:
         register_cancel()
@@ -5669,11 +5667,11 @@ async def test_remove_scanner_clears_owner_and_due_at() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         _inject(scanner, address)
-        assert address in sched._ownership._due_at
-        assert sched._ownership._owner_by_address[address] == scanner.source
+        assert address in sched._schedule._due_at
+        assert sched._schedule._owner_by_address[address] == scanner.source
         register_cancel()
-        assert address not in sched._ownership._due_at
-        assert address not in sched._ownership._owner_by_address
+        assert address not in sched._schedule._due_at
+        assert address not in sched._schedule._owner_by_address
         assert scanner.source not in sched._workers
     finally:
         cancel()
@@ -5693,8 +5691,8 @@ async def test_stop_clears_all_owned_due_at_state() -> None:
         worker = sched._workers[scanner.source]
         assert address in worker._owned_due_at
         sched.stop()
-        assert sched._ownership._due_at == {}
-        assert sched._ownership._owner_by_address == {}
+        assert sched._schedule._due_at == {}
+        assert sched._schedule._owner_by_address == {}
         # Worker dropped from registry; the cleared dict is on the
         # detached instance still held by the local. Confirm both.
         assert sched._workers == {}
@@ -5728,19 +5726,17 @@ async def test_start_replay_populates_owned_due_at() -> None:
         cancel = manager.async_register_active_scan(address, scan_interval=60.0)
         try:
             # Pre-start: only _requests_by_address is populated.
-            assert address not in sched._ownership._due_at
-            assert address not in sched._ownership._owner_by_address
+            assert address not in sched._schedule._due_at
+            assert address not in sched._schedule._owner_by_address
             sched.start(loop)
             try:
                 # After start, the replay seeded _due_at and assigned
                 # the owner.
                 worker = sched._workers[scanner.source]
-                assert address in sched._ownership._due_at
-                assert sched._ownership._owner_by_address[address] == scanner.source
+                assert address in sched._schedule._due_at
+                assert sched._schedule._owner_by_address[address] == scanner.source
                 assert address in worker._owned_due_at
-                assert (
-                    worker._owned_due_at[address] is sched._ownership._due_at[address]
-                )
+                assert worker._owned_due_at[address] is sched._schedule._due_at[address]
             finally:
                 # Stop the spawned worker tasks so they do not leak.
                 for w in list(sched._workers.values()):
@@ -5766,15 +5762,15 @@ async def test_spawn_worker_picks_up_preassigned_owner() -> None:
     # registers as AUTO. We bypass the manager here because plumbing a
     # synthetic history entry is more wiring than the invariant needs.
     request = next(iter(sched._requests_by_address[address]))
-    sched._ownership._due_at[address] = {request: loop.time()}
-    sched._ownership._owner_by_address[address] = source
+    sched._schedule._due_at[address] = {request: loop.time()}
+    sched._schedule._owner_by_address[address] = source
     try:
         scanner = _RecordingAutoScanner(source, BluetoothScanningMode.AUTO)
         register_cancel = manager.async_register_scanner(scanner)
         try:
             worker = sched._workers[source]
             assert address in worker._owned_due_at
-            assert worker._owned_due_at[address] is sched._ownership._due_at[address]
+            assert worker._owned_due_at[address] is sched._schedule._due_at[address]
         finally:
             register_cancel()
     finally:
@@ -5797,7 +5793,7 @@ async def test_next_event_at_skips_other_workers_entries() -> None:
         _inject(s_a, address)
         # Drive the entry's due time well below A's sweep so any leak
         # of foreign entries would change B's next_at.
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for req in list(entries):
             entries[req] = loop.time() + 1.0
         worker_b = sched._workers[s_b.source]
@@ -5856,7 +5852,7 @@ async def test_collect_due_buckets_resyncs_owned_view_on_drift() -> None:
         info = manager.async_last_service_info(address, False)
         assert info is not None
         info.source = s_b.source
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         for req in list(entries):
             entries[req] = loop.time() - 1.0
         await worker_a._tick()
@@ -5864,7 +5860,7 @@ async def test_collect_due_buckets_resyncs_owned_view_on_drift() -> None:
         assert s_a.active_window_calls == []
         assert address not in worker_a._owned_due_at
         assert address in worker_b._owned_due_at
-        assert sched._ownership._owner_by_address[address] == s_b.source
+        assert sched._schedule._owner_by_address[address] == s_b.source
     finally:
         c_a()
         c_b()
@@ -5883,14 +5879,14 @@ async def test_assign_owner_noop_when_source_unchanged() -> None:
     try:
         _inject(scanner, address)
         worker = sched._workers[scanner.source]
-        entries = sched._ownership._due_at[address]
+        entries = sched._schedule._due_at[address]
         owned_before = worker._owned_due_at[address]
         # Second injection from the same scanner: owner unchanged,
         # owned-view aliasing preserved (same dict object).
         _inject(scanner, address)
-        assert sched._ownership._owner_by_address[address] == scanner.source
+        assert sched._schedule._owner_by_address[address] == scanner.source
         assert worker._owned_due_at[address] is owned_before
-        assert sched._ownership._due_at[address] is entries
+        assert sched._schedule._due_at[address] is entries
     finally:
         cancel()
         register_cancel()
@@ -5908,8 +5904,8 @@ async def test_spawn_worker_skips_foreign_preassigned_owners() -> None:
     cancel_b = manager.async_register_active_scan(address_b, scan_interval=60.0)
     foreign_source = "AA:BB:CC:DD:EE:FF"
     request_b = next(iter(sched._requests_by_address[address_b]))
-    sched._ownership._due_at[address_b] = {request_b: loop.time()}
-    sched._ownership._owner_by_address[address_b] = foreign_source
+    sched._schedule._due_at[address_b] = {request_b: loop.time()}
+    sched._schedule._owner_by_address[address_b] = foreign_source
     try:
         scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
         register_cancel = manager.async_register_scanner(scanner)
@@ -5933,8 +5929,8 @@ async def test_ownership_index_clear_source_no_match() -> None:
     register_cancel = manager.async_register_scanner(scanner)
     try:
         worker = sched._workers[scanner.source]
-        sched._ownership.clear_source(scanner.source)
-        assert sched._ownership._owner_by_address == {}
+        sched._schedule.clear_source(scanner.source)
+        assert sched._schedule._owner_by_address == {}
         assert worker._owned_due_at == {}
     finally:
         register_cancel()
@@ -5943,7 +5939,7 @@ async def test_ownership_index_clear_source_no_match() -> None:
 def test_ownership_index_clear_no_workers() -> None:
     """clear() over an index with no workers leaves state empty."""
     workers: dict[str, Any] = {}
-    idx = _OwnershipIndex(workers)
+    idx = _ScanSchedule(workers)
     idx._owner_by_address["AA:00:00:00:00:99"] = "ghost"
     idx.clear()
     assert idx._owner_by_address == {}
@@ -5962,7 +5958,7 @@ async def test_ownership_assign_records_non_auto_owner() -> None:
     register_cancel = manager.async_register_scanner(passive)
     try:
         _inject(passive, address)
-        assert sched._ownership._owner_by_address[address] == passive.source
+        assert sched._schedule._owner_by_address[address] == passive.source
         assert passive.source not in sched._workers
     finally:
         cancel()

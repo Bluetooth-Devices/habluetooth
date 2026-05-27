@@ -25,8 +25,8 @@ Flow
 
                   add_request(req)           on_advertisement(adv)
                        |                            |
-                       | _ownership.seed(...)       | _ownership.seed(...) per req;
-                       | _ownership.assign(addr,    | _ownership.assign(addr,
+                       | _schedule.seed(...)        | _schedule.seed(...) per req;
+                       | _schedule.assign(addr,     | _schedule.assign(addr,
                        |   history.source)          |   adv.source) wakes owner
                        v                            v
               +----------------------------------------------+
@@ -35,7 +35,7 @@ Flow
               |       addr -> set of ActiveScanRequest       |
               |    _workers                                  |
               |       source -> _ScannerWorker               |
-              |    _ownership: _OwnershipIndex               |
+              |    _schedule: _ScanSchedule                  |
               |       _due_at                                |
               |          addr -> {request: next_due_time}    |
               |       _owner_by_address                      |
@@ -87,7 +87,7 @@ up the new owner without any address-level rescheduling:
    and then calls ``auto_scheduler.on_advertisement(service_info)``
    *before* the same-payload short-circuit, so the flip is visible to
    the scheduler even for static-payload beacons.
-2. ``on_advertisement`` calls ``_ownership.assign(adv.address,
+2. ``on_advertisement`` calls ``_schedule.assign(adv.address,
    adv.source)``. The index detaches the entry from A's
    ``_owned_due_at``, attaches it to B's ``_owned_due_at`` (same dict
    object, just a different worker holds the alias), and wakes B's
@@ -259,7 +259,7 @@ class _ScannerWorker:
         self._warned_no_fallback: bool = False
         # Subset of _due_at owned by this worker; inner dicts aliased so
         # in-place advances stay visible. Mutated only via _attach_owned
-        # / _detach_owned / _clear_owned, driven by _OwnershipIndex.
+        # / _detach_owned / _clear_owned, driven by _ScanSchedule.
         self._owned_due_at: dict[str, dict[ActiveScanRequest, float]] = {}
 
     def start(
@@ -291,15 +291,15 @@ class _ScannerWorker:
     def _attach_owned(
         self, address: str, entries: dict[ActiveScanRequest, float]
     ) -> None:
-        """Attach an owned ``_due_at`` bucket; called only by _OwnershipIndex."""
+        """Attach an owned ``_due_at`` bucket; called only by _ScanSchedule."""
         self._owned_due_at[address] = entries
 
     def _detach_owned(self, address: str) -> None:
-        """Detach an owned bucket; called only by _OwnershipIndex."""
+        """Detach an owned bucket; called only by _ScanSchedule."""
         self._owned_due_at.pop(address, None)
 
     def _clear_owned(self) -> None:
-        """Drop all owned buckets; called only by _OwnershipIndex."""
+        """Drop all owned buckets; called only by _ScanSchedule."""
         self._owned_due_at.clear()
 
     def note_window_dispatched(self, window_end: float, now: float) -> None:
@@ -397,10 +397,10 @@ class _ScannerWorker:
             entries = self._owned_due_at[address]
             history = last_service_info(address, False)
             if history is None:
-                self._scheduler._ownership.unown(address)
+                self._scheduler._schedule.unown(address)
                 continue
             if history.source != source:
-                self._scheduler._ownership.assign(address, history.source)
+                self._scheduler._schedule.assign(address, history.source)
                 continue
             due: list[ActiveScanRequest] = []
             for r, t in entries.items():
@@ -622,8 +622,15 @@ class _ScannerWorker:
                 )
 
 
-class _OwnershipIndex:
-    """Owns ``_due_at``, ``_owner_by_address``, and the per-worker view."""
+class _ScanSchedule:
+    """
+    Per-address scan schedule: due times, owner, and per-worker view.
+
+    Owns ``_due_at`` (when each request is due), ``_owner_by_address``
+    (which scanner currently sees each address), and maintains an aliased
+    subset of ``_due_at`` on each worker's ``_owned_due_at`` so workers
+    iterate only the addresses they actually own.
+    """
 
     __slots__ = ("_due_at", "_owner_by_address", "_workers")
 
@@ -705,9 +712,9 @@ class AutoScanScheduler:
         "_manager",
         "_on_demand_sweep_end",
         "_on_demand_sweep_future",
-        "_ownership",
         "_requests_by_address",
         "_running",
+        "_schedule",
         "_workers",
     )
 
@@ -716,7 +723,7 @@ class AutoScanScheduler:
         self._manager = manager
         self._requests_by_address: dict[str, set[ActiveScanRequest]] = {}
         self._workers: dict[str, _ScannerWorker] = {}
-        self._ownership = _OwnershipIndex(self._workers)
+        self._schedule = _ScanSchedule(self._workers)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._on_demand_sweep_future: asyncio.Future[None] | None = None
@@ -750,7 +757,7 @@ class AutoScanScheduler:
             if history is None:
                 continue
             self._seed_requests(address, requests, now)
-            self._ownership.assign(address, history.source)
+            self._schedule.assign(address, history.source)
 
     def stop(self) -> None:
         """
@@ -776,7 +783,7 @@ class AutoScanScheduler:
         self._running = False
         for worker in self._workers.values():
             worker.stop()
-        self._ownership.clear()
+        self._schedule.clear()
         self._workers.clear()
         # done() guard mirrors the leader's finally for symmetry;
         # a future left non-None after completion would otherwise
@@ -811,7 +818,7 @@ class AutoScanScheduler:
         entry pinned until the next history flip / age-out.
         """
         source = scanner.source
-        self._ownership.clear_source(source)
+        self._schedule.clear_source(source)
         worker = self._workers.pop(source, None)
         if worker is not None:
             worker.stop()
@@ -832,7 +839,7 @@ class AutoScanScheduler:
         source = scanner.source
         self._workers[source] = worker
         # Attach entries pre-assigned before this scanner registered.
-        self._ownership.hook_worker(source)
+        self._schedule.hook_worker(source)
 
     def add_request(self, request: ActiveScanRequest) -> None:
         """
@@ -855,11 +862,11 @@ class AutoScanScheduler:
             # it anyway); on_advertisement will bootstrap on first
             # sight.
             return
-        if not self._ownership.seed(
+        if not self._schedule.seed(
             request.address, request, self._loop.time() + request.scan_interval
         ):
             return
-        self._ownership.assign(request.address, history.source)
+        self._schedule.assign(request.address, history.source)
 
     def remove_request(self, request: ActiveScanRequest) -> None:
         """Drop the request from the index and from any pending tracking."""
@@ -867,7 +874,7 @@ class AutoScanScheduler:
             bucket.discard(request)
             if not bucket:
                 del self._requests_by_address[request.address]
-        self._ownership.drop(request.address, request)
+        self._schedule.drop(request.address, request)
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
         """
@@ -886,7 +893,7 @@ class AutoScanScheduler:
         if requests is None:
             return
         self._seed_requests(address, requests, self._loop.time())
-        self._ownership.assign(address, service_info.source)
+        self._schedule.assign(address, service_info.source)
 
     def _seed_requests(
         self,
@@ -901,7 +908,7 @@ class AutoScanScheduler:
         loop. Leaves existing entries' due times untouched.
         """
         for request in requests:
-            self._ownership.seed(address, request, now + request.scan_interval)
+            self._schedule.seed(address, request, now + request.scan_interval)
 
     def _resolve_fallback_for_address(
         self, address: str, exclude_source: str
@@ -1187,7 +1194,7 @@ class AutoScanScheduler:
         last_service_info = self._manager.async_last_service_info
         requests: dict[str, list[dict[str, Any]]] = {}
         for address, bucket in self._requests_by_address.items():
-            entries = self._ownership._due_at.get(address, {})
+            entries = self._schedule._due_at.get(address, {})
             history = last_service_info(address, False)
             owner_source = history.source if history is not None else None
             requests[address] = [

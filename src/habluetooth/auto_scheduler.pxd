@@ -66,7 +66,7 @@ cdef class _ScannerWorker:
     cpdef void _advance_due(self, list due_buckets, double from_time)
 
 
-cdef class _OwnershipIndex:
+cdef class _ScanSchedule:
 
     cdef public dict _due_at
     cdef public dict _workers
@@ -91,7 +91,7 @@ cdef class AutoScanScheduler:
 
     cdef public object _manager
     cdef public dict _requests_by_address
-    cdef public _OwnershipIndex _ownership
+    cdef public _ScanSchedule _schedule
     cdef public dict _workers
     cdef public object _loop
     cdef public bint _running
