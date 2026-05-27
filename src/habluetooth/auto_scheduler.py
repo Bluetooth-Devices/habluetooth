@@ -23,50 +23,57 @@ would otherwise stay idle.
 Flow
 ====
 
-                     add_request(req)            on_advertisement(adv)
-                        |                            |
-                        | seed _due_at[addr][req]     | seed if pruned;
-                        | = now + scan_interval      | always wake
-                        | wake address's owner       | adv.source's worker
-                        v                            v
-                  +------------------------------------------+
-                  |  AutoScanScheduler                       |
-                  |    _requests_by_address                  |
-                  |       addr -> set of ActiveScanRequest   |
-                  |    _due_at                                |
-                  |       addr -> {request: next_due_time}   |
-                  |    _workers                              |
-                  |       source -> _ScannerWorker           |
-                  +------------------------------------------+
-                                    |
-                                    | one task per AUTO scanner
-                                    v
-                  +------------------------------------------+
-                  |  _ScannerWorker._run loop                |
-                  |                                          |
-                  |    sleep on _wake with timeout =         |
-                  |      _next_event_at(now) - now           |
-                  |    await _tick()                         |
-                  |                                          |
-                  |  _tick (sync collect, one await):        |
-                  |    1. _collect_due_buckets               |
-                  |       skip addresses whose owner         |
-                  |       (last_service_info.source) is      |
-                  |       not this scanner                   |
-                  |    2. sweep_due = sweep cadence elapsed  |
-                  |    3. if owner has connect in progress:  |
-                  |          dispatch per-address to a       |
-                  |          fallback scanner; return        |
-                  |    4. duration = max(due durations,      |
-                  |       SWEEP_DURATION if sweep_due)       |
-                  |    5. _advance_due (pre-await) so the    |
-                  |       new owner of any of these          |
-                  |       addresses can't double-fire;       |
-                  |       _sweep_last_completed = now (any   |
-                  |       active scan satisfies the floor)   |
-                  |    6. ONE await:                         |
-                  |       scanner.async_request_active_window|
-                  +------------------------------------------+
+                  add_request(req)           on_advertisement(adv)
+                       |                            |
+                       | _ownership.seed(...)       | _ownership.seed(...) per req;
+                       | _ownership.assign(addr,    | _ownership.assign(addr,
+                       |   history.source)          |   adv.source) wakes owner
+                       v                            v
+              +----------------------------------------------+
+              |  AutoScanScheduler                           |
+              |    _requests_by_address                      |
+              |       addr -> set of ActiveScanRequest       |
+              |    _workers                                  |
+              |       source -> _ScannerWorker               |
+              |    _ownership: _OwnershipIndex               |
+              |       _due_at                                |
+              |          addr -> {request: next_due_time}    |
+              |       _owner_by_address                      |
+              |          addr -> source                      |
+              +----------------------------------------------+
+                                |
+                                | aliased per-worker view:
+                                | worker._owned_due_at[addr]
+                                |   is _due_at[addr] for entries
+                                |   this worker owns
+                                v
+              +----------------------------------------------+
+              |  _ScannerWorker._run loop                    |
+              |                                              |
+              |    sleep on _wake with timeout =             |
+              |      _next_event_at(now) - now               |
+              |    await _tick()                             |
+              |                                              |
+              |  _tick (sync collect, one await):            |
+              |    1. _collect_due_buckets iterates          |
+              |       _owned_due_at (owned subset only);     |
+              |       per-address history call is just for   |
+              |       orphan/drift resync, not the owner     |
+              |       check (ownership is the view itself)   |
+              |    2. sweep_due = sweep cadence elapsed      |
+              |    3. if owner has connect in progress:      |
+              |          dispatch per-address to a           |
+              |          fallback scanner; return            |
+              |    4. duration = max(due durations,          |
+              |       SWEEP_DURATION if sweep_due)           |
+              |    5. _advance_due (pre-await) so the        |
+              |       new owner of any of these              |
+              |       addresses can't double-fire;           |
+              |       _sweep_last_completed = now (any       |
+              |       active scan satisfies the floor)       |
+              |    6. ONE await:                             |
+              |       scanner.async_request_active_window    |
+              +----------------------------------------------+
 
 
 Migration
@@ -80,15 +87,18 @@ up the new owner without any address-level rescheduling:
    and then calls ``auto_scheduler.on_advertisement(service_info)``
    *before* the same-payload short-circuit, so the flip is visible to
    the scheduler even for static-payload beacons.
-2. ``on_advertisement`` always calls ``_ownership.assign(adv.address,
-   adv.source)`` when the address has registered requests, which wakes
-   B's worker as part of the assignment.
-3. On B's next ``_tick``, ``_collect_due_buckets`` reads
-   ``last_service_info(addr).source`` and sees B; the entry is
-   collected and dispatched. A's worker on its own next tick sees
-   ``last_service_info(addr).source != A`` and skips.
-4. The pre-await ``_advance_due`` in step 5 of ``_tick`` prevents A
-   from double-firing if the flip lands mid-window.
+2. ``on_advertisement`` calls ``_ownership.assign(adv.address,
+   adv.source)``. The index detaches the entry from A's
+   ``_owned_due_at``, attaches it to B's ``_owned_due_at`` (same dict
+   object, just a different worker holds the alias), and wakes B's
+   worker. A's worker no longer sees the address at all; B's does.
+3. On B's next ``_tick``, ``_collect_due_buckets`` iterates its
+   ``_owned_due_at``, finds the entry, and dispatches it.
+4. If the flip lands mid-window on A, the pre-await ``_advance_due``
+   in step 5 of ``_tick`` already advanced the entry's due time, so
+   B can't double-fire. The rare orphan/drift branches in
+   ``_collect_due_buckets`` handle the edge case where the manager's
+   history disagrees with the cached owner view.
 
 
 Connecting fallback
