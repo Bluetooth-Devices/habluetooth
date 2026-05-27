@@ -6084,47 +6084,39 @@ def test_ownership_index_hook_worker_missing_worker() -> None:
     assert idx._owner_by_address["AA:00:00:00:00:99"] == "ghost"
 
 
-def test_ownership_index_hook_worker_skips_address_without_needs() -> None:
+@pytest.mark.asyncio
+async def test_ownership_index_hook_worker_skips_address_without_needs() -> None:
     """hook_worker skips an owned address that has no _needs entry."""
-
-    class _StubWorker:
-        def __init__(self) -> None:
-            self.attached: list[tuple[str, dict[ActiveScanRequest, float]]] = []
-
-        def _attach_owned(
-            self, address: str, entries: dict[ActiveScanRequest, float]
-        ) -> None:
-            self.attached.append((address, entries))
-
-    needs: dict[str, dict[ActiveScanRequest, float]] = {}
-    worker = _StubWorker()
-    workers: dict[str, Any] = {"src": worker}
-    idx = _OwnershipIndex(needs, workers)
-    # Owner mapping exists but the address has no needs entry yet.
-    idx._owner_by_address["AA:00:00:00:00:99"] = "src"
-    idx.hook_worker("src")
-    assert worker.attached == []
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        # Owner mapping exists but the address has no _needs entry; the
+        # attach helper must early-return without touching the worker.
+        sched._ownership._owner_by_address["AA:00:00:00:00:99"] = scanner.source
+        sched._ownership.hook_worker(scanner.source)
+        assert "AA:00:00:00:00:99" not in worker._owned_needs
+        sched._ownership._owner_by_address.pop("AA:00:00:00:00:99", None)
+    finally:
+        register_cancel()
 
 
-def test_ownership_index_clear_source_no_match() -> None:
+@pytest.mark.asyncio
+async def test_ownership_index_clear_source_no_match() -> None:
     """clear_source over an index with no addresses for the source is a no-op."""
-
-    class _StubWorker:
-        def __init__(self) -> None:
-            self.cleared = 0
-
-        def _clear_owned(self) -> None:
-            self.cleared += 1
-
-    needs: dict[str, dict[ActiveScanRequest, float]] = {}
-    worker = _StubWorker()
-    workers: dict[str, Any] = {"src": worker}
-    idx = _OwnershipIndex(needs, workers)
-    idx.clear_source("src")
-    assert idx._owner_by_address == {}
-    # No addresses owned by ``src``, but the worker view is still
-    # cleared defensively in case prior drift left a stale entry.
-    assert worker.cleared == 1
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        sched._ownership.clear_source(scanner.source)
+        assert sched._ownership._owner_by_address == {}
+        assert worker._owned_needs == {}
+    finally:
+        register_cancel()
 
 
 def test_ownership_index_clear_no_workers() -> None:

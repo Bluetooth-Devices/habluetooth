@@ -631,32 +631,37 @@ class _OwnershipIndex:
         self._workers = workers
         self._owner_by_address: dict[str, str] = {}
 
+    def _attach(self, worker: Any, address: str) -> None:
+        """Attach the ``_needs`` bucket for ``address`` to ``worker``, if both exist."""
+        if worker is None:
+            return
+        entries = self._needs.get(address)
+        if entries is not None:
+            worker._attach_owned(address, entries)
+
+    def _detach(self, address: str, source: str | None) -> None:
+        """Detach ``address`` from the worker for ``source``, if both exist."""
+        if source is None:
+            return
+        worker = self._workers.get(source)
+        if worker is not None:
+            worker._detach_owned(address)
+
     def assign(self, address: str, new_source: str) -> None:
         """Move ownership of ``address`` to ``new_source`` and wake its worker."""
         new_worker = self._workers.get(new_source)
         old_source = self._owner_by_address.get(address)
         if old_source != new_source:
-            if old_source is not None:
-                old_worker = self._workers.get(old_source)
-                if old_worker is not None:
-                    old_worker._detach_owned(address)
+            self._detach(address, old_source)
             self._owner_by_address[address] = new_source
-            if new_worker is not None:
-                entries = self._needs.get(address)
-                if entries is not None:
-                    new_worker._attach_owned(address, entries)
+            self._attach(new_worker, address)
         if new_worker is not None:
             new_worker.wake()
 
     def unown(self, address: str) -> None:
         """Forget ``address`` entirely; drops needs, owner, and worker view."""
         self._needs.pop(address, None)
-        old_source = self._owner_by_address.pop(address, None)
-        if old_source is None:
-            return
-        old_worker = self._workers.get(old_source)
-        if old_worker is not None:
-            old_worker._detach_owned(address)
+        self._detach(address, self._owner_by_address.pop(address, None))
 
     def clear_source(self, source: str) -> None:
         """Drop owner mappings and ``_needs`` entries owned by ``source``."""
@@ -675,15 +680,14 @@ class _OwnershipIndex:
             return
         for address, owner in self._owner_by_address.items():
             if owner == source:
-                entries = self._needs.get(address)
-                if entries is not None:
-                    worker._attach_owned(address, entries)
+                self._attach(worker, address)
 
     def clear(self) -> None:
-        """Reset the index and every worker's owned view."""
+        """Reset the index, every worker's owned view, and ``_needs``."""
         for worker in self._workers.values():
             worker._clear_owned()
         self._owner_by_address.clear()
+        self._needs.clear()
 
 
 class AutoScanScheduler:
@@ -769,7 +773,6 @@ class AutoScanScheduler:
             worker.stop()
         self._ownership.clear()
         self._workers.clear()
-        self._needs.clear()
         # done() guard mirrors the leader's finally for symmetry;
         # a future left non-None after completion would otherwise
         # raise InvalidStateError here.
