@@ -72,6 +72,10 @@ cdef class _OwnershipIndex:
     cdef public dict _workers
     cdef public dict _owner_by_address
 
+    cpdef bint seed(self, str address, ActiveScanRequest request, double due_time)
+
+    cpdef void drop(self, str address, ActiveScanRequest request)
+
     cpdef void assign(self, str address, str new_source)
 
     cpdef void unown(self, str address)
@@ -87,7 +91,6 @@ cdef class AutoScanScheduler:
 
     cdef public object _manager
     cdef public dict _requests_by_address
-    cdef public dict _due_at
     cdef public _OwnershipIndex _ownership
     cdef public dict _workers
     cdef public object _loop
@@ -95,9 +98,6 @@ cdef class AutoScanScheduler:
     cdef public object _on_demand_sweep_future
     cdef public double _on_demand_sweep_end
 
-    @cython.locals(
-        existing=dict,
-    )
     cpdef void add_request(self, ActiveScanRequest request)
 
     cpdef void remove_request(self, ActiveScanRequest request)
@@ -116,7 +116,6 @@ cdef class AutoScanScheduler:
     cpdef void on_advertisement(self, BluetoothServiceInfoBleak service_info)
 
     @cython.locals(
-        existing=dict,
         request=ActiveScanRequest,
     )
     cpdef void _seed_requests(

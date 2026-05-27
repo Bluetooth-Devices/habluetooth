@@ -613,19 +613,32 @@ class _ScannerWorker:
 
 
 class _OwnershipIndex:
-    """Per-address scanner ownership and per-worker owned-due-at view."""
+    """Owns ``_due_at``, ``_owner_by_address``, and the per-worker view."""
 
     __slots__ = ("_due_at", "_owner_by_address", "_workers")
 
-    def __init__(
-        self,
-        due_at: dict[str, dict[ActiveScanRequest, float]],
-        workers: dict[str, _ScannerWorker],
-    ) -> None:
-        """Bind to the scheduler's ``_due_at`` and ``_workers`` dicts."""
-        self._due_at = due_at
+    def __init__(self, workers: dict[str, _ScannerWorker]) -> None:
+        """Bind to the scheduler's ``_workers`` dict."""
         self._workers = workers
+        self._due_at: dict[str, dict[ActiveScanRequest, float]] = {}
         self._owner_by_address: dict[str, str] = {}
+
+    def seed(self, address: str, request: ActiveScanRequest, due_time: float) -> bool:
+        """Seed ``request`` at ``address``; return True if newly inserted."""
+        existing = self._due_at.setdefault(address, {})
+        if request in existing:
+            return False
+        existing[request] = due_time
+        return True
+
+    def drop(self, address: str, request: ActiveScanRequest) -> None:
+        """Drop ``request`` at ``address``; ``unown`` if it was the last one."""
+        entries = self._due_at.get(address)
+        if entries is None:
+            return
+        entries.pop(request, None)
+        if not entries:
+            self.unown(address)
 
     def assign(self, address: str, new_source: str) -> None:
         """Move ownership of ``address`` to ``new_source`` and wake its worker."""
@@ -678,7 +691,6 @@ class AutoScanScheduler:
     """Coordinates on-demand active windows across AUTO-mode scanners."""
 
     __slots__ = (
-        "_due_at",
         "_loop",
         "_manager",
         "_on_demand_sweep_end",
@@ -693,9 +705,8 @@ class AutoScanScheduler:
         """Initialize the scheduler bound to a manager."""
         self._manager = manager
         self._requests_by_address: dict[str, set[ActiveScanRequest]] = {}
-        self._due_at: dict[str, dict[ActiveScanRequest, float]] = {}
         self._workers: dict[str, _ScannerWorker] = {}
-        self._ownership = _OwnershipIndex(self._due_at, self._workers)
+        self._ownership = _OwnershipIndex(self._workers)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._on_demand_sweep_future: asyncio.Future[None] | None = None
@@ -834,10 +845,10 @@ class AutoScanScheduler:
             # it anyway); on_advertisement will bootstrap on first
             # sight.
             return
-        existing = self._due_at.setdefault(request.address, {})
-        if request in existing:
+        if not self._ownership.seed(
+            request.address, request, self._loop.time() + request.scan_interval
+        ):
             return
-        existing[request] = self._loop.time() + request.scan_interval
         self._ownership.assign(request.address, history.source)
 
     def remove_request(self, request: ActiveScanRequest) -> None:
@@ -846,10 +857,7 @@ class AutoScanScheduler:
             bucket.discard(request)
             if not bucket:
                 del self._requests_by_address[request.address]
-        if (entries := self._due_at.get(request.address)) is not None:
-            entries.pop(request, None)
-            if not entries:
-                self._ownership.unown(request.address)
+        self._ownership.drop(request.address, request)
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
         """
@@ -882,10 +890,8 @@ class AutoScanScheduler:
         Shared by ``on_advertisement`` and the ``start()`` replay
         loop. Leaves existing entries' due times untouched.
         """
-        existing = self._due_at.setdefault(address, {})
         for request in requests:
-            if request not in existing:
-                existing[request] = now + request.scan_interval
+            self._ownership.seed(address, request, now + request.scan_interval)
 
     def _resolve_fallback_for_address(
         self, address: str, exclude_source: str
@@ -1171,7 +1177,7 @@ class AutoScanScheduler:
         last_service_info = self._manager.async_last_service_info
         requests: dict[str, list[dict[str, Any]]] = {}
         for address, bucket in self._requests_by_address.items():
-            entries = self._due_at.get(address, {})
+            entries = self._ownership._due_at.get(address, {})
             history = last_service_info(address, False)
             owner_source = history.source if history is not None else None
             requests[address] = [
