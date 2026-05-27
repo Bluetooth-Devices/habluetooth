@@ -53,7 +53,7 @@ from .models import (
 )
 from .scanner_device import BluetoothScannerDevice
 from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catcher
-from .util import async_reset_adapter
+from .util import async_reset_adapter, coalesce_concurrent_future
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -302,20 +302,11 @@ class BluetoothManager:
         self._disappeared_callbacks.add(callback)
         return partial(self._disappeared_callbacks.discard, callback)
 
+    @coalesce_concurrent_future("_adapter_refresh_future")
     async def _async_refresh_adapters(self) -> None:
         """Refresh the adapters."""
-        if self._adapter_refresh_future:
-            await self._adapter_refresh_future
-            return
-        if TYPE_CHECKING:
-            assert self._loop is not None
-        self._adapter_refresh_future = self._loop.create_future()
-        try:
-            await self._bluetooth_adapters.refresh()
-            self._adapters = self._bluetooth_adapters.adapters
-        finally:
-            self._adapter_refresh_future.set_result(None)
-            self._adapter_refresh_future = None
+        await self._bluetooth_adapters.refresh()
+        self._adapters = self._bluetooth_adapters.adapters
 
     def get_cached_bluetooth_adapters(self) -> dict[str, AdapterDetails] | None:
         """Get cached bluetooth adapters synchronously."""
