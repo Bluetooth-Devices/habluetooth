@@ -6262,6 +6262,51 @@ async def test_invariant_through_many_addresses_and_scanners() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unown_fails_fast_on_missing_due_at() -> None:
+    """Pin the fail-fast contract: KeyError if ``_due_at`` lacks the address."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    sched._schedule._owner_by_address["AA:00:00:00:00:99"] = "ghost"
+    try:
+        with pytest.raises(KeyError):
+            sched._schedule.unown("AA:00:00:00:00:99")
+    finally:
+        sched._schedule._owner_by_address.pop("AA:00:00:00:00:99", None)
+
+
+@pytest.mark.asyncio
+async def test_unown_fails_fast_on_missing_owner() -> None:
+    """Pin the fail-fast contract: KeyError if ``_owner_by_address`` lacks address."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    sched._schedule._due_at["AA:00:00:00:00:99"] = {}
+    try:
+        with pytest.raises(KeyError):
+            sched._schedule.unown("AA:00:00:00:00:99")
+    finally:
+        sched._schedule._due_at.pop("AA:00:00:00:00:99", None)
+
+
+@pytest.mark.asyncio
+async def test_next_event_at_fails_fast_on_empty_owned_bucket() -> None:
+    """Pin the fail-fast contract: ValueError on an empty owned bucket."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        worker = sched._workers[scanner.source]
+        worker._owned_due_at["AA:00:00:00:00:99"] = {}
+        try:
+            with pytest.raises(ValueError, match="min"):
+                worker._next_event_at(asyncio.get_running_loop().time())
+        finally:
+            worker._owned_due_at.pop("AA:00:00:00:00:99", None)
+    finally:
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_invariant_through_stop_and_restart() -> None:
     """Schedule invariant holds across stop + start replay."""
     manager = get_manager()
