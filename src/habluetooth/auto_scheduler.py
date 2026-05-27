@@ -680,13 +680,21 @@ class _ScanSchedule:
 
     def clear_source(self, source: str) -> None:
         """Drop owner mappings and ``_due_at`` entries owned by ``source``."""
+        worker = self._workers.get(source)
+        if worker is not None:
+            # AUTO source: iterate the worker's own view, O(owned-by-source).
+            for address in list(worker._owned_due_at):
+                del self._owner_by_address[address]
+                del self._due_at[address]
+            worker._clear_owned()
+            return
+        # Non-AUTO source (no worker): a PASSIVE / ACTIVE scanner can
+        # still own an address via ``on_advertisement``, so scan
+        # ``_owner_by_address`` to find what it owns.
         for address in list(self._owner_by_address):
             if self._owner_by_address[address] == source:
                 del self._owner_by_address[address]
-                self._due_at.pop(address, None)
-        worker = self._workers.get(source)
-        if worker is not None:
-            worker._clear_owned()
+                del self._due_at[address]
 
     def attach_worker(self, source: str) -> None:
         """Attach pre-assigned entries to a newly-registered worker."""

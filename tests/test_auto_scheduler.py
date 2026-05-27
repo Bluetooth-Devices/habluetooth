@@ -15,7 +15,6 @@ from freezegun import freeze_time
 from habluetooth import (
     BaseHaScanner,
     BluetoothScanningMode,
-    BluetoothServiceInfoBleak,
     get_manager,
 )
 from habluetooth.auto_scheduler import ActiveScanRequest, _ScanSchedule
@@ -1660,37 +1659,23 @@ async def test_on_advertisement_with_all_requests_already_tracked() -> None:
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     address = "11:22:33:44:55:66"
-    req_a = ActiveScanRequest(address, 60.0, 10.0)
-    req_b = ActiveScanRequest(address, 120.0, 10.0)
-    sched._requests_by_address[address] = {req_a, req_b}
-    sched._schedule._due_at[address] = {req_a: 0.0, req_b: 0.0}
+    cancel_a = manager.async_register_active_scan(address, scan_interval=60.0)
+    cancel_b = manager.async_register_active_scan(address, scan_interval=120.0)
     try:
-        si = BluetoothServiceInfoBleak(
-            name="x",
-            address=address,
-            rssi=-50,
-            manufacturer_data={},
-            service_data={},
-            service_uuids=[],
-            source=scanner.source,
-            device=generate_ble_device(address, "x"),
-            advertisement=generate_advertisement_data(local_name="x"),
-            connectable=True,
-            time=asyncio.get_running_loop().time(),
-            tx_power=None,
-            raw=None,
-        )
+        # First advertisement seeds + assigns + wakes.
+        _inject(scanner, address)
         worker = sched._workers[scanner.source]
+        entries_before = dict(sched._schedule._due_at[address])
         worker._wake.clear()
-        sched.on_advertisement(si)
-        # Wake fires unconditionally so ownership-flip detection still
-        # triggers when every request was already in _due_at.
+        # Second advertisement: all requests already tracked; assign
+        # still wakes for ownership-flip detection.
+        _inject(scanner, address)
         assert worker._wake.is_set()
         # Sanity: the entries we put in are untouched.
-        assert sched._schedule._due_at[address] == {req_a: 0.0, req_b: 0.0}
+        assert sched._schedule._due_at[address] == entries_before
     finally:
-        sched._requests_by_address.pop(address, None)
-        sched._schedule._due_at.pop(address, None)
+        cancel_a()
+        cancel_b()
         register_cancel()
 
 
@@ -5963,6 +5948,38 @@ async def test_ownership_assign_records_non_auto_owner() -> None:
     finally:
         cancel()
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_remove_non_auto_scanner_clears_its_owned_addresses() -> None:
+    """clear_source's non-AUTO fallback prunes addresses owned by a PASSIVE source."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    own_addr = "11:22:33:44:55:66"
+    other_addr = "11:22:33:44:55:77"
+    cancel_own = manager.async_register_active_scan(own_addr, scan_interval=60.0)
+    cancel_other = manager.async_register_active_scan(other_addr, scan_interval=60.0)
+    passive = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.PASSIVE)
+    auto = _RecordingAutoScanner("AA:BB:CC:DD:EE:02", BluetoothScanningMode.AUTO)
+    c_passive = manager.async_register_scanner(passive)
+    c_auto = manager.async_register_scanner(auto)
+    try:
+        # PASSIVE owns own_addr; AUTO owns other_addr. Both end up in
+        # _owner_by_address, so the non-AUTO clear loop iterates past
+        # other_addr without matching.
+        _inject(passive, own_addr)
+        _inject(auto, other_addr)
+        assert sched._schedule._owner_by_address[own_addr] == passive.source
+        assert sched._schedule._owner_by_address[other_addr] == auto.source
+        c_passive()
+        assert own_addr not in sched._schedule._owner_by_address
+        assert own_addr not in sched._schedule._due_at
+        # The AUTO-owned address is untouched.
+        assert sched._schedule._owner_by_address[other_addr] == auto.source
+    finally:
+        cancel_own()
+        cancel_other()
+        c_auto()
 
 
 @pytest.mark.asyncio
