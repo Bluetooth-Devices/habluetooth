@@ -1007,6 +1007,10 @@ class BluetoothManager:
         connection slots, while a caller that wants to connect (``CONNECTION``)
         does. This is read-only and side-effect free, and is only meant for the
         cold error path, not the hot advertisement path.
+
+        The returned string is for embedding in human-readable error and log
+        messages only; its wording and format are not stable and must not be
+        parsed. The address is not included, callers already have it in context.
         """
         now = monotonic_time_coarse()
         parts: list[str] = []
@@ -1041,7 +1045,7 @@ class BluetoothManager:
                 f"last advertisement {now - info.time:.0f}s ago via {info.source}"
             )
 
-        return f"{address}: " + "; ".join(parts)
+        return "; ".join(parts)
 
     def _scanner_availability_summary(self) -> str:
         """

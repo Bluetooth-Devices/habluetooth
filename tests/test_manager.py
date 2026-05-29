@@ -1753,7 +1753,8 @@ async def test_address_reachability_diagnostics_connectable() -> None:
     diag = manager.async_address_reachability_diagnostics(
         address, BluetoothReachabilityIntent.CONNECTION
     )
-    assert address in diag
+    # The address is intentionally not embedded; callers already have it.
+    assert address not in diag
     assert "in connectable history" in diag
     assert "1 scanner(s) registered, 1 scanning, 1 connectable" in diag
     assert "esphome_proxy (connectable=True, rssi=-50" in diag
