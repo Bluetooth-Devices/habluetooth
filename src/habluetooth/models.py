@@ -101,6 +101,27 @@ class BluetoothScanningMode(Enum):
     AUTO = "auto"
 
 
+class BluetoothReachabilityIntent(Enum):
+    """
+    What a caller needs from a device, for reachability diagnostics.
+
+    The intent changes which facts are relevant when explaining why an address
+    is not usable. A caller that only consumes advertisements does not care
+    whether a connectable path or a free connection slot exists; a caller that
+    wants to open a connection does.
+    """
+
+    # The caller only needs to receive passive advertisements from the device.
+    PASSIVE_ADVERTISEMENT = "passive_advertisement"
+    # The caller needs scan response (SCAN_RSP) data, which is only received
+    # from a scanner that is actively scanning. Treated the same as
+    # PASSIVE_ADVERTISEMENT for now; kept distinct so the diagnostics can later
+    # report when no scanner seeing the device is actively scanning.
+    ACTIVE_ADVERTISEMENT = "active_advertisement"
+    # The caller needs to open an outbound connection to the device.
+    CONNECTION = "connection"
+
+
 class BluetoothServiceInfo:
     """Prepared info from bluetooth entries."""
 

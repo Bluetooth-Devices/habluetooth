@@ -22,6 +22,7 @@ from bleak_retry_connector import (
 
 from .central_manager import get_manager
 from .const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM, CALLBACK_TYPE, ConnectParams
+from .models import BluetoothReachabilityIntent
 
 FILTER_UUIDS: Final = "UUIDs"
 _LOGGER = logging.getLogger(__name__)
@@ -649,7 +650,9 @@ class HaBleakClientWrapper(BleakClient):
                 )
                 raise BleakError(msg)
 
-        diagnostics = manager.async_address_reachability_diagnostics(address)
+        diagnostics = manager.async_address_reachability_diagnostics(
+            address, BluetoothReachabilityIntent.CONNECTION
+        )
         msg = (
             "No backend with an available connection slot that can reach address"
             f" {address} was found: {diagnostics}"

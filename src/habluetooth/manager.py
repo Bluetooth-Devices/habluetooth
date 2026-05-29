@@ -45,6 +45,7 @@ from .const import (
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .models import (
+    BluetoothReachabilityIntent,
     BluetoothServiceInfoBleak,
     HaBluetoothSlotAllocations,
     HaScannerModeChange,
@@ -993,46 +994,111 @@ class BluetoothManager:
         histories = self._connectable_history if connectable else self._all_history
         return histories.get(address)
 
-    def async_address_reachability_diagnostics(self, address: str) -> str:
+    def async_address_reachability_diagnostics(
+        self, address: str, intent: BluetoothReachabilityIntent
+    ) -> str:
         """
         Return a human-readable explanation of an address's reachability.
 
         Intended for embedding in error and log messages when a device cannot
-        be found or connected to. This is a read-only, side-effect free summary
-        of which scanners currently see the address, their RSSI, slot
-        availability and how recently the device last advertised. It is only
-        meant for the cold error path, not the hot advertisement path.
+        be found or used. The ``intent`` selects which facts are relevant: a
+        caller that only consumes advertisements (``PASSIVE_ADVERTISEMENT`` /
+        ``ACTIVE_ADVERTISEMENT``) does not care about connectable paths or
+        connection slots, while a caller that wants to connect (``CONNECTION``)
+        does. This is read-only and side-effect free, and is only meant for the
+        cold error path, not the hot advertisement path.
         """
         now = monotonic_time_coarse()
-        in_connectable = address in self._connectable_history
-        in_all = address in self._all_history
         parts: list[str] = []
+        # All scanners (connectable and non-connectable) that currently see the
+        # address. Materialized once; reused for the per-scanner detail below.
+        devices = self.async_scanner_devices_by_address(address, False)
 
-        if in_connectable:
+        if intent is BluetoothReachabilityIntent.CONNECTION:
+            self._append_connection_diagnostics(address, devices, parts)
+        else:
+            self._append_advertisement_diagnostics(address, devices, parts)
+
+        parts.append(self._scanner_availability_summary())
+
+        for device in devices:
+            scanner = device.scanner
+            detail = (
+                f"{scanner.name} (connectable={scanner.connectable}, "
+                f"rssi={device.advertisement.rssi}"
+            )
+            if intent is BluetoothReachabilityIntent.CONNECTION:
+                detail += (
+                    f", failures={scanner._connection_failures(address)}, "
+                    f"in_progress={scanner._connections_in_progress()}"
+                )
+                if (allocations := scanner.get_allocations()) is not None:
+                    detail += f", slots={allocations.free}/{allocations.slots}"
+            parts.append(detail + ")")
+
+        if (info := self._all_history.get(address)) is not None:
+            parts.append(
+                f"last advertisement {now - info.time:.0f}s ago via {info.source}"
+            )
+
+        return f"{address}: " + "; ".join(parts)
+
+    def _scanner_availability_summary(self) -> str:
+        """
+        Summarize how many scanners are registered, scanning and connectable.
+
+        A scanner pauses scanning while it has a connection in progress, so a
+        device can disappear from every scanner if they are all busy connecting;
+        this is called out explicitly because no advertisements can be received
+        while no scanner is scanning.
+        """
+        scanners = self.async_current_scanners()
+        total = len(scanners)
+        scanning = 0
+        connecting = 0
+        connectable = 0
+        for scanner in scanners:
+            if scanner.connectable:
+                connectable += 1
+            if scanner.scanning:
+                scanning += 1
+            elif scanner._connecting:
+                connecting += 1
+        summary = (
+            f"{total} scanner(s) registered, {scanning} scanning, "
+            f"{connectable} connectable"
+        )
+        if connecting:
+            summary += f", {connecting} paused while connecting"
+        if total and scanning == 0:
+            summary += (
+                "; no scanner is currently scanning so no advertisements can be "
+                "received"
+            )
+            if connecting == total:
+                summary += (
+                    " (all are paused retrying connections; the available adapters "
+                    "are overloaded, add more Bluetooth adapters or proxies)"
+                )
+        return summary
+
+    def _append_connection_diagnostics(
+        self,
+        address: str,
+        devices: list[BluetoothScannerDevice],
+        parts: list[str],
+    ) -> None:
+        """Append connectable-path reachability facts for a connect intent."""
+        if address in self._connectable_history:
             parts.append("in connectable history")
-        elif in_all:
+        elif address in self._all_history:
             parts.append("only in non-connectable history (no connectable path)")
         else:
             parts.append("unknown (never seen by any scanner)")
 
-        connectable_count = self.async_scanner_count(True)
-        total_count = self.async_scanner_count(False)
-        if connectable_count == 0:
-            parts.append(
-                f"no connectable scanners are registered ({total_count} total)"
-            )
-
-        # One pass over every scanner (connectable and non-connectable) that
-        # currently has this address discovered.
-        devices = self.async_scanner_devices_by_address(address, False)
         connectable_devices = [d for d in devices if d.scanner.connectable]
         non_connectable_devices = [d for d in devices if not d.scanner.connectable]
-
-        if (
-            not connectable_devices
-            and non_connectable_devices
-            and connectable_count != 0
-        ):
+        if not connectable_devices and non_connectable_devices:
             parts.append(
                 f"seen by {len(non_connectable_devices)} scanner(s) but none with"
                 " a connectable path"
@@ -1047,24 +1113,20 @@ class BluetoothManager:
                 "connectable scanner(s) see it but all connection slots are in use"
             )
 
-        for device in devices:
-            scanner = device.scanner
-            detail = (
-                f"{scanner.name} (connectable={scanner.connectable}, "
-                f"rssi={device.advertisement.rssi}, "
-                f"failures={scanner._connection_failures(address)}, "
-                f"in_progress={scanner._connections_in_progress()}"
-            )
-            if (allocations := scanner.get_allocations()) is not None:
-                detail += f", slots={allocations.free}/{allocations.slots}"
-            parts.append(detail + ")")
-
-        if (info := self._all_history.get(address)) is not None:
-            parts.append(
-                f"last advertisement {now - info.time:.0f}s ago via {info.source}"
-            )
-
-        return f"{address}: " + "; ".join(parts)
+    def _append_advertisement_diagnostics(
+        self,
+        address: str,
+        devices: list[BluetoothScannerDevice],
+        parts: list[str],
+    ) -> None:
+        """Append advertisement-only reachability facts for an advertisement intent."""
+        # Advertisement callers only need adverts, so connectable paths and
+        # connection slots are irrelevant; report only whether the device is
+        # being seen and by how many scanners.
+        if address in self._all_history:
+            parts.append(f"advertising, seen by {len(devices)} scanner(s)")
+        else:
+            parts.append("unknown (never seen by any scanner)")
 
     def _async_unregister_scanner_internal(
         self,
