@@ -1120,7 +1120,7 @@ class BluetoothManager:
             if (allocations := d.scanner.get_allocations()) is not None
             and allocations.slots > 0
         ]
-        if reported and all(allocations.free == 0 for allocations in reported):
+        if reported and all(a.free == 0 for a in reported):
             parts.append(
                 "connectable scanner(s) that report slot allocations are all full"
             )

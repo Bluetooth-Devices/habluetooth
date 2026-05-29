@@ -650,13 +650,20 @@ class HaBleakClientWrapper(BleakClient):
                 )
                 raise BleakError(msg)
 
-        diagnostics = manager.async_address_reachability_diagnostics(
-            address, BluetoothReachabilityIntent.CONNECTION
-        )
         msg = (
             "No backend with an available connection slot that can reach address"
-            f" {address} was found: {diagnostics}"
+            f" {address} was found"
         )
+        # Best-effort diagnostics; never let a diagnostics failure mask the
+        # original "no backend" error we are about to raise.
+        try:
+            diagnostics = manager.async_address_reachability_diagnostics(
+                address, BluetoothReachabilityIntent.CONNECTION
+            )
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.exception("Error building reachability diagnostics for %s", address)
+        else:
+            msg = f"{msg}: {diagnostics}"
         raise BleakError(msg)
 
     async def disconnect(self) -> None:
