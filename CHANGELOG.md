@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.8.0 (2026-05-29)
+
+### Features
+
+
+- Add async_address_reachability_diagnostics for unreachable devices ([`2429ce8`](https://github.com/Bluetooth-Devices/habluetooth/commit/2429ce8ea7caa62652363decad115511a63b7eeb))
+
+
 ## v6.7.9 (2026-05-27)
 
 ### Performance improvements
