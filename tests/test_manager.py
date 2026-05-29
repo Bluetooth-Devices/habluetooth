@@ -1809,13 +1809,21 @@ async def test_address_reachability_diagnostics_advertisement_intent() -> None:
     cancel()
 
 
+@pytest.mark.parametrize(
+    "intent",
+    [
+        BluetoothReachabilityIntent.CONNECTION,
+        BluetoothReachabilityIntent.PASSIVE_ADVERTISEMENT,
+        BluetoothReachabilityIntent.ACTIVE_ADVERTISEMENT,
+    ],
+)
 @pytest.mark.asyncio
-async def test_address_reachability_diagnostics_unknown() -> None:
-    """An address never seen reports as unknown."""
+async def test_address_reachability_diagnostics_unknown(
+    intent: BluetoothReachabilityIntent,
+) -> None:
+    """An address never seen reports as unknown for every intent."""
     manager = get_manager()
-    diag = manager.async_address_reachability_diagnostics(
-        "44:44:33:11:23:47", BluetoothReachabilityIntent.CONNECTION
-    )
+    diag = manager.async_address_reachability_diagnostics("44:44:33:11:23:47", intent)
     assert "unknown (never seen by any scanner)" in diag
 
 
@@ -1896,4 +1904,24 @@ async def test_address_reachability_diagnostics_all_scanners_connecting() -> Non
     assert "1 paused while connecting" in diag
     assert "no scanner is currently scanning" in diag
     assert "add more Bluetooth adapters or proxies" in diag
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_address_reachability_diagnostics_scanner_stopped_not_connecting() -> (
+    None
+):
+    """A stopped scanner (not connecting) reports no scanning without the advice."""
+    manager = get_manager()
+    scanner = InjectableRemoteScanner("esphome_proxy", "esphome_proxy", None, True)
+    cancel = manager.async_register_scanner(scanner)
+    scanner.scanning = False
+
+    diag = manager.async_address_reachability_diagnostics(
+        "44:44:33:11:23:4d", BluetoothReachabilityIntent.CONNECTION
+    )
+    assert "1 scanner(s) registered, 0 scanning, 1 connectable" in diag
+    assert "no scanner is currently scanning" in diag
+    assert "paused while connecting" not in diag
+    assert "add more Bluetooth adapters or proxies" not in diag
     cancel()
