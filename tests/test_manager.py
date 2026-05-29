@@ -1856,9 +1856,27 @@ async def test_address_reachability_diagnostics_out_of_slots() -> None:
         diag = manager.async_address_reachability_diagnostics(
             address, BluetoothReachabilityIntent.CONNECTION
         )
-    assert "all connection slots are in use" in diag
+    assert "connectable scanner(s) that report slot allocations are all full" in diag
     assert "slots=0/3" in diag
     cancel()
+
+
+@pytest.mark.asyncio
+async def test_address_reachability_diagnostics_in_history_no_scanner() -> None:
+    """An address in history but cached by no scanner is not called advertising."""
+    manager = get_manager()
+    address = "44:44:33:11:23:4c"
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", rssi=-70)
+    # Injected from a source with no registered scanner; lands in history but
+    # no scanner currently has it cached.
+    inject_advertisement_with_source(device, adv, "ghost")
+
+    diag = manager.async_address_reachability_diagnostics(
+        address, BluetoothReachabilityIntent.PASSIVE_ADVERTISEMENT
+    )
+    assert "previously seen but no scanner currently has it cached" in diag
+    assert "advertising" not in diag
 
 
 @pytest.mark.asyncio

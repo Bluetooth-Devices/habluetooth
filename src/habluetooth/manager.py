@@ -1107,14 +1107,22 @@ class BluetoothManager:
                 f"seen by {len(non_connectable_devices)} scanner(s) but none with"
                 " a connectable path"
             )
-        elif connectable_devices and all(
-            (allocations := d.scanner.get_allocations()) is not None
-            and allocations.slots > 0
-            and allocations.free == 0
+            return
+
+        # Only consider scanners that actually report slot allocations; a
+        # scanner returning None (e.g. a local adapter that does not track
+        # slots) tells us nothing, so it must not suppress or trigger the
+        # message. We only claim the reporting scanners are full, not that
+        # every connectable path is exhausted.
+        reported = [
+            allocations
             for d in connectable_devices
-        ):
+            if (allocations := d.scanner.get_allocations()) is not None
+            and allocations.slots > 0
+        ]
+        if reported and all(allocations.free == 0 for allocations in reported):
             parts.append(
-                "connectable scanner(s) see it but all connection slots are in use"
+                "connectable scanner(s) that report slot allocations are all full"
             )
 
     def _append_advertisement_diagnostics(
@@ -1126,9 +1134,14 @@ class BluetoothManager:
         """Append advertisement-only reachability facts for an advertisement intent."""
         # Advertisement callers only need adverts, so connectable paths and
         # connection slots are irrelevant; report only whether the device is
-        # being seen and by how many scanners.
-        if address in self._all_history:
+        # being seen and by how many scanners. ``_all_history`` outlives any
+        # single scanner's discovered cache, so an address can be in history
+        # while no scanner currently has it cached; do not claim it is still
+        # advertising in that case.
+        if devices:
             parts.append(f"advertising, seen by {len(devices)} scanner(s)")
+        elif address in self._all_history:
+            parts.append("previously seen but no scanner currently has it cached")
         else:
             parts.append("unknown (never seen by any scanner)")
 
