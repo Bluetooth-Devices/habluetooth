@@ -993,6 +993,79 @@ class BluetoothManager:
         histories = self._connectable_history if connectable else self._all_history
         return histories.get(address)
 
+    def async_address_reachability_diagnostics(self, address: str) -> str:
+        """
+        Return a human-readable explanation of an address's reachability.
+
+        Intended for embedding in error and log messages when a device cannot
+        be found or connected to. This is a read-only, side-effect free summary
+        of which scanners currently see the address, their RSSI, slot
+        availability and how recently the device last advertised. It is only
+        meant for the cold error path, not the hot advertisement path.
+        """
+        now = monotonic_time_coarse()
+        in_connectable = address in self._connectable_history
+        in_all = address in self._all_history
+        parts: list[str] = []
+
+        if in_connectable:
+            parts.append("in connectable history")
+        elif in_all:
+            parts.append("only in non-connectable history (no connectable path)")
+        else:
+            parts.append("unknown (never seen by any scanner)")
+
+        connectable_count = self.async_scanner_count(True)
+        total_count = self.async_scanner_count(False)
+        if connectable_count == 0:
+            parts.append(
+                f"no connectable scanners are registered ({total_count} total)"
+            )
+
+        # One pass over every scanner (connectable and non-connectable) that
+        # currently has this address discovered.
+        devices = self.async_scanner_devices_by_address(address, False)
+        connectable_devices = [d for d in devices if d.scanner.connectable]
+        non_connectable_devices = [d for d in devices if not d.scanner.connectable]
+
+        if (
+            not connectable_devices
+            and non_connectable_devices
+            and connectable_count != 0
+        ):
+            parts.append(
+                f"seen by {len(non_connectable_devices)} scanner(s) but none with"
+                " a connectable path"
+            )
+        elif connectable_devices and all(
+            (allocations := d.scanner.get_allocations()) is not None
+            and allocations.slots > 0
+            and allocations.free == 0
+            for d in connectable_devices
+        ):
+            parts.append(
+                "connectable scanner(s) see it but all connection slots are in use"
+            )
+
+        for device in devices:
+            scanner = device.scanner
+            detail = (
+                f"{scanner.name} (connectable={scanner.connectable}, "
+                f"rssi={device.advertisement.rssi}, "
+                f"failures={scanner._connection_failures(address)}, "
+                f"in_progress={scanner._connections_in_progress()}"
+            )
+            if (allocations := scanner.get_allocations()) is not None:
+                detail += f", slots={allocations.free}/{allocations.slots}"
+            parts.append(detail + ")")
+
+        if (info := self._all_history.get(address)) is not None:
+            parts.append(
+                f"last advertisement {now - info.time:.0f}s ago via {info.source}"
+            )
+
+        return f"{address}: " + "; ".join(parts)
+
     def _async_unregister_scanner_internal(
         self,
         scanners: set[BaseHaScanner],

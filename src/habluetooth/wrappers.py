@@ -649,9 +649,10 @@ class HaBleakClientWrapper(BleakClient):
                 )
                 raise BleakError(msg)
 
+        diagnostics = manager.async_address_reachability_diagnostics(address)
         msg = (
             "No backend with an available connection slot that can reach address"
-            f" {address} was found"
+            f" {address} was found: {diagnostics}"
         )
         raise BleakError(msg)
 

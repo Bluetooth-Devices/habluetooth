@@ -30,6 +30,7 @@ from habluetooth import (
 from . import (
     HCI0_SOURCE_ADDRESS,
     HCI1_SOURCE_ADDRESS,
+    InjectableRemoteScanner,
     async_fire_time_changed,
     generate_advertisement_data,
     generate_ble_device,
@@ -1735,3 +1736,89 @@ async def test_async_refresh_adapters_recovers_after_prior_failure() -> None:
         await manager._async_refresh_adapters()
     assert call_count == 2
     assert manager._adapter_refresh_future is None
+
+
+@pytest.mark.asyncio
+async def test_address_reachability_diagnostics_connectable() -> None:
+    """A connectable device in range reports its connectable scanner."""
+    manager = get_manager()
+    address = "44:44:33:11:23:45"
+    scanner = InjectableRemoteScanner("esphome_proxy", "esphome_proxy", None, True)
+    cancel = manager.async_register_scanner(scanner)
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", rssi=-50)
+    scanner.inject_advertisement(device, adv)
+
+    diag = manager.async_address_reachability_diagnostics(address)
+    assert address in diag
+    assert "in connectable history" in diag
+    assert "esphome_proxy (connectable=True, rssi=-50" in diag
+    assert "last advertisement" in diag
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_address_reachability_diagnostics_non_connectable_only() -> None:
+    """A device only seen by a non-connectable scanner has no connectable path."""
+    manager = get_manager()
+    address = "44:44:33:11:23:46"
+    connectable = InjectableRemoteScanner("hci0", "hci0", None, True)
+    cancel_c = manager.async_register_scanner(connectable)
+    non_connectable = InjectableRemoteScanner("proxy", "proxy", None, False)
+    cancel_n = manager.async_register_scanner(non_connectable)
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", rssi=-70)
+    non_connectable.inject_advertisement(device, adv)
+
+    diag = manager.async_address_reachability_diagnostics(address)
+    assert "only in non-connectable history (no connectable path)" in diag
+    assert "seen by 1 scanner(s) but none with a connectable path" in diag
+    assert "proxy (connectable=False, rssi=-70" in diag
+    cancel_c()
+    cancel_n()
+
+
+@pytest.mark.asyncio
+async def test_address_reachability_diagnostics_unknown() -> None:
+    """An address never seen reports as unknown."""
+    manager = get_manager()
+    diag = manager.async_address_reachability_diagnostics("44:44:33:11:23:47")
+    assert "unknown (never seen by any scanner)" in diag
+
+
+@pytest.mark.asyncio
+async def test_address_reachability_diagnostics_no_connectable_scanners() -> None:
+    """With only a non-connectable scanner the message says so."""
+    manager = get_manager()
+    address = "44:44:33:11:23:48"
+    non_connectable = InjectableRemoteScanner("proxy", "proxy", None, False)
+    cancel = manager.async_register_scanner(non_connectable)
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", rssi=-70)
+    non_connectable.inject_advertisement(device, adv)
+
+    diag = manager.async_address_reachability_diagnostics(address)
+    assert "no connectable scanners are registered (1 total)" in diag
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_address_reachability_diagnostics_out_of_slots() -> None:
+    """A connectable scanner with no free slots is reported as full."""
+    manager = get_manager()
+    address = "44:44:33:11:23:49"
+    scanner = InjectableRemoteScanner("esphome_proxy", "esphome_proxy", None, True)
+    cancel = manager.async_register_scanner(scanner)
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", rssi=-50)
+    scanner.inject_advertisement(device, adv)
+
+    with patch.object(
+        scanner,
+        "get_allocations",
+        return_value=Allocations("esphome_proxy", 3, 0, []),
+    ):
+        diag = manager.async_address_reachability_diagnostics(address)
+    assert "all connection slots are in use" in diag
+    assert "slots=0/3" in diag
+    cancel()

@@ -281,7 +281,13 @@ async def test_test_switch_adapters_when_out_of_slots(
     ):
         ble_device = hci0_device_advs["00:00:00:00:00:02"][0]
         client = bleak.BleakClient(ble_device)
-        with pytest.raises(bleak.exc.BleakError):
+        with pytest.raises(
+            bleak.exc.BleakError,
+            match=(
+                r"No backend with an available connection slot that can reach "
+                r"address .* was found:.*connectable=True"
+            ),
+        ):
             await client.connect()
         assert allocate_slot_mock.call_count == 2
         assert release_slot_mock.call_count == 0
