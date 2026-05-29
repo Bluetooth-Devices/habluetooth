@@ -615,8 +615,8 @@ class HaBleakClientWrapper(BleakClient):
                     (
                         f"{device.scanner.name} "
                         f"(RSSI={device.advertisement.rssi}) "
-                        f"(failures={device.scanner._connection_failures(address)}) "
-                        f"(in_progress={device.scanner._connections_in_progress()}) "
+                        f"(failures={device.scanner.connection_failures(address)}) "
+                        f"(in_progress={device.scanner.connections_in_progress()}) "
                         + (
                             f"(slots={allocations.free}/{allocations.slots} free) "
                             if (allocations := device.scanner.get_allocations())

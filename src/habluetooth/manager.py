@@ -1033,8 +1033,8 @@ class BluetoothManager:
             )
             if intent is BluetoothReachabilityIntent.CONNECTION:
                 detail += (
-                    f", failures={scanner._connection_failures(address)}, "
-                    f"in_progress={scanner._connections_in_progress()}"
+                    f", failures={scanner.connection_failures(address)}, "
+                    f"in_progress={scanner.connections_in_progress()}"
                 )
                 if (allocations := scanner.get_allocations()) is not None:
                     detail += f", slots={allocations.free}/{allocations.slots}"
@@ -1066,7 +1066,7 @@ class BluetoothManager:
                 connectable += 1
             if scanner.scanning:
                 scanning += 1
-            elif scanner._connecting:
+            elif scanner.connecting_count:
                 connecting += 1
         summary = (
             f"{total} scanner(s) registered, {scanning} scanning, "

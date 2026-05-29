@@ -256,6 +256,19 @@ class BaseHaScanner:
         """Return the number of failures."""
         return self._connect_failures.get(address, 0)
 
+    def connections_in_progress(self) -> int:
+        """Return the number of connection attempts currently in progress."""
+        return self._connections_in_progress()
+
+    def connection_failures(self, address: str) -> int:
+        """Return the number of failed connection attempts for an address."""
+        return self._connection_failures(address)
+
+    @property
+    def connecting_count(self) -> int:
+        """Return the number of in-flight connections that pause scanning."""
+        return self._connecting
+
     def time_since_last_detection(self) -> float:
         """Return the time since the last detection."""
         return monotonic_time_coarse() - self._last_detection
