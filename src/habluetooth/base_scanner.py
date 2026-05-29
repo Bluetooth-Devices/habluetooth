@@ -257,7 +257,12 @@ class BaseHaScanner:
         return self._connect_failures.get(address, 0)
 
     def connections_in_progress(self) -> int:
-        """Return the number of connection attempts currently in progress."""
+        """
+        Return the number of per-address connection attempts in progress.
+
+        This sums the in-flight connect attempts tracked per address; it is a
+        different counter from ``connecting_count`` (the scanning-pause counter).
+        """
         return self._connections_in_progress()
 
     def connection_failures(self, address: str) -> int:
@@ -266,7 +271,14 @@ class BaseHaScanner:
 
     @property
     def connecting_count(self) -> int:
-        """Return the number of in-flight connections that pause scanning."""
+        """
+        Return the number of connections currently pausing scanning.
+
+        This is the scanning-pause counter incremented for the duration of the
+        ``connecting()`` context manager; while it is non-zero ``scanning`` is
+        False. It is distinct from ``connections_in_progress()``, which counts
+        per-address connect attempts.
+        """
         return self._connecting
 
     def time_since_last_detection(self) -> float:

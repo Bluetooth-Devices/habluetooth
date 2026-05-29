@@ -1061,12 +1061,16 @@ class BluetoothManager:
         scanning = 0
         connecting = 0
         connectable = 0
+        # A scanner pauses scanning while it has a connection in progress, so
+        # in normal operation scanning and connecting_count are mutually
+        # exclusive. Count them independently anyway so the "all paused
+        # connecting" advice below stays correct even if that invariant drifts.
         for scanner in scanners:
             if scanner.connectable:
                 connectable += 1
             if scanner.scanning:
                 scanning += 1
-            elif scanner.connecting_count:
+            if scanner.connecting_count:
                 connecting += 1
         summary = (
             f"{total} scanner(s) registered, {scanning} scanning, "
