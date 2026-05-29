@@ -22,6 +22,7 @@ from bleak_retry_connector import (
 
 from .central_manager import get_manager
 from .const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM, CALLBACK_TYPE, ConnectParams
+from .models import BluetoothReachabilityIntent
 
 FILTER_UUIDS: Final = "UUIDs"
 _LOGGER = logging.getLogger(__name__)
@@ -614,8 +615,8 @@ class HaBleakClientWrapper(BleakClient):
                     (
                         f"{device.scanner.name} "
                         f"(RSSI={device.advertisement.rssi}) "
-                        f"(failures={device.scanner._connection_failures(address)}) "
-                        f"(in_progress={device.scanner._connections_in_progress()}) "
+                        f"(failures={device.scanner.connection_failures(address)}) "
+                        f"(in_progress={device.scanner.connections_in_progress()}) "
                         + (
                             f"(slots={allocations.free}/{allocations.slots} free) "
                             if (allocations := device.scanner.get_allocations())
@@ -653,6 +654,16 @@ class HaBleakClientWrapper(BleakClient):
             "No backend with an available connection slot that can reach address"
             f" {address} was found"
         )
+        # Best-effort diagnostics; never let a diagnostics failure mask the
+        # original "no backend" error we are about to raise.
+        try:
+            diagnostics = manager.async_address_reachability_diagnostics(
+                address, BluetoothReachabilityIntent.CONNECTION
+            )
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.exception("Error building reachability diagnostics for %s", address)
+        else:
+            msg = f"{msg}: {diagnostics}"
         raise BleakError(msg)
 
     async def disconnect(self) -> None:

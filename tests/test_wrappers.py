@@ -281,7 +281,13 @@ async def test_test_switch_adapters_when_out_of_slots(
     ):
         ble_device = hci0_device_advs["00:00:00:00:00:02"][0]
         client = bleak.BleakClient(ble_device)
-        with pytest.raises(bleak.exc.BleakError):
+        with pytest.raises(
+            bleak.exc.BleakError,
+            match=(
+                r"No backend with an available connection slot that can reach "
+                r"address .* was found:.*connectable=True"
+            ),
+        ):
             await client.connect()
         assert allocate_slot_mock.call_count == 2
         assert release_slot_mock.call_count == 0
@@ -301,6 +307,39 @@ async def test_test_switch_adapters_when_out_of_slots(
             client = bleak.BleakClient(ble_device)
             await client.connect()
         assert release_slot_mock.call_count == 0
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_no_backend_error_survives_diagnostics_failure(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """A failing diagnostics builder must not mask the no-backend BleakError."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    with (
+        patch.object(manager.slot_manager, "allocate_slot", return_value=False),
+        patch.object(
+            manager,
+            "async_address_reachability_diagnostics",
+            side_effect=RuntimeError("boom"),
+        ),
+    ):
+        ble_device = hci0_device_advs["00:00:00:00:00:02"][0]
+        client = bleak.BleakClient(ble_device)
+        with pytest.raises(
+            bleak.exc.BleakError,
+            match=(
+                r"No backend with an available connection slot that can reach "
+                r"address .* was found$"
+            ),
+        ):
+            await client.connect()
 
     cancel_hci0()
     cancel_hci1()
