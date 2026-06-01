@@ -1744,7 +1744,9 @@ async def test_address_reachability_diagnostics_connectable() -> None:
     """A connectable device in range reports its connectable scanner."""
     manager = get_manager()
     address = "44:44:33:11:23:45"
-    scanner = InjectableRemoteScanner("esphome_proxy", "esphome_proxy", None, True)
+    scanner = InjectableRemoteScanner(
+        "AA:BB:CC:DD:EE:FF", "Living Room Proxy", None, True
+    )
     cancel = manager.async_register_scanner(scanner)
     device = generate_ble_device(address, "wohand")
     adv = generate_advertisement_data(local_name="wohand", rssi=-50)
@@ -1757,8 +1759,10 @@ async def test_address_reachability_diagnostics_connectable() -> None:
     assert address not in diag
     assert "in connectable history" in diag
     assert "1 scanner(s) registered, 1 scanning, 1 connectable" in diag
-    assert "esphome_proxy (connectable=True, rssi=-50" in diag
+    assert "Living Room Proxy (AA:BB:CC:DD:EE:FF) (connectable=True, rssi=-50" in diag
+    # The "via" source resolves to the scanner name rather than a bare address.
     assert "last advertisement" in diag
+    assert "via Living Room Proxy (AA:BB:CC:DD:EE:FF)" in diag
     cancel()
 
 

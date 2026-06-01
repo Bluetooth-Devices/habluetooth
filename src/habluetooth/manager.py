@@ -1041,9 +1041,11 @@ class BluetoothManager:
             parts.append(detail + ")")
 
         if (info := self._all_history.get(address)) is not None:
-            parts.append(
-                f"last advertisement {now - info.time:.0f}s ago via {info.source}"
-            )
+            if (via_scanner := self._sources.get(info.source)) is not None:
+                via = via_scanner.name
+            else:
+                via = info.source
+            parts.append(f"last advertisement {now - info.time:.0f}s ago via {via}")
 
         return "; ".join(parts)
 
