@@ -39,7 +39,7 @@ bleak = ">=3.0.2"
 bleak-retry-connector = ">=4.6.1"
 bluetooth-data-tools = ">=1.29.18"
 bluetooth-adapters = ">=2.1.0"
-bluetooth-auto-recovery = ">=1.5.1"
+bluetooth-auto-recovery = ">=1.6.4"
 async-interrupt = ">=1.1.1"
 dbus-fast = { version = ">=4.3.0", markers = "platform_system == 'Linux'" }
 btsocket = ">=0.3.0"
