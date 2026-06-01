@@ -99,7 +99,7 @@ jobs:
         run: poetry run pytest --cov-report=xml
         shell: bash
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v5
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -137,7 +137,7 @@ jobs:
           REQUIRE_CYTHON=1 poetry install --only=main,dev
         shell: bash
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@c381be0bfd20e844fb45594f6aa182ffcd94545c # v3
+        uses: CodSpeedHQ/action@9d332c4d90b43981c3e55ae8e38e68709996240f # v3
         with:
           token: ${{ secrets.CODSPEED_TOKEN }}
           run: poetry run pytest --no-cov -vvvvv --codspeed
@@ -174,7 +174,7 @@ jobs:
       - name: Generate release App token
         if: github.ref_name == 'main'
         id: app-token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -285,7 +285,7 @@ jobs:
           python-version: "3.12"
       - name: Set up QEMU
         if: ${{ matrix.qemu }}
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
         with:
           platforms: all
           # This should be temporary
