@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.8.1 (2026-06-01)
+
+### Bug fixes
+
+
+- Show scanner name in reachability diagnostics via line ([`632e840`](https://github.com/Bluetooth-Devices/habluetooth/commit/632e84038f90610b4235f06b481ca22b68ee0893))
+
+
 ## v6.8.0 (2026-05-29)
 
 ### Features
