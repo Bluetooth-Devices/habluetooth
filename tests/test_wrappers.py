@@ -22,7 +22,11 @@ from habluetooth.usage import (
     install_multiple_bleak_catcher,
     uninstall_multiple_bleak_catcher,
 )
-from habluetooth.wrappers import HaBleakScannerWrapper, _get_device_address_type
+from habluetooth.wrappers import (
+    FILTER_UUIDS,
+    HaBleakScannerWrapper,
+    _get_device_address_type,
+)
 
 from . import (
     HCI0_SOURCE_ADDRESS,
@@ -2509,3 +2513,129 @@ async def test_set_connection_params_no_mgmt_no_backend(
 
     cancel_hci0()
     cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_clear_cache_with_backend(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Test clear_cache delegates to the backend when it supports clear_cache."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    class FakeBleakClientWithClearCache(BaseFakeBleakClient):
+        """Fake bleak client that supports clear_cache."""
+
+        connected = False
+        clear_cache = AsyncMock(return_value=True)
+
+        async def connect(self, *args, **kwargs):
+            """Connect."""
+            self.connected = True
+            await asyncio.sleep(0)
+
+        @property
+        def is_connected(self) -> bool:
+            return self.connected
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=FakeBleakClientWithClearCache,
+    ):
+        ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+
+        assert await client.clear_cache() is True
+        FakeBleakClientWithClearCache.clear_cache.assert_called_once_with()
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_clear_cache_without_backend(
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Test clear_cache falls back to the library helper without a backend."""
+    client = bleak.BleakClient("00:00:00:00:00:01")
+
+    with patch(
+        "habluetooth.wrappers.clear_cache",
+        AsyncMock(return_value=True),
+    ) as mock_clear_cache:
+        assert await client.clear_cache() is True
+
+    mock_clear_cache.assert_awaited_once_with("00:00:00:00:00:01")
+
+
+@pytest.mark.asyncio
+async def test_set_disconnected_callback_with_backend(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Test set_disconnected_callback forwards to the backend once connected."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    class FakeBleakClientTracksDisconnectCb(BaseFakeBleakClient):
+        """Fake bleak client that records set_disconnected_callback."""
+
+        connected = False
+        set_disconnected_callback = Mock()
+
+        async def connect(self, *args, **kwargs):
+            """Connect."""
+            self.connected = True
+            await asyncio.sleep(0)
+
+        @property
+        def is_connected(self) -> bool:
+            return self.connected
+
+    with patch(
+        "habluetooth.wrappers.get_platform_client_backend_type",
+        return_value=FakeBleakClientTracksDisconnectCb,
+    ):
+        ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+
+        callback = Mock()
+        client.set_disconnected_callback(callback)
+
+        FakeBleakClientTracksDisconnectCb.set_disconnected_callback.assert_called_once()
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_without_backend(
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+) -> None:
+    """Test disconnect is a no-op when no backend has been connected."""
+    client = bleak.BleakClient("00:00:00:00:00:01")
+
+    # Should return cleanly without raising even though connect() never ran.
+    assert await client.disconnect() is None
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+def test_set_scanning_filter_applies_uuid_filter(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test set_scanning_filter stores an effective UUID filter change."""
+    scanner = HaBleakScannerWrapper()
+    uuid = "cba20d00-224d-11e6-9fb8-0002a5d5c51b"
+
+    # A real UUID filter is an effective change, so set_scanning_filter runs
+    # the detection-callback setup path. No detection callback is registered,
+    # so setup short-circuits without raising.
+    scanner.set_scanning_filter(service_uuids=[uuid])
+
+    assert scanner._mapped_filters == {FILTER_UUIDS: {uuid}}
+    assert "Only UUIDs filters are supported" not in caplog.text
