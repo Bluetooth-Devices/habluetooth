@@ -875,7 +875,18 @@ class AutoScanScheduler:
             # own first tick fires immediately and joins an in-flight
             # on-demand window. ``start()`` derives ``_sweep_last_completed``
             # from this offset, so the seed formula stays in one place.
-            offset = -_AUTO_INITIAL_SWEEP_DELAY
+            # Bias one sweep-duration further into the past so the seeded
+            # sweep is unambiguously due: an exact ``-_AUTO_INITIAL_SWEEP_DELAY``
+            # leaves ``start()``'s ``+ delay - interval + interval`` round-trip
+            # free to round the sweep-due threshold a float ULP above
+            # ``loop.time()``. On a coarse monotonic clock (Windows'
+            # ~16 ms ``time.monotonic()``) the worker's first tick reads the
+            # same ``loop.time()`` as ``start()``, so that ULP makes
+            # ``sweep_due`` False and the catch-up tick never opens its
+            # window. The margin dwarfs both the rounding error and the
+            # clock granularity; the tick resets ``_sweep_last_completed``
+            # to ``now`` anyway, so seeding it slightly earlier is inert.
+            offset = -_AUTO_INITIAL_SWEEP_DELAY - _AUTO_REDISCOVERY_SWEEP_DURATION
         else:
             # Stagger first sweeps so concurrently-registered scanners
             # don't all flip ACTIVE at once. Modulo into the initial-sweep
