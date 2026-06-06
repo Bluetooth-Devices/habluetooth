@@ -97,6 +97,7 @@ cdef class AutoScanScheduler:
     cdef public bint _running
     cdef public object _on_demand_sweep_future
     cdef public double _on_demand_sweep_end
+    cdef public set _catch_up_tasks
 
     cpdef void add_request(self, ActiveScanRequest request)
 
