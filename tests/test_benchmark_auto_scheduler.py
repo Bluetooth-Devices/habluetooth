@@ -240,3 +240,44 @@ async def test_collect_due_buckets_burst_8_scanners_200_devices(
             worker._collect_due_buckets(now)
 
     _teardown_scheduler(scanner_cancels, request_cancels)
+
+
+@pytest.mark.asyncio
+async def test_on_advertisement_steady_state_8_scanners_200_devices(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """
+    Ingestion hot path: re-deliver an advertisement for every tracked address.
+
+    ``AutoScanScheduler.on_advertisement`` runs once per advertisement
+    for any address that has an active-scan request, fed from
+    ``BluetoothManager._scanner_adv_received``. The existing benchmarks
+    cover the timer side (``_next_event_at`` / ``_collect_due_buckets``);
+    this one covers the per-advertisement ingestion side that the timer
+    benchmarks never touch.
+
+    The scenario is steady state — the address is already seeded and
+    owned by the delivering scanner — so each call exercises the dominant
+    real-world cost: a ``_requests_by_address`` lookup, a no-op
+    ``_seed_requests`` pass (every request already present, so
+    ``_DueSchedule.seed`` short-circuits), and a same-source
+    ``_DueSchedule.assign`` that skips the owner reattach and only fires
+    the worker's ``wake``. Delivering the cached ``service_info`` objects
+    directly isolates the scheduler cost from the manager's dispatch and
+    scoring path.
+    """
+    _, scanner_cancels, request_cancels = _setup_scheduler(
+        num_scanners=8, num_devices=200
+    )
+    manager = get_manager()
+    scheduler = manager._auto_scheduler
+    # Cached service_info objects carry the round-robin owner as
+    # ``.source``, so each delivery hits the same-owner steady-state path.
+    service_infos = list(manager._all_history.values())
+
+    @benchmark
+    def run() -> None:
+        for service_info in service_infos:
+            scheduler.on_advertisement(service_info)
+
+    _teardown_scheduler(scanner_cancels, request_cancels)
