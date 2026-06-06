@@ -841,17 +841,17 @@ class AutoScanScheduler:
         loop = self._loop
         if loop is None or not self._running or scanner.source in self._workers:
             return
-        worker = self._spawn_worker(scanner)
         # Issue #527: a scanner that registers while an on-demand active
         # window is in flight (e.g. an ESPHome proxy powering on
         # mid-sweep) must join that window instead of staying PASSIVE
-        # until the next active-scan request. Pull its sweep-due time
-        # back so its own first tick fires immediately; ``_tick`` sees
-        # the in-flight ``_on_demand_sweep_end`` and extends that sweep
-        # to cover the window's remaining duration, then bumps
-        # ``_sweep_last_completed`` so it does not reopen the window.
-        if self._on_demand_sweep_end > loop.time():
-            worker._sweep_last_completed = loop.time() - _AUTO_REDISCOVERY_INTERVAL
+        # until the next active-scan request. Tell ``_spawn_worker`` to
+        # seed an immediate first tick; ``_tick`` then sees the in-flight
+        # ``_on_demand_sweep_end`` and extends that sweep to cover the
+        # window's remaining duration. ``add_scanner`` only decides
+        # whether a sweep is in flight; the seed lives next to
+        # ``start()`` in ``_spawn_worker``.
+        catch_up = self._on_demand_sweep_end > loop.time()
+        self._spawn_worker(scanner, catch_up)
 
     def remove_scanner(self, scanner: BaseHaScanner) -> None:
         """
@@ -867,24 +867,32 @@ class AutoScanScheduler:
         if worker is not None:
             worker.stop()
 
-    def _spawn_worker(self, scanner: BaseHaScanner) -> _ScannerWorker:
+    def _spawn_worker(
+        self, scanner: BaseHaScanner, catch_up: bool = False
+    ) -> None:
         assert self._loop is not None  # noqa: S101
         worker = _ScannerWorker(self, scanner, self._manager)
-        # Stagger first sweeps so concurrently-registered scanners
-        # don't all flip ACTIVE at once. Modulo into the initial-sweep
-        # window so the Nth offset is bounded; past
-        # AUTO_INITIAL_SWEEP_DELAY/SWEEP_DURATION scanners offsets
-        # repeat, harmless since BLE radios don't interfere when
-        # multiple are active.
-        offset = (
-            len(self._workers) * _AUTO_REDISCOVERY_SWEEP_DURATION
-        ) % _AUTO_INITIAL_SWEEP_DELAY
+        if catch_up:
+            # Issue #527: cancel the initial-sweep delay so the worker's
+            # own first tick fires immediately and joins an in-flight
+            # on-demand window. ``start()`` derives ``_sweep_last_completed``
+            # from this offset, so the seed formula stays in one place.
+            offset = -_AUTO_INITIAL_SWEEP_DELAY
+        else:
+            # Stagger first sweeps so concurrently-registered scanners
+            # don't all flip ACTIVE at once. Modulo into the initial-sweep
+            # window so the Nth offset is bounded; past
+            # AUTO_INITIAL_SWEEP_DELAY/SWEEP_DURATION scanners offsets
+            # repeat, harmless since BLE radios don't interfere when
+            # multiple are active.
+            offset = (
+                len(self._workers) * _AUTO_REDISCOVERY_SWEEP_DURATION
+            ) % _AUTO_INITIAL_SWEEP_DELAY
         worker.start(self._loop, offset)
         source = scanner.source
         self._workers[source] = worker
         # Attach entries pre-assigned before this scanner registered.
         self._schedule.attach_worker(source)
-        return worker
 
     def add_request(self, request: ActiveScanRequest) -> None:
         """
