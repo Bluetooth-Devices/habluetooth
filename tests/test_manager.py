@@ -1,6 +1,7 @@
 """Tests for the manager."""
 
 import asyncio
+import logging
 import time
 from collections.abc import Iterable
 from datetime import timedelta
@@ -9,6 +10,7 @@ from unittest.mock import ANY, AsyncMock, Mock, PropertyMock, patch
 
 import pytest
 from bleak_retry_connector import AllocationChange, Allocations, BleakSlotManager
+from bluetooth_adapters import ADAPTER_ADDRESS, ADAPTER_PASSIVE_SCAN
 from bluetooth_adapters.systems.linux import LinuxAdapters
 from freezegun import freeze_time
 
@@ -27,6 +29,7 @@ from habluetooth import (
     get_manager,
     set_manager,
 )
+from habluetooth.central_manager import CentralBluetoothManager
 
 from . import (
     HCI0_SOURCE_ADDRESS,
@@ -1929,3 +1932,346 @@ async def test_address_reachability_diagnostics_scanner_stopped_not_connecting()
     assert "paused while connecting" not in diag
     assert "add more Bluetooth adapters or proxies" not in diag
     cancel()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_bleak_callback_exception_is_logged_and_isolated(
+    register_hci0_scanner: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A raising bleak callback is caught and logged; siblings still fire."""
+    manager = get_manager()
+    address = "44:44:33:11:23:01"
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", service_uuids=[], rssi=-40)
+    inject_advertisement_with_source(device, adv, "hci0")
+
+    received: list[Any] = []
+
+    def _failing(_device: Any, _adv: Any) -> None:
+        msg = "boom"
+        raise ValueError(msg)
+
+    def _ok(_device: Any, _adv: Any) -> None:
+        received.append(_device)
+
+    # Registration replays the connectable history immediately, so the
+    # dispatch (and the failing callback) fire as a side effect of registering.
+    cancel_fail = manager.async_register_bleak_callback(_failing, {})
+    cancel_ok = manager.async_register_bleak_callback(_ok, {})
+    try:
+        assert received  # the ok callback saw the replayed device
+        assert "Error in callback" in caplog.text
+    finally:
+        cancel_fail()
+        cancel_ok()
+
+
+@pytest.mark.asyncio
+async def test_supports_passive_scan_reflects_adapter_capability() -> None:
+    """supports_passive_scan is True iff any adapter advertises passive scan."""
+    manager = BluetoothManager(FakeBluetoothAdapters(), Mock())
+    manager._adapters = {"hci0": {ADAPTER_PASSIVE_SCAN: False}}  # type: ignore[dict-item]
+    assert manager.supports_passive_scan is False
+    manager._adapters = {  # type: ignore[dict-item]
+        "hci0": {ADAPTER_PASSIVE_SCAN: False},
+        "hci1": {ADAPTER_PASSIVE_SCAN: True},
+    }
+    assert manager.supports_passive_scan is True
+
+
+@pytest.mark.asyncio
+async def test_get_bluetooth_adapters_cached_with_empty_cache() -> None:
+    """cached=True still populates when the adapter cache is empty (no refresh)."""
+    adapters = FakeBluetoothAdapters()
+    manager = BluetoothManager(adapters, Mock())
+    with patch("habluetooth.manager.IS_LINUX", False):
+        await manager.async_setup()
+    try:
+        manager._adapters = {}
+        # cached=True with an empty cache repopulates straight from the backend.
+        result = await manager.async_get_bluetooth_adapters(cached=True)
+        assert result == adapters.adapters
+    finally:
+        manager.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_get_adapter_from_address_refreshes_when_not_found() -> None:
+    """A miss triggers a refresh, then a second lookup."""
+    manager = BluetoothManager(FakeBluetoothAdapters(), Mock())
+    with patch("habluetooth.manager.IS_LINUX", False):
+        await manager.async_setup()
+    try:
+        manager._adapters = {}
+        # Unknown address: first lookup misses, a refresh runs, second lookup
+        # still misses against the empty fake backend.
+        assert await manager.async_get_adapter_from_address("00:00:00:00:00:09") is None
+
+        # Known address resolves on the first lookup.
+        manager._adapters = {"hci7": {ADAPTER_ADDRESS: "00:00:00:00:00:07"}}  # type: ignore[dict-item]
+        assert (
+            await manager.async_get_adapter_from_address("00:00:00:00:00:07") == "hci7"
+        )
+    finally:
+        manager.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_async_setup_assigns_central_manager_when_unset() -> None:
+    """async_setup claims the central singleton when it is unset."""
+    original = CentralBluetoothManager.manager
+    manager = BluetoothManager(FakeBluetoothAdapters(), Mock())
+    try:
+        CentralBluetoothManager.manager = None
+        with patch("habluetooth.manager.IS_LINUX", False):
+            await manager.async_setup()
+        assert CentralBluetoothManager.manager is manager
+    finally:
+        CentralBluetoothManager.manager = original
+        manager.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_async_setup_returns_early_on_non_linux() -> None:
+    """On non-Linux, setup skips mgmt control entirely."""
+    manager = BluetoothManager(FakeBluetoothAdapters(), Mock())
+    with patch("habluetooth.manager.IS_LINUX", False):
+        await manager.async_setup()
+        # Inside the non-Linux patch, setup returned before touching mgmt.
+        assert manager._mgmt_ctl is None
+        assert manager.is_operating_degraded() is False
+    manager.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_async_setup_handles_connection_error() -> None:
+    """A CONNECTION_ERRORS failure during mgmt setup degrades gracefully."""
+    manager = BluetoothManager(FakeBluetoothAdapters(), Mock())
+    with (
+        patch("habluetooth.manager.IS_LINUX", True),
+        patch("habluetooth.manager.MGMTBluetoothCtl") as mock_mgmt_class,
+    ):
+        mock_instance = Mock()
+        mock_instance.setup = AsyncMock(side_effect=OSError("no socket"))
+        mock_mgmt_class.return_value = mock_instance
+        await manager.async_setup()
+    try:
+        assert manager._mgmt_ctl is None
+        assert manager.has_advertising_side_channel is False
+    finally:
+        manager.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_async_stop_without_unavailable_tracking() -> None:
+    """async_stop is a no-op for unavailable tracking when none is scheduled."""
+    manager = BluetoothManager(FakeBluetoothAdapters(), Mock())
+    with patch("habluetooth.manager.IS_LINUX", False):
+        await manager.async_setup()
+    manager._cancel_unavailable_tracking = None
+    # Should not raise even though there is no tracking handle to cancel.
+    manager.async_stop()
+    assert manager.shutdown is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_unavailable_callback_exception_isolated(
+    register_hci0_scanner: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A raising unavailable callback is logged; a sibling still fires."""
+    manager = get_manager()
+    address = "44:44:33:11:23:02"
+    start = time.monotonic()
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", service_uuids=[], rssi=-60)
+    inject_advertisement_with_time_and_source_connectable(
+        device, adv, start, HCI0_SOURCE_ADDRESS, False
+    )
+
+    ok_calls: list[Any] = []
+
+    def _failing(_info: BluetoothServiceInfoBleak) -> None:
+        msg = "boom"
+        raise ValueError(msg)
+
+    def _ok(_info: BluetoothServiceInfoBleak) -> None:
+        ok_calls.append(_info)
+
+    cancel_fail = manager.async_track_unavailable(_failing, address, connectable=False)
+    cancel_ok = manager.async_track_unavailable(_ok, address, connectable=False)
+    try:
+        # Push the clock well past the fallback staleness window so the device
+        # is considered unavailable.
+        with patch_bluetooth_time(start + 100_000):
+            manager._async_check_unavailable()
+        assert len(ok_calls) == 1
+        assert "Error in unavailable callback" in caplog.text
+    finally:
+        cancel_fail()
+        cancel_ok()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_remove_unavailable_callback_keeps_siblings(
+    register_hci0_scanner: None,
+) -> None:
+    """Cancelling one unavailable callback leaves the address entry in place."""
+    manager = get_manager()
+    address = "44:44:33:11:23:03"
+
+    def _cb_a(_info: BluetoothServiceInfoBleak) -> None:
+        return
+
+    def _cb_b(_info: BluetoothServiceInfoBleak) -> None:
+        return
+
+    cancel_a = manager.async_track_unavailable(_cb_a, address, connectable=False)
+    cancel_b = manager.async_track_unavailable(_cb_b, address, connectable=False)
+    try:
+        cancel_a()
+        # One callback remains, so the address bucket is not deleted.
+        assert address in manager._unavailable_callbacks
+        assert _cb_b in manager._unavailable_callbacks[address]
+    finally:
+        cancel_b()
+    assert address not in manager._unavailable_callbacks
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_unregister_source_callback_keeps_siblings(
+    register_hci0_scanner: None,
+) -> None:
+    """Cancelling one source-keyed callback leaves the source bucket in place."""
+    manager = get_manager()
+
+    def _cb_a(_change: HaScannerModeChange) -> None:
+        return
+
+    def _cb_b(_change: HaScannerModeChange) -> None:
+        return
+
+    cancel_a = manager.async_register_scanner_mode_change_callback(_cb_a, None)
+    cancel_b = manager.async_register_scanner_mode_change_callback(_cb_b, None)
+    try:
+        cancel_a()
+        # One callback remains under the None source, so it is not deleted.
+        assert None in manager._scanner_mode_change_callbacks
+        assert _cb_b in manager._scanner_mode_change_callbacks[None]
+    finally:
+        cancel_b()
+    assert None not in manager._scanner_mode_change_callbacks
+    # Cancelling again once the source bucket is gone is a no-op.
+    cancel_b()
+    assert None not in manager._scanner_mode_change_callbacks
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_should_keep_previous_adv_logs_when_debug_enabled(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """With debug on, the keep-previous decision logs its switch reasons."""
+    manager = get_manager()
+    manager._debug = True
+    address = "44:44:33:11:23:04"
+    device = generate_ble_device(address, "wohand")
+
+    start = time.monotonic()
+    weak = generate_advertisement_data(local_name="wohand", service_uuids=[], rssi=-40)
+    inject_advertisement_with_time_and_source(device, weak, start, HCI0_SOURCE_ADDRESS)
+
+    with caplog.at_level(logging.DEBUG, logger="habluetooth.manager"):
+        # A clearly stronger reading from a second still-scanning source wins
+        # on RSSI (RSSI-switch debug branch).
+        strong = generate_advertisement_data(
+            local_name="wohand", service_uuids=[], rssi=-20
+        )
+        inject_advertisement_with_time_and_source(
+            device, strong, start + 1, HCI1_SOURCE_ADDRESS
+        )
+        assert "new rssi" in caplog.text
+
+        caplog.clear()
+        # A far-future reading makes the previous one stale, so any new
+        # advertisement wins regardless of RSSI (stale-switch debug branch).
+        inject_advertisement_with_time_and_source(
+            device, weak, start + 100_000, HCI0_SOURCE_ADDRESS
+        )
+        assert "time elapsed" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_non_connectable_advertisement_rejected_in_favour_of_previous(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A weaker non-connectable reading is rejected without re-adding history."""
+    manager = get_manager()
+    address = "44:44:33:11:23:05"
+    device = generate_ble_device(address, "wohand")
+    start = time.monotonic()
+
+    strong = generate_advertisement_data(
+        local_name="wohand", service_uuids=[], rssi=-30
+    )
+    inject_advertisement_with_time_and_source_connectable(
+        device, strong, start, HCI0_SOURCE_ADDRESS, False
+    )
+
+    # A weaker, non-connectable reading from a second still-scanning source is
+    # rejected; the stronger hci0 reading stays in history.
+    weak = generate_advertisement_data(local_name="wohand", service_uuids=[], rssi=-95)
+    inject_advertisement_with_time_and_source_connectable(
+        device, weak, start + 1, HCI1_SOURCE_ADDRESS, False
+    )
+
+    kept = manager.async_last_service_info(address, connectable=False)
+    assert kept is not None
+    assert kept.source == HCI0_SOURCE_ADDRESS
+    assert kept.rssi == -30
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_should_keep_previous_adv_switches_without_debug_logging(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Switch decisions are silent when debug logging is disabled."""
+    manager = get_manager()
+    manager._debug = False
+    address = "44:44:33:11:23:06"
+    device = generate_ble_device(address, "wohand")
+    start = time.monotonic()
+
+    weak = generate_advertisement_data(local_name="wohand", service_uuids=[], rssi=-40)
+    inject_advertisement_with_time_and_source(device, weak, start, HCI0_SOURCE_ADDRESS)
+
+    with caplog.at_level(logging.DEBUG, logger="habluetooth.manager"):
+        # RSSI switch: a stronger second source wins.
+        strong = generate_advertisement_data(
+            local_name="wohand", service_uuids=[], rssi=-20
+        )
+        inject_advertisement_with_time_and_source(
+            device, strong, start + 1, HCI1_SOURCE_ADDRESS
+        )
+        # Stale switch: a far-future reading wins.
+        inject_advertisement_with_time_and_source(
+            device, weak, start + 100_000, HCI0_SOURCE_ADDRESS
+        )
+
+    # The switch happened, but nothing was logged.
+    latest = manager.async_last_service_info(address, connectable=True)
+    assert latest is not None
+    assert latest.source == HCI0_SOURCE_ADDRESS
+    assert "Switching from" not in caplog.text
