@@ -430,6 +430,29 @@ class _ScannerWorker:
             for request in due:
                 entries[request] = from_time + request.scan_interval
 
+    def _window_duration(
+        self, all_due: list[ActiveScanRequest], sweep_due: bool, now: float
+    ) -> float:
+        """
+        Compute one tick's window duration: coalesced due + sweep + on-demand.
+
+        Floors to ``_AUTO_REDISCOVERY_SWEEP_DURATION`` when a sweep is
+        due. Issue #527: when an on-demand active window is in flight,
+        extend to cover its remaining duration so a worker whose own
+        tick fires mid-sweep (e.g. a late-joining scanner seeded by
+        ``add_scanner``) scans for the rest of the in-flight window
+        instead of a bare sweep blip. Flipped workers already returned
+        at the ``_window_end`` guard in ``_tick``, so only an unflipped
+        worker reaches here.
+        """
+        duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
+        if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
+            duration = _AUTO_REDISCOVERY_SWEEP_DURATION
+        on_demand_remaining = self._scheduler._on_demand_sweep_end - now
+        if on_demand_remaining > duration:
+            duration = on_demand_remaining
+        return duration
+
     async def _tick(self) -> None:
         """
         Fire one coalesced window covering due per-device + sweep work.
@@ -468,9 +491,7 @@ class _ScannerWorker:
                 # rather than the full scan_interval.
                 await self._dispatch_to_fallback(due_buckets, sweep_due, now)
                 return
-            duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
-            if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
-                duration = _AUTO_REDISCOVERY_SWEEP_DURATION
+            duration = self._window_duration(all_due, sweep_due, now)
             self._window_end = now + duration
             # Advance pre-await: a new owner that wakes mid-window
             # must see the entries already advanced, otherwise an
@@ -715,7 +736,6 @@ class AutoScanScheduler:
     """Coordinates on-demand active windows across AUTO-mode scanners."""
 
     __slots__ = (
-        "_catch_up_tasks",
         "_loop",
         "_manager",
         "_on_demand_sweep_end",
@@ -736,7 +756,6 @@ class AutoScanScheduler:
         self._running = False
         self._on_demand_sweep_future: asyncio.Future[None] | None = None
         self._on_demand_sweep_end: float = 0.0
-        self._catch_up_tasks: set[asyncio.Task[None]] = set()
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """
@@ -792,9 +811,6 @@ class AutoScanScheduler:
         self._running = False
         for worker in self._workers.values():
             worker.stop()
-        for task in self._catch_up_tasks:
-            task.cancel()
-        self._catch_up_tasks.clear()
         self._schedule.clear()
         self._workers.clear()
         # done() guard mirrors the leader's finally for symmetry;
@@ -817,10 +833,20 @@ class AutoScanScheduler:
         """
         if scanner.requested_mode is not BluetoothScanningMode.AUTO:
             return
-        if self._loop is None or not self._running or scanner.source in self._workers:
+        loop = self._loop
+        if loop is None or not self._running or scanner.source in self._workers:
             return
         worker = self._spawn_worker(scanner)
-        self._catch_up_to_in_flight_sweep(worker, scanner)
+        # Issue #527: a scanner that registers while an on-demand active
+        # window is in flight (e.g. an ESPHome proxy powering on
+        # mid-sweep) must join that window instead of staying PASSIVE
+        # until the next active-scan request. Pull its sweep-due time
+        # back so its own first tick fires immediately; ``_tick`` sees
+        # the in-flight ``_on_demand_sweep_end`` and extends that sweep
+        # to cover the window's remaining duration, then bumps
+        # ``_sweep_last_completed`` so it does not reopen the window.
+        if self._on_demand_sweep_end > loop.time():
+            worker._sweep_last_completed = loop.time() - _AUTO_REDISCOVERY_INTERVAL
 
     def remove_scanner(self, scanner: BaseHaScanner) -> None:
         """
@@ -854,86 +880,6 @@ class AutoScanScheduler:
         # Attach entries pre-assigned before this scanner registered.
         self._schedule.attach_worker(source)
         return worker
-
-    def _catch_up_to_in_flight_sweep(
-        self, worker: _ScannerWorker, scanner: BaseHaScanner
-    ) -> None:
-        """
-        Flip a late-joining scanner into an in-flight on-demand window.
-
-        Without this, a scanner that registers after
-        ``async_request_active_scan`` has already opened its window
-        (e.g. an ESPHome proxy powering on mid-sweep) would stay
-        PASSIVE until the *next* active-scan request. Open the
-        remaining window on it now so it actively scans for the rest
-        of the in-flight sweep.
-
-        Best-effort: skipped when no on-demand sweep is in flight or
-        the window has already elapsed. A freshly-registered scanner is
-        never mid-connect (``async_register_scanner`` clears its
-        connection history), so the mid-connect skip that
-        ``_flip_scanners_for_sweep`` applies is not needed here.
-        Registration is synchronous, so the radio flip runs in a
-        tracked task (held in ``_catch_up_tasks`` so it is not
-        garbage-collected before it completes, and cancelled by
-        ``stop()``).
-        """
-        loop = self._loop
-        future = self._on_demand_sweep_future
-        if loop is None or future is None or future.done():
-            return
-        window_end = self._on_demand_sweep_end
-        remaining = window_end - loop.time()
-        if remaining <= 0:
-            return
-        previous_window_end = worker._window_end
-        if previous_window_end < window_end:
-            worker._window_end = window_end
-        task = loop.create_task(
-            self._open_catch_up_window(
-                worker, scanner, remaining, window_end, previous_window_end
-            )
-        )
-        self._catch_up_tasks.add(task)
-        task.add_done_callback(self._catch_up_tasks.discard)
-
-    async def _open_catch_up_window(
-        self,
-        worker: _ScannerWorker,
-        scanner: BaseHaScanner,
-        duration: float,
-        window_end: float,
-        previous_window_end: float,
-    ) -> None:
-        """
-        Open one active window on a late-joining scanner; keep flip bookkeeping.
-
-        Mirrors the per-scanner accounting in
-        ``_flip_scanners_for_sweep``: on success bump
-        ``_sweep_last_completed`` so the catch-up window counts as a
-        sweep; on a declined / raised flip revert the ``_window_end``
-        bump (when ours still holds) so a no-op flip does not lock the
-        worker out of its own ticks for the window's duration.
-        """
-        loop = self._loop
-        now = loop.time() if loop is not None else window_end - duration
-        try:
-            opened = await scanner.async_request_active_window(duration)
-        except Exception:  # pylint: disable=broad-except
-            if worker._window_end == window_end:
-                worker._window_end = previous_window_end
-            _LOGGER.exception(
-                "%s: error joining in-flight active window of %.1fs",
-                scanner.name,
-                duration,
-            )
-            return
-        if opened is True:
-            if worker._sweep_last_completed < now:
-                worker._sweep_last_completed = now
-            return
-        if worker._window_end == window_end:
-            worker._window_end = previous_window_end
 
     def add_request(self, request: ActiveScanRequest) -> None:
         """

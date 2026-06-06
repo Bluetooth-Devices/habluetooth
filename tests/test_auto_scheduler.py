@@ -6415,6 +6415,14 @@ async def test_invariant_through_stop_and_restart() -> None:
     _assert_schedule_invariant(sched)
 
 
+async def _drive_until_window(scanner: _RecordingAutoScanner, limit: int = 20) -> None:
+    """Spin the loop until the worker's own tick opens its window."""
+    for _ in range(limit):
+        if scanner.active_window_calls:
+            return
+        await asyncio.sleep(0)
+
+
 @pytest.mark.asyncio
 async def test_late_joining_scanner_catches_up_to_in_flight_active_scan() -> None:
     """
@@ -6422,7 +6430,8 @@ async def test_late_joining_scanner_catches_up_to_in_flight_active_scan() -> Non
 
     Reproduces issue #527: an ESPHome proxy that powers on while an
     on-demand active scan is in flight must join the window instead of
-    waiting for the next active-scan request.
+    waiting for the next active-scan request. The late worker's own
+    first tick (seeded by ``add_scanner``) opens the window.
     """
     manager = get_manager()
     sched = manager._auto_scheduler
@@ -6440,11 +6449,11 @@ async def test_late_joining_scanner_catches_up_to_in_flight_active_scan() -> Non
         await asyncio.sleep(0)
         assert sched._on_demand_sweep_future is not None
         assert late.active_window_calls == []
-        # Register the late scanner mid-sweep.
+        # Register the late scanner mid-sweep; its own tick catches up.
         c_late = manager.async_register_scanner(late)
-        # Drive the catch-up task to completion.
-        await asyncio.gather(*sched._catch_up_tasks)
+        await _drive_until_window(late)
         assert late.active_window_calls
+        # Joins the remaining window, not a bare SWEEP_DURATION blip.
         assert late.active_window_calls[0] == pytest.approx(10.0, abs=1.0)
     finally:
         early._block_event.set()
@@ -6457,13 +6466,15 @@ async def test_late_joining_scanner_catches_up_to_in_flight_active_scan() -> Non
 
 @pytest.mark.asyncio
 async def test_late_joining_scanner_no_catch_up_without_active_scan() -> None:
-    """Registering with no sweep in flight schedules no catch-up flip."""
+    """Registering with no sweep in flight opens no immediate window."""
     manager = get_manager()
-    sched = manager._auto_scheduler
     scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     register_cancel = manager.async_register_scanner(scanner)
     try:
-        assert not sched._catch_up_tasks
+        # The first sweep is AUTO_INITIAL_SWEEP_DELAY away, so spinning
+        # the loop opens no window without an in-flight on-demand sweep.
+        for _ in range(5):
+            await asyncio.sleep(0)
         assert scanner.active_window_calls == []
     finally:
         register_cancel()
@@ -6485,9 +6496,9 @@ async def test_late_joining_scanner_catch_up_bumps_sweep_completed() -> None:
         before = asyncio.get_running_loop().time()
         c_late = manager.async_register_scanner(late)
         worker = sched._workers[late.source]
-        await asyncio.gather(*sched._catch_up_tasks)
-        # Success bumps _sweep_last_completed so the 12 h rediscovery
-        # floor counts this catch-up window as a sweep.
+        await _drive_until_window(late)
+        # The catch-up tick bumps _sweep_last_completed so the 12 h
+        # rediscovery floor counts this window as the worker's sweep.
         assert worker._sweep_last_completed >= before
     finally:
         early._block_event.set()
@@ -6499,10 +6510,9 @@ async def test_late_joining_scanner_catch_up_bumps_sweep_completed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_late_joining_scanner_declined_window_reverts_bump() -> None:
-    """A late joiner that declines the flip reverts its _window_end bump."""
+async def test_late_joining_scanner_declined_window_does_not_reopen() -> None:
+    """A late joiner that declines the catch-up flip attempts it only once."""
     manager = get_manager()
-    sched = manager._auto_scheduler
     early = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
     late = _RecordingAutoScanner("AA:BB:CC:DD:EE:01", BluetoothScanningMode.AUTO)
     c_early = manager.async_register_scanner(early)
@@ -6514,11 +6524,12 @@ async def test_late_joining_scanner_declined_window_reverts_bump() -> None:
     try:
         await asyncio.sleep(0)
         c_late = manager.async_register_scanner(late)
-        worker = sched._workers[late.source]
-        await asyncio.gather(*sched._catch_up_tasks)
-        # A declined flip opened no radio window, so the eager
-        # _window_end bump is reverted to its pre-bump value.
-        assert worker._window_end == 0.0
+        await _drive_until_window(late)
+        # Give the worker extra turns: a declined catch-up must not
+        # busy-loop reopening the window for the rest of the sweep.
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert len(late.active_window_calls) == 1
     finally:
         early._block_event.set()
         async with _no_real_sleep():
