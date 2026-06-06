@@ -1086,9 +1086,7 @@ async def test_set_scanning_filter_reregisters_when_started(
 
     # An effective filter change while started re-registers the callback with
     # the new filter, so only matching advertisements are delivered afterwards.
-    scanner.set_scanning_filter(
-        service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]
-    )
+    scanner.set_scanning_filter(service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"])
     inject_advertisement(switchbot_device, switchbot_adv)
     inject_advertisement(empty_device, empty_adv)
     await asyncio.sleep(0)
