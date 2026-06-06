@@ -6537,22 +6537,3 @@ async def test_late_joining_scanner_declined_window_does_not_reopen() -> None:
         if c_late is not None:
             c_late()
         c_early()
-
-
-@pytest.mark.asyncio
-async def test_window_duration_per_device_work_extends_past_on_demand_end() -> None:
-    """When per-device work outlasts the on-demand window, duration wins the max."""
-    manager = get_manager()
-    sched = manager._auto_scheduler
-    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
-    register_cancel = manager.async_register_scanner(scanner)
-    try:
-        worker = sched._workers[scanner.source]
-        now = asyncio.get_running_loop().time()
-        # On-demand window has 2 s left; coalesced per-device work needs
-        # 7.5 s, so the window legitimately extends past _on_demand_sweep_end.
-        sched._on_demand_sweep_end = now + 2.0
-        all_due = [ActiveScanRequest("AA:BB:CC:DD:EE:00", 60.0, 7.5)]
-        assert worker._window_duration(all_due, True, now) == pytest.approx(7.5)
-    finally:
-        register_cancel()

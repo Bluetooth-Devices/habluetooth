@@ -430,33 +430,49 @@ class _ScannerWorker:
             for request in due:
                 entries[request] = from_time + request.scan_interval
 
-    def _window_duration(
-        self, all_due: list[ActiveScanRequest], sweep_due: bool, now: float
-    ) -> float:
+    async def _open_catch_up_window(self, duration: float) -> None:
         """
-        Compute one tick's window duration: coalesced due + sweep + on-demand.
+        Flip this scanner ACTIVE for the remaining on-demand window.
 
-        Floors to ``_AUTO_REDISCOVERY_SWEEP_DURATION`` when a sweep is
-        due. Issue #527: when an on-demand active window is in flight,
-        join it for its remaining duration so a worker whose own tick
-        fires mid-sweep (e.g. a late-joining scanner seeded by
-        ``add_scanner``) scans for the rest of the in-flight window
-        instead of a bare sweep blip. The on-demand window already
-        satisfies the rediscovery sweep, so its remaining duration
-        overrides the ``_AUTO_REDISCOVERY_SWEEP_DURATION`` floor rather
-        than maxing with it — otherwise a late joiner would overshoot
-        the window end whenever the remaining on-demand time is shorter
-        than the sweep floor. Flipped workers already returned at the
-        ``_window_end`` guard in ``_tick``, so only an unflipped worker
-        reaches here.
+        Issue #527: a scanner that registers while an on-demand active
+        window is in flight joins it directly instead of waiting for
+        its first staggered tick. Mirrors the per-scanner bookkeeping
+        in ``_flip_scanners_for_sweep``: bump ``_window_end`` to
+        suppress the worker's own tick during the window, request the
+        active window, and bump ``_sweep_last_completed`` only on
+        success so a declined flip leaves the 12 h rediscovery floor
+        unsatisfied. Skipped when the scanner is mid-connect (on-demand
+        is best-effort; no fallback routing). Reverts the
+        ``_window_end`` bump on a declined / raised flip when the bump
+        still holds, matching the leader path.
         """
-        duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
-        on_demand_remaining = self._scheduler._on_demand_sweep_end - now
-        if on_demand_remaining > 0.0:
-            return max(duration, on_demand_remaining)
-        if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
-            duration = _AUTO_REDISCOVERY_SWEEP_DURATION
-        return duration
+        loop = self._scheduler._loop
+        if loop is None:
+            return
+        scanner = self._scanner
+        if scanner._connections_in_progress() > 0:
+            return
+        now = loop.time()
+        window_end = now + duration
+        previous_window_end = self._window_end
+        if previous_window_end < window_end:
+            self._window_end = window_end
+        try:
+            opened = await scanner.async_request_active_window(duration)
+        except Exception:  # pylint: disable=broad-except
+            if self._window_end == window_end:
+                self._window_end = previous_window_end
+            _LOGGER.exception(
+                "%s: error running catch-up active window of %.1fs",
+                scanner.name,
+                duration,
+            )
+            return
+        if opened is True:
+            if self._sweep_last_completed < now:
+                self._sweep_last_completed = now
+        elif self._window_end == window_end:
+            self._window_end = previous_window_end
 
     async def _tick(self) -> None:
         """
@@ -496,7 +512,9 @@ class _ScannerWorker:
                 # rather than the full scan_interval.
                 await self._dispatch_to_fallback(due_buckets, sweep_due, now)
                 return
-            duration = self._window_duration(all_due, sweep_due, now)
+            duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
+            if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
+                duration = _AUTO_REDISCOVERY_SWEEP_DURATION
             self._window_end = now + duration
             # Advance pre-await: a new owner that wakes mid-window
             # must see the entries already advanced, otherwise an
@@ -741,6 +759,7 @@ class AutoScanScheduler:
     """Coordinates on-demand active windows across AUTO-mode scanners."""
 
     __slots__ = (
+        "_catch_up_tasks",
         "_loop",
         "_manager",
         "_on_demand_sweep_end",
@@ -761,6 +780,8 @@ class AutoScanScheduler:
         self._running = False
         self._on_demand_sweep_future: asyncio.Future[None] | None = None
         self._on_demand_sweep_end: float = 0.0
+        # Tracks in-flight issue #527 catch-up flips so stop() cancels them.
+        self._catch_up_tasks: set[asyncio.Task[None]] = set()
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """
@@ -811,11 +832,15 @@ class AutoScanScheduler:
         sources; HA's flow never does this.
 
         Also resolves any in-flight on-demand sweep future since the
-        leader is a caller task that ``worker.stop()`` cannot reach.
+        leader is a caller task that ``worker.stop()`` cannot reach,
+        and cancels any in-flight issue #527 catch-up flip tasks.
         """
         self._running = False
         for worker in self._workers.values():
             worker.stop()
+        for task in self._catch_up_tasks:
+            task.cancel()
+        self._catch_up_tasks.clear()
         self._schedule.clear()
         self._workers.clear()
         # done() guard mirrors the leader's finally for symmetry;
@@ -844,12 +869,9 @@ class AutoScanScheduler:
         # Issue #527: a scanner that registers while an on-demand active
         # window is in flight (e.g. an ESPHome proxy powering on
         # mid-sweep) must join that window instead of staying PASSIVE
-        # until the next active-scan request. Tell ``_spawn_worker`` to
-        # seed an immediate first tick; ``_tick`` then sees the in-flight
-        # ``_on_demand_sweep_end`` and extends that sweep to cover the
-        # window's remaining duration. ``add_scanner`` only decides
-        # whether a sweep is in flight; the seed lives next to
-        # ``start()`` in ``_spawn_worker``.
+        # until the next active-scan request. ``add_scanner`` only
+        # decides whether a sweep is in flight; ``_spawn_worker`` owns
+        # the catch-up flip beside its ``worker.start(...)`` call.
         catch_up = self._on_demand_sweep_end > loop.time()
         self._spawn_worker(scanner, catch_up)
 
@@ -868,40 +890,34 @@ class AutoScanScheduler:
             worker.stop()
 
     def _spawn_worker(self, scanner: BaseHaScanner, catch_up: bool = False) -> None:
-        assert self._loop is not None  # noqa: S101
+        loop = self._loop
+        assert loop is not None  # noqa: S101
         worker = _ScannerWorker(self, scanner, self._manager)
-        if catch_up:
-            # Issue #527: cancel the initial-sweep delay so the worker's
-            # own first tick fires immediately and joins an in-flight
-            # on-demand window. ``start()`` derives ``_sweep_last_completed``
-            # from this offset, so the seed formula stays in one place.
-            # Bias one sweep-duration further into the past so the seeded
-            # sweep is unambiguously due: an exact ``-_AUTO_INITIAL_SWEEP_DELAY``
-            # leaves ``start()``'s ``+ delay - interval + interval`` round-trip
-            # free to round the sweep-due threshold a float ULP above
-            # ``loop.time()``. On a coarse monotonic clock (Windows'
-            # ~16 ms ``time.monotonic()``) the worker's first tick reads the
-            # same ``loop.time()`` as ``start()``, so that ULP makes
-            # ``sweep_due`` False and the catch-up tick never opens its
-            # window. The margin dwarfs both the rounding error and the
-            # clock granularity; the tick resets ``_sweep_last_completed``
-            # to ``now`` anyway, so seeding it slightly earlier is inert.
-            offset = -_AUTO_INITIAL_SWEEP_DELAY - _AUTO_REDISCOVERY_SWEEP_DURATION
-        else:
-            # Stagger first sweeps so concurrently-registered scanners
-            # don't all flip ACTIVE at once. Modulo into the initial-sweep
-            # window so the Nth offset is bounded; past
-            # AUTO_INITIAL_SWEEP_DELAY/SWEEP_DURATION scanners offsets
-            # repeat, harmless since BLE radios don't interfere when
-            # multiple are active.
-            offset = (
-                len(self._workers) * _AUTO_REDISCOVERY_SWEEP_DURATION
-            ) % _AUTO_INITIAL_SWEEP_DELAY
-        worker.start(self._loop, offset)
+        # Stagger first sweeps so concurrently-registered scanners
+        # don't all flip ACTIVE at once. Modulo into the initial-sweep
+        # window so the Nth offset is bounded; past
+        # AUTO_INITIAL_SWEEP_DELAY/SWEEP_DURATION scanners offsets
+        # repeat, harmless since BLE radios don't interfere when
+        # multiple are active.
+        offset = (
+            len(self._workers) * _AUTO_REDISCOVERY_SWEEP_DURATION
+        ) % _AUTO_INITIAL_SWEEP_DELAY
+        worker.start(loop, offset)
         source = scanner.source
         self._workers[source] = worker
         # Attach entries pre-assigned before this scanner registered.
         self._schedule.attach_worker(source)
+        if catch_up:
+            # Issue #527: an on-demand window is in flight. Flip the new
+            # worker into the remaining window directly rather than
+            # waiting for its first staggered tick. Registration is
+            # synchronous, so the flip runs in a tracked task that
+            # ``stop()`` cancels.
+            remaining = self._on_demand_sweep_end - loop.time()
+            if remaining > 0.0:
+                task = loop.create_task(worker._open_catch_up_window(remaining))
+                self._catch_up_tasks.add(task)
+                task.add_done_callback(self._catch_up_tasks.discard)
 
     def add_request(self, request: ActiveScanRequest) -> None:
         """
