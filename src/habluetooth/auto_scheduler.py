@@ -438,19 +438,24 @@ class _ScannerWorker:
 
         Floors to ``_AUTO_REDISCOVERY_SWEEP_DURATION`` when a sweep is
         due. Issue #527: when an on-demand active window is in flight,
-        extend to cover its remaining duration so a worker whose own
-        tick fires mid-sweep (e.g. a late-joining scanner seeded by
+        join it for its remaining duration so a worker whose own tick
+        fires mid-sweep (e.g. a late-joining scanner seeded by
         ``add_scanner``) scans for the rest of the in-flight window
-        instead of a bare sweep blip. Flipped workers already returned
-        at the ``_window_end`` guard in ``_tick``, so only an unflipped
-        worker reaches here.
+        instead of a bare sweep blip. The on-demand window already
+        satisfies the rediscovery sweep, so its remaining duration
+        overrides the ``_AUTO_REDISCOVERY_SWEEP_DURATION`` floor rather
+        than maxing with it — otherwise a late joiner would overshoot
+        the window end whenever the remaining on-demand time is shorter
+        than the sweep floor. Flipped workers already returned at the
+        ``_window_end`` guard in ``_tick``, so only an unflipped worker
+        reaches here.
         """
         duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
+        on_demand_remaining = self._scheduler._on_demand_sweep_end - now
+        if on_demand_remaining > 0.0:
+            return max(duration, on_demand_remaining)
         if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
             duration = _AUTO_REDISCOVERY_SWEEP_DURATION
-        on_demand_remaining = self._scheduler._on_demand_sweep_end - now
-        if on_demand_remaining > duration:
-            duration = on_demand_remaining
         return duration
 
     async def _tick(self) -> None:
