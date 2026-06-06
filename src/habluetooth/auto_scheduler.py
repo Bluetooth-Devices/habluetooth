@@ -867,9 +867,7 @@ class AutoScanScheduler:
         if worker is not None:
             worker.stop()
 
-    def _spawn_worker(
-        self, scanner: BaseHaScanner, catch_up: bool = False
-    ) -> None:
+    def _spawn_worker(self, scanner: BaseHaScanner, catch_up: bool = False) -> None:
         assert self._loop is not None  # noqa: S101
         worker = _ScannerWorker(self, scanner, self._manager)
         if catch_up:
