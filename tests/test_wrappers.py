@@ -1095,6 +1095,26 @@ async def test_set_scanning_filter_reregisters_when_started(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_start_without_detection_callback(
+    register_hci0_scanner: None,
+) -> None:
+    """start() is a no-op when no detection callback was provided."""
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand")
+    switchbot_adv = generate_advertisement_data(local_name="wohand")
+
+    assert _get_manager() is not None
+    scanner = HaBleakScannerWrapper()
+
+    # start() reaches the detection-callback setup path but no callback was
+    # registered, so it short-circuits without raising and nothing is delivered.
+    await scanner.start()
+    inject_advertisement(switchbot_device, switchbot_adv)
+    await asyncio.sleep(0)
+    await scanner.stop()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_wrapped_instance_with_service_uuids_with_coro_callback(
     register_hci0_scanner: None,
 ) -> None:
@@ -2722,9 +2742,9 @@ def test_set_scanning_filter_applies_uuid_filter(
     scanner = HaBleakScannerWrapper()
     uuid = "cba20d00-224d-11e6-9fb8-0002a5d5c51b"
 
-    # A real UUID filter is an effective change, so set_scanning_filter runs
-    # the detection-callback setup path. No detection callback is registered,
-    # so setup short-circuits without raising.
+    # A real UUID filter is an effective change (_map_filters returns True),
+    # but the scanner is not started, so set_scanning_filter short-circuits on
+    # the _started guard and only stores the mapped filter.
     scanner.set_scanning_filter(service_uuids=[uuid])
 
     assert scanner._mapped_filters == {FILTER_UUIDS: {uuid}}
