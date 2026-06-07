@@ -2749,3 +2749,98 @@ def test_set_scanning_filter_applies_uuid_filter(
 
     assert scanner._mapped_filters == {FILTER_UUIDS: {uuid}}
     assert "Only UUIDs filters are supported" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_set_connection_params_no_backend_no_scanner_noop(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    set_connection_params is a silent no-op before any backend is chosen.
+
+    Before connect() runs there is no backend, no connected scanner/device, and
+    no mgmt path, so the call must return without raising and without emitting
+    the unsupported-backend warning (that warning is only for a connected
+    backend that lacks the capability).
+    """
+    client = bleak.BleakClient("00:00:00:00:00:01")
+
+    await client.set_connection_params(800, 800, 0, 300)
+
+    assert "does not support setting connection parameters" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_set_disconnected_callback_without_backend() -> None:
+    """
+    set_disconnected_callback stores the callback before a backend exists.
+
+    Called prior to connect(), there is no backend to forward to, so the wrapper
+    must accept and retain the callback without raising.
+    """
+    client = bleak.BleakClient("00:00:00:00:00:01")
+    callback = Mock()
+
+    # Must not raise even though connect() never ran.
+    client.set_disconnected_callback(callback)
+
+
+@pytest.mark.asyncio
+async def test_connect_as_retry_client_skips_warning(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    A retry-client connect skips the bleak-retry-connector warning.
+
+    Passing ``_is_retry_client=True`` marks the wrapper as driven by
+    bleak-retry-connector's establish_connection, so the "called without
+    bleak-retry-connector" guidance warning must not fire. Pinning the logger
+    above DEBUG also exercises the non-debug connect path (the debug-only
+    description lookup and connect/connected log lines are skipped).
+    """
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+    client = bleak.BleakClient(ble_device, _is_retry_client=True)
+
+    wrappers_logger = logging.getLogger("habluetooth.wrappers")
+    previous_level = wrappers_logger.level
+    wrappers_logger.setLevel(logging.INFO)
+    try:
+        with patch.object(FakeBleakClient, "is_connected", return_value=True):
+            await client.connect()
+            assert client.is_connected
+    finally:
+        wrappers_logger.setLevel(previous_level)
+
+    assert "without bleak-retry-connector" not in caplog.text
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_connect_no_scanners_raises_no_backend() -> None:
+    """
+    connect() raises the generic no-backend error when no scanners exist.
+
+    With no scanners registered at all, the passive-only diagnostic branch is
+    skipped (it only applies when scanners exist but none are connectable) and
+    the wrapper falls through to the generic no-available-slot error.
+    """
+    client = bleak.BleakClient("00:00:00:00:00:01")
+
+    with pytest.raises(
+        BleakError,
+        match=(
+            "No backend with an available connection slot that can reach "
+            "address 00:00:00:00:00:01 was found"
+        ),
+    ):
+        await client.connect()
