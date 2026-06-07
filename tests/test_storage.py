@@ -429,7 +429,7 @@ def test_expire_stale_scanner_with_missing_keys(caplog):
             "expire_seconds": 100,
         }
     )
-    data = {
+    data: dict[str, DiscoveredDeviceAdvertisementDataDict] = {
         # Missing "discovered_device_timestamps" (and others) entirely.
         "badscanner": {"connectable": True},  # type: ignore[typeddict-item]
         "goodscanner": good_scanner,
