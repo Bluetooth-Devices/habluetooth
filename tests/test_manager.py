@@ -1945,7 +1945,6 @@ async def test_bleak_callback_exception_is_logged_and_isolated(
     address = "44:44:33:11:23:01"
     device = generate_ble_device(address, "wohand")
     adv = generate_advertisement_data(local_name="wohand", service_uuids=[], rssi=-40)
-    inject_advertisement_with_source(device, adv, "hci0")
 
     received: list[Any] = []
 
@@ -1956,12 +1955,13 @@ async def test_bleak_callback_exception_is_logged_and_isolated(
     def _ok(_device: Any, _adv: Any) -> None:
         received.append(_device)
 
-    # Registration replays the connectable history immediately, so the
-    # dispatch (and the failing callback) fire as a side effect of registering.
     cancel_fail = manager.async_register_bleak_callback(_failing, {})
     cancel_ok = manager.async_register_bleak_callback(_ok, {})
     try:
-        assert received  # the ok callback saw the replayed device
+        # A single advertisement dispatch fans out to both callbacks in one
+        # loop; the failing one must not stop the ok one from firing.
+        inject_advertisement_with_source(device, adv, "hci0")
+        assert received  # the ok callback fired despite the sibling raising
         assert "Error in callback" in caplog.text
     finally:
         cancel_fail()
@@ -1990,8 +1990,11 @@ async def test_get_bluetooth_adapters_cached_with_empty_cache() -> None:
         await manager.async_setup()
     try:
         manager._adapters = {}
-        # cached=True with an empty cache repopulates straight from the backend.
-        result = await manager.async_get_bluetooth_adapters(cached=True)
+        # cached=True with an empty cache repopulates straight from the backend
+        # without taking the refresh path.
+        with patch.object(adapters, "refresh", wraps=adapters.refresh) as spy:
+            result = await manager.async_get_bluetooth_adapters(cached=True)
+        spy.assert_not_called()
         assert result == adapters.adapters
     finally:
         manager.async_stop()
@@ -2000,14 +2003,20 @@ async def test_get_bluetooth_adapters_cached_with_empty_cache() -> None:
 @pytest.mark.asyncio
 async def test_get_adapter_from_address_refreshes_when_not_found() -> None:
     """A miss triggers a refresh, then a second lookup."""
-    manager = BluetoothManager(FakeBluetoothAdapters(), Mock())
+    adapters = FakeBluetoothAdapters()
+    manager = BluetoothManager(adapters, Mock())
     with patch("habluetooth.manager.IS_LINUX", False):
         await manager.async_setup()
     try:
         manager._adapters = {}
         # Unknown address: first lookup misses, a refresh runs, second lookup
         # still misses against the empty fake backend.
-        assert await manager.async_get_adapter_from_address("00:00:00:00:00:09") is None
+        with patch.object(adapters, "refresh", wraps=adapters.refresh) as spy:
+            assert (
+                await manager.async_get_adapter_from_address("00:00:00:00:00:09")
+                is None
+            )
+        spy.assert_called_once()  # the miss forced a refresh
 
         # Known address resolves on the first lookup.
         manager._adapters = {"hci7": {ADAPTER_ADDRESS: "00:00:00:00:00:07"}}
