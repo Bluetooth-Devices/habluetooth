@@ -1,5 +1,22 @@
 # Changelog
 
+## v6.8.2 (2026-06-07)
+
+### Bug fixes
+
+
+- Register scanner detection callback on start, not init ([`3924b4c`](https://github.com/Bluetooth-Devices/habluetooth/commit/3924b4cc0b352ac1af23045fdb2f20ec023e3888))
+
+
+### Testing
+
+
+- Benchmark auto-scheduler on_advertisement ingestion path ([`8232243`](https://github.com/Bluetooth-Devices/habluetooth/commit/82322437ad58427d14c6842338bf3369b0075faf))
+
+
+- Cover untested hableakclientwrapper public methods ([`ec71cd4`](https://github.com/Bluetooth-Devices/habluetooth/commit/ec71cd4f90af8be11142752094de130ff59fb527))
+
+
 ## v6.8.1 (2026-06-01)
 
 ### Bug fixes
