@@ -62,6 +62,36 @@ class _AutoScanner(BaseHaScanner):
         return ()
 
 
+class _DiscoverableAutoScanner(_AutoScanner):
+    """
+    AUTO scanner that reports a configurable discovered set.
+
+    ``_resolve_fallback_for_address`` reads candidate scanners via
+    ``manager.async_scanner_devices_by_address``, which filters on
+    ``get_discovered_device_advertisement_data``. The plain
+    ``_AutoScanner`` exposes nothing, so the fallback resolver would
+    iterate an empty candidate list; this subclass lets a device be
+    seen by several scanners so the resolver does real scan-and-score
+    work.
+    """
+
+    __slots__ = ("_discovered",)
+
+    def __init__(self, source: str) -> None:
+        super().__init__(source)
+        self._discovered: dict[str, tuple[BLEDevice, AdvertisementData]] = {}
+
+    def add_discovered(self, address: str, rssi: int) -> None:
+        device = generate_ble_device(address, "x")
+        adv = generate_advertisement_data(local_name="x", rssi=rssi)
+        self._discovered[address] = (device, adv)
+
+    def get_discovered_device_advertisement_data(
+        self, address: str
+    ) -> tuple[BLEDevice, AdvertisementData] | None:
+        return self._discovered.get(address)
+
+
 def _make_address(i: int) -> str:
     return f"AA:BB:CC:{(i >> 16) & 0xFF:02X}:{(i >> 8) & 0xFF:02X}:{i & 0xFF:02X}"
 
@@ -281,3 +311,70 @@ async def test_on_advertisement_steady_state_8_scanners_200_devices(
             scheduler.on_advertisement(service_info)
 
     _teardown_scheduler(scanner_cancels, request_cancels)
+
+
+def _setup_fallback_mesh(
+    num_scanners: int, num_devices: int, seen_by: int
+) -> tuple[list[_DiscoverableAutoScanner], list[CALLBACK_TYPE], list[str]]:
+    """
+    Register ``num_scanners`` discoverable AUTO scanners over a dense mesh.
+
+    Each of ``num_devices`` addresses is marked discovered by the first
+    ``seen_by`` scanners with descending RSSI, so the fallback resolver
+    iterates ``seen_by`` candidates per address and exercises the
+    RSSI-scoring branch (``rssi > best_rssi``) on every step. The first
+    scanner is the connecting owner the resolver excludes.
+    """
+    manager = get_manager()
+    scanners: list[_DiscoverableAutoScanner] = []
+    scanner_cancels: list[CALLBACK_TYPE] = []
+    for i in range(num_scanners):
+        scanner = _DiscoverableAutoScanner(_make_source(i))
+        scanners.append(scanner)
+        scanner_cancels.append(manager.async_register_scanner(scanner))
+    addresses: list[str] = []
+    for i in range(num_devices):
+        address = _make_address(i)
+        addresses.append(address)
+        for j in range(seen_by):
+            # Descending RSSI so the best candidate is the last one
+            # visited — the resolver can't early-exit its scan.
+            scanners[j].add_discovered(address, rssi=-50 - j)
+    return scanners, scanner_cancels, addresses
+
+
+@pytest.mark.asyncio
+async def test_resolve_fallback_8_scanners_25_devices_dense_mesh(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """
+    Connecting-fallback resolution over a dense 8-scanner mesh.
+
+    When a device's owning scanner is mid-connect, every due address is
+    routed through ``_resolve_fallback_for_address``, which iterates the
+    scanners that currently see the address and picks the highest-RSSI
+    non-connecting AUTO fallback. This is the only sync auto-scheduler
+    hot path with no benchmark; the timer (``_next_event_at`` /
+    ``_collect_due_buckets``) and ingestion (``on_advertisement``)
+    benchmarks never enter it.
+
+    The scenario mirrors a connect storm in a dense proxy mesh: 25
+    devices each visible to all 8 scanners, so each resolution scans 7
+    candidates (owner excluded) and scores every one. Descending RSSI
+    means the resolver visits the full candidate list rather than
+    short-circuiting, capturing the worst-case scan cost.
+    """
+    scanners, scanner_cancels, addresses = _setup_fallback_mesh(
+        num_scanners=8, num_devices=25, seen_by=8
+    )
+    manager = get_manager()
+    scheduler = manager._auto_scheduler
+    owner_source = scanners[0].source
+
+    @benchmark
+    def run() -> None:
+        for address in addresses:
+            scheduler._resolve_fallback_for_address(address, owner_source)
+
+    for cancel in scanner_cancels:
+        cancel()
