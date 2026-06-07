@@ -249,12 +249,12 @@ def test_data_received_truncated_device_found(
 ) -> None:
     """A short DEVICE_FOUND frame is dropped without raising or dispatching."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    scanners: dict[int, BaseHaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # A DEVICE_FOUND frame whose param_len stops after address + address_type
@@ -266,7 +266,7 @@ def test_data_received_truncated_device_found(
 
     protocol.data_received(truncated)
 
-    mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
+    mock_scanner._async_on_raw_advertisement.assert_not_called()
 
     # The buffer must be drained so a subsequent valid frame is still parsed
     # (proves the short frame was consumed, not left to loop forever).
@@ -276,8 +276,13 @@ def test_data_received_truncated_device_found(
     good += b"\xaa\xbb\xcc\xdd\xee\xff\x01\xc8\x00\x00\x00\x00"
     good += len(ad_data).to_bytes(2, "little") + ad_data
     protocol.data_received(good)
-    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once_with(
-        b"\xaa\xbb\xcc\xdd\xee\xff", 1, -56, 0, ad_data
+    expected_address = bytes_mac_to_str(b"\xaa\xbb\xcc\xdd\xee\xff")
+    mock_scanner._async_on_raw_advertisement.assert_called_once_with(
+        expected_address,
+        -56,
+        ad_data,
+        make_bluez_details(expected_address, "hci0"),
+        ANY,
     )
 
 
@@ -286,12 +291,12 @@ def test_data_received_truncated_adv_monitor_device_found(
 ) -> None:
     """A short ADV_MONITOR_DEVICE_FOUND frame is dropped without raising."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    scanners: dict[int, BaseHaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # 2-byte monitor handle + address + address_type, but no rssi/flags.
@@ -301,8 +306,28 @@ def test_data_received_truncated_adv_monitor_device_found(
 
     protocol.data_received(truncated)
 
-    mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
-    assert protocol._buffer is None
+    mock_scanner._async_on_raw_advertisement.assert_not_called()
+
+    # The buffer must be drained so a subsequent valid frame is still parsed
+    # (proves the short frame was consumed, not left to loop forever). We assert
+    # this via observable behavior rather than reading the private ``_buffer``
+    # attribute, which is a non-public ``cdef`` field invisible in the compiled
+    # Cython build.
+    ad_data = b"\x02\x01\x06"
+    good_param_len = 2 + 6 + 1 + 1 + 4 + 2 + len(ad_data)  # +2 monitor handle
+    good = b"\x2f\x00" + b"\x00\x00" + good_param_len.to_bytes(2, "little")
+    good += b"\x00\x00"  # monitor handle
+    good += b"\xaa\xbb\xcc\xdd\xee\xff\x01\xc8\x00\x00\x00\x00"
+    good += len(ad_data).to_bytes(2, "little") + ad_data
+    protocol.data_received(good)
+    expected_address = bytes_mac_to_str(b"\xaa\xbb\xcc\xdd\xee\xff")
+    mock_scanner._async_on_raw_advertisement.assert_called_once_with(
+        expected_address,
+        -56,
+        ad_data,
+        make_bluez_details(expected_address, "hci0"),
+        ANY,
+    )
 
 
 def test_data_received_cmd_complete_success(
