@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.8.3 (2026-06-07)
+
+### Bug fixes
+
+
+- Promote non-connectable advertisement when a registered connectable path exists ([`59171a8`](https://github.com/Bluetooth-Devices/habluetooth/commit/59171a89b18e7855c1b038e9d951a5975b003204))
+
+
+### Testing
+
+
+- Cover manager.py error-handling and edge branches ([`30cd335`](https://github.com/Bluetooth-Devices/habluetooth/commit/30cd335f13e9f1964f869da682bc8899b8bf23cf))
+
+
 ## v6.8.2 (2026-06-07)
 
 ### Bug fixes
