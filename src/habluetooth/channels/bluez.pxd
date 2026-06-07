@@ -39,6 +39,7 @@ cdef class BluetoothMGMTProtocol:
         flags="unsigned int",
         data="bytes",
         parse_offset="unsigned short",
+        min_param_len="unsigned short",
         scanner=HaScanner,
         opcode="unsigned short",
         status="unsigned char",

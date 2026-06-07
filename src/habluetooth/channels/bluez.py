@@ -201,8 +201,13 @@ class BluetoothMGMTProtocol:
             self._pos += param_len
             if event_code == DEVICE_FOUND:
                 parse_offset = 6
+                # Fixed fields total 14 bytes: address 6, address type 1,
+                # rssi 1, flags 4, ad data length 2.
+                min_param_len = 14
             elif event_code == ADV_MONITOR_DEVICE_FOUND:
                 parse_offset = 8
+                # As DEVICE_FOUND plus a 2-byte monitor handle prefix.
+                min_param_len = 16
             elif event_code in {MGMT_EV_CMD_COMPLETE, MGMT_EV_CMD_STATUS}:
                 # Handle management command responses
                 if param_len >= 3:
@@ -225,6 +230,13 @@ class BluetoothMGMTProtocol:
                 self._remove_from_buffer()
                 continue
             else:
+                self._remove_from_buffer()
+                continue
+            if param_len < min_param_len:
+                # Truncated/malformed device-found frame. The kernel should
+                # always emit the full fixed-size struct, but guard against a
+                # short frame so a single bad packet cannot raise IndexError
+                # and tear down the management socket handler.
                 self._remove_from_buffer()
                 continue
             address = header[parse_offset : parse_offset + 6]
