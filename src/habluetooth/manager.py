@@ -880,16 +880,26 @@ class BluetoothManager:
         ):
             return
 
-        if not service_info.connectable and old_connectable_service_info is not None:
-            # Since we have a connectable path and our BleakClient will
-            # route any connection attempts to the connectable path, we
-            # mark the service_info as connectable so that the callbacks
-            # will be called and the device can be discovered.
+        # A non-connectable scanner may currently be the closest path, but if a
+        # still-registered connectable scanner also has a path to the device we
+        # surface this advertisement as connectable so connectable callbacks and
+        # discovery fire (the BleakClient routes any connection attempt to the
+        # connectable path). connectable_history is only pruned by the periodic
+        # unavailable check, so validate the stored entry's source is still
+        # registered before trusting it as a live connectable path. This lookup is
+        # deferred to here (after the identical-advertisement short-circuit above)
+        # so the dominant non-connectable rebroadcast hot path never pays it.
+        if (
+            not service_info.connectable
+            and (
+                connectable_path := self._connectable_history.get(service_info.address)
+            )
+            is not None
+            and connectable_path.source in self._sources
+        ):
             service_info = service_info._as_connectable()
 
-        if (
-            service_info.connectable or old_connectable_service_info is not None
-        ) and self._bleak_callbacks:
+        if service_info.connectable and self._bleak_callbacks:
             # Bleak callbacks must get a connectable device
             advertisement_data = service_info._advertisement_internal()
             for bleak_callback in self._bleak_callbacks:
