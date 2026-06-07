@@ -114,8 +114,12 @@ def expire_stale_scanner_discovered_device_advertisement_data(
                 )
                 expire.append(address)
         for address in expire:
+            # ``timestamps`` drives expiry, so its key is always present, but a
+            # divergent/corrupt blob may have an address here that is missing
+            # from the companion dicts. Use ``pop`` with a default so one stale
+            # entry can never raise ``KeyError`` and abort the whole load.
             del timestamps[address]
-            del discovered_device_advertisement_datas[address]
+            discovered_device_advertisement_datas.pop(address, None)
             discovered_device_raw.pop(address, None)
         if not timestamps:
             expired_scanners.append(scanner)
