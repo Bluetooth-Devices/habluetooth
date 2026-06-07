@@ -1972,9 +1972,9 @@ async def test_bleak_callback_exception_is_logged_and_isolated(
 async def test_supports_passive_scan_reflects_adapter_capability() -> None:
     """supports_passive_scan is True iff any adapter advertises passive scan."""
     manager = BluetoothManager(FakeBluetoothAdapters(), Mock())
-    manager._adapters = {"hci0": {ADAPTER_PASSIVE_SCAN: False}}  # type: ignore[dict-item]
+    manager._adapters = {"hci0": {ADAPTER_PASSIVE_SCAN: False}}
     assert manager.supports_passive_scan is False
-    manager._adapters = {  # type: ignore[dict-item]
+    manager._adapters = {
         "hci0": {ADAPTER_PASSIVE_SCAN: False},
         "hci1": {ADAPTER_PASSIVE_SCAN: True},
     }
@@ -2010,7 +2010,7 @@ async def test_get_adapter_from_address_refreshes_when_not_found() -> None:
         assert await manager.async_get_adapter_from_address("00:00:00:00:00:09") is None
 
         # Known address resolves on the first lookup.
-        manager._adapters = {"hci7": {ADAPTER_ADDRESS: "00:00:00:00:00:07"}}  # type: ignore[dict-item]
+        manager._adapters = {"hci7": {ADAPTER_ADDRESS: "00:00:00:00:00:07"}}
         assert (
             await manager.async_get_adapter_from_address("00:00:00:00:00:07") == "hci7"
         )
