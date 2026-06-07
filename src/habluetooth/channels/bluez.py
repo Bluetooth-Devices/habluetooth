@@ -230,7 +230,7 @@ class BluetoothMGMTProtocol:
             address = header[parse_offset : parse_offset + 6]
             address_type = header[parse_offset + 6]
             rssi = header[parse_offset + 7]
-            if rssi > 128:
+            if rssi > 127:
                 rssi -= 256
 
             flags = (
