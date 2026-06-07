@@ -2786,6 +2786,9 @@ async def test_set_disconnected_callback_without_backend() -> None:
     # Must not raise even though connect() never ran.
     client.set_disconnected_callback(callback)
 
+    # The callback is retained for later (pre-backend) use.
+    assert client._HaBleakClientWrapper__disconnected_callback is callback
+
 
 @pytest.mark.asyncio
 async def test_connect_as_retry_client_skips_warning(
