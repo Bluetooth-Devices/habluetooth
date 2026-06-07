@@ -93,10 +93,7 @@ class HaBleakScannerWrapper:
         self._map_filters(*args, **remapped_kwargs)
         if detection_callback is not None:
             self._advertisement_data_callback = detection_callback
-        # The detection callback is intentionally not registered here. Like a
-        # real BleakScanner, detections are only delivered while the scanner is
-        # running, i.e. between start() and stop(). Registration happens in
-        # start() and is torn down in stop().
+        # Callback registered in start(), torn down in stop().
 
     @classmethod
     async def find_device_by_address(
