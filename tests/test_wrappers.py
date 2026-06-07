@@ -907,6 +907,7 @@ async def test_wrapped_instance_with_filter(
         detection_callback=_device_detected,
         filters={"UUIDs": ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]},
     )
+    await scanner.start()
 
     inject_advertisement(switchbot_device, switchbot_adv_2)
     await asyncio.sleep(0)
@@ -993,6 +994,7 @@ async def test_wrapped_instance_with_service_uuids(
         detection_callback=_device_detected,
         service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
     )
+    await _scanner.start()
 
     inject_advertisement(switchbot_device, switchbot_adv)
     inject_advertisement(switchbot_device, switchbot_adv_2)
@@ -1005,6 +1007,110 @@ async def test_wrapped_instance_with_service_uuids(
     # and we should not get another callback
     inject_advertisement(empty_device, empty_adv)
     assert len(detected) == 2
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_callback_not_registered_until_start(
+    register_hci0_scanner: None,
+) -> None:
+    """Detections are only delivered between start() and stop()."""
+    detected, _device_detected = _make_detection_recorder()
+
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand")
+    switchbot_adv = generate_advertisement_data(
+        local_name="wohand",
+        service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
+        manufacturer_data={89: b"\xd8.\xad\xcd\r\x85"},
+        service_data={"00000d00-0000-1000-8000-00805f9b34fb": b"H\x10c"},
+    )
+
+    assert _get_manager() is not None
+    scanner = HaBleakScannerWrapper(
+        detection_callback=_device_detected,
+        service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
+    )
+
+    # Before start() no callbacks should fire even though a callback was
+    # provided to the constructor.
+    inject_advertisement(switchbot_device, switchbot_adv)
+    await asyncio.sleep(0)
+    assert len(detected) == 0
+
+    # After start() detections are delivered.
+    await scanner.start()
+    inject_advertisement(switchbot_device, switchbot_adv)
+    await asyncio.sleep(0)
+    assert len(detected) == 1
+
+    # After stop() the callback is deregistered and no longer fires.
+    await scanner.stop()
+    inject_advertisement(switchbot_device, switchbot_adv)
+    await asyncio.sleep(0)
+    assert len(detected) == 1
+
+    # start() again re-registers the callback.
+    await scanner.start()
+    inject_advertisement(switchbot_device, switchbot_adv)
+    await asyncio.sleep(0)
+    assert len(detected) == 2
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_set_scanning_filter_reregisters_when_started(
+    register_hci0_scanner: None,
+) -> None:
+    """set_scanning_filter re-registers and applies the new filter when started."""
+    detected, _device_detected = _make_detection_recorder()
+
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand")
+    switchbot_adv = generate_advertisement_data(
+        local_name="wohand",
+        service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
+        manufacturer_data={89: b"\xd8.\xad\xcd\r\x85"},
+        service_data={"00000d00-0000-1000-8000-00805f9b34fb": b"H\x10c"},
+    )
+    empty_device = generate_ble_device("11:22:33:44:55:66", "empty")
+    empty_adv = generate_advertisement_data(local_name="empty")
+
+    assert _get_manager() is not None
+    # No initial filter, so the started scanner matches everything.
+    scanner = HaBleakScannerWrapper(detection_callback=_device_detected)
+    await scanner.start()
+
+    inject_advertisement(switchbot_device, switchbot_adv)
+    inject_advertisement(empty_device, empty_adv)
+    await asyncio.sleep(0)
+    assert len(detected) == 2
+
+    # An effective filter change while started re-registers the callback with
+    # the new filter, so only matching advertisements are delivered afterwards.
+    scanner.set_scanning_filter(service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"])
+    inject_advertisement(switchbot_device, switchbot_adv)
+    inject_advertisement(empty_device, empty_adv)
+    await asyncio.sleep(0)
+    assert len(detected) == 3
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_start_without_detection_callback(
+    register_hci0_scanner: None,
+) -> None:
+    """start() is a no-op when no detection callback was provided."""
+    switchbot_device = generate_ble_device("44:44:33:11:23:45", "wohand")
+    switchbot_adv = generate_advertisement_data(local_name="wohand")
+
+    assert _get_manager() is not None
+    scanner = HaBleakScannerWrapper()
+
+    # start() reaches the detection-callback setup path but no callback was
+    # registered, so it short-circuits without raising and nothing is delivered.
+    await scanner.start()
+    inject_advertisement(switchbot_device, switchbot_adv)
+    await asyncio.sleep(0)
+    await scanner.stop()
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
@@ -1040,6 +1146,7 @@ async def test_wrapped_instance_with_service_uuids_with_coro_callback(
         detection_callback=_device_detected,
         service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
     )
+    await _scanner.start()
 
     inject_advertisement(switchbot_device, switchbot_adv)
     inject_advertisement(switchbot_device, switchbot_adv_2)
@@ -1083,6 +1190,7 @@ async def test_wrapped_instance_with_broken_callbacks(
         detection_callback=_device_detected,
         service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
     )
+    await _scanner.start()
 
     inject_advertisement(switchbot_device, switchbot_adv)
     await asyncio.sleep(0)
@@ -1120,6 +1228,7 @@ async def test_wrapped_instance_changes_uuids(
         detection_callback=_device_detected,
         service_uuids=["cba20d00-224d-11e6-9fb8-0002a5d5c51b"],
     )
+    await _scanner.start()
 
     inject_advertisement(switchbot_device, switchbot_adv)
     inject_advertisement(switchbot_device, switchbot_adv_2)
@@ -1162,6 +1271,7 @@ async def test_wrapped_instance_changes_filters(
         detection_callback=_device_detected,
         filters={"UUIDs": ["cba20d00-224d-11e6-9fb8-0002a5d5c51b"]},
     )
+    await _scanner.start()
 
     inject_advertisement(switchbot_device, switchbot_adv)
     inject_advertisement(switchbot_device, switchbot_adv_2)
@@ -2632,9 +2742,9 @@ def test_set_scanning_filter_applies_uuid_filter(
     scanner = HaBleakScannerWrapper()
     uuid = "cba20d00-224d-11e6-9fb8-0002a5d5c51b"
 
-    # A real UUID filter is an effective change, so set_scanning_filter runs
-    # the detection-callback setup path. No detection callback is registered,
-    # so setup short-circuits without raising.
+    # A real UUID filter is an effective change (_map_filters returns True),
+    # but the scanner is not started, so set_scanning_filter short-circuits on
+    # the _started guard and only stores the mapped filter.
     scanner.set_scanning_filter(service_uuids=[uuid])
 
     assert scanner._mapped_filters == {FILTER_UUIDS: {uuid}}

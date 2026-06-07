@@ -84,6 +84,7 @@ class HaBleakScannerWrapper:
         self._mapped_filters: dict[str, set[str]] = {}
         self._advertisement_data_callback: AdvertisementDataCallback | None = None
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._started = False
         remapped_kwargs = {
             "detection_callback": detection_callback,
             "service_uuids": service_uuids or [],
@@ -92,7 +93,7 @@ class HaBleakScannerWrapper:
         self._map_filters(*args, **remapped_kwargs)
         if detection_callback is not None:
             self._advertisement_data_callback = detection_callback
-            self._setup_detection_callback()
+        # Callback registered in start(), torn down in stop().
 
     @classmethod
     async def find_device_by_address(
@@ -153,9 +154,13 @@ class HaBleakScannerWrapper:
 
     async def stop(self, *args: Any, **kwargs: Any) -> None:
         """Stop scanning for devices."""
+        self._started = False
+        self._cancel_callback()
 
     async def start(self, *args: Any, **kwargs: Any) -> None:
         """Start scanning for devices."""
+        self._started = True
+        self._setup_detection_callback()
 
     async def __aenter__(self) -> Self:
         """Enter the context manager."""
@@ -183,7 +188,7 @@ class HaBleakScannerWrapper:
 
     def set_scanning_filter(self, *args: Any, **kwargs: Any) -> None:
         """Set the filters to use."""
-        if self._map_filters(*args, **kwargs):
+        if self._map_filters(*args, **kwargs) and self._started:
             self._setup_detection_callback()
 
     def _cancel_callback(self) -> None:
