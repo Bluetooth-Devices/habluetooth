@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import ANY, AsyncMock, Mock, PropertyMock, patch
 
 import pytest
+from bleak.backends.scanner import AdvertisementData, BLEDevice
 from bleak_retry_connector import AllocationChange, Allocations, BleakSlotManager
 from bluetooth_adapters import ADAPTER_ADDRESS, ADAPTER_PASSIVE_SCAN
 from bluetooth_adapters.systems.linux import LinuxAdapters
@@ -34,6 +35,7 @@ from habluetooth.central_manager import CentralBluetoothManager
 from . import (
     HCI0_SOURCE_ADDRESS,
     HCI1_SOURCE_ADDRESS,
+    NON_CONNECTABLE_REMOTE_SOURCE_ADDRESS,
     InjectableRemoteScanner,
     async_fire_time_changed,
     generate_advertisement_data,
@@ -2284,3 +2286,170 @@ async def test_should_keep_previous_adv_switches_without_debug_logging(
     assert latest is not None
     assert latest.source == HCI0_SOURCE_ADDRESS
     assert "Switching from" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_non_connectable_adv_promoted_when_connectable_path_registered(
+    register_hci0_scanner: None,
+) -> None:
+    """
+    A changed non-connectable adv is promoted when a connectable path is live.
+
+    Regression test for #534: a connectable scanner has a path to the device, but
+    the current best advertisement arrives from a non-connectable source. The
+    service_info must surface as connectable so connectable callbacks and discovery
+    fire, otherwise Home Assistant believes there is no connectable path.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:45"
+    now = time.monotonic()
+
+    discovered: list[BluetoothServiceInfoBleak] = []
+    manager._subclass_discover_info = Mock(side_effect=discovered.append)
+    bleak_devices: list[BLEDevice] = []
+
+    def _on_bleak(dev: BLEDevice, _adv: AdvertisementData) -> None:
+        bleak_devices.append(dev)
+
+    # Register up front so the connectable_history replay on registration cannot
+    # be mistaken for a promotion dispatch.
+    cancel = manager.async_register_bleak_callback(_on_bleak, {})
+    try:
+        # Connectable adv from the registered hci0 scanner populates
+        # connectable_history.
+        device = generate_ble_device(address, "wohand")
+        connectable_adv = generate_advertisement_data(
+            local_name="wohand",
+            service_uuids=[],
+            manufacturer_data={1: b"\x01"},
+            rssi=-60,
+        )
+        inject_advertisement_with_time_and_source_connectable(
+            device, connectable_adv, now, HCI0_SOURCE_ADDRESS, True
+        )
+
+        discovered.clear()
+        bleak_devices.clear()
+
+        # A stronger non-connectable adv from another source wins the best-path
+        # comparison and carries changed data so the identical-adv short-circuit
+        # does not skip dispatch.
+        non_connectable_adv = generate_advertisement_data(
+            local_name="wohand",
+            service_uuids=[],
+            manufacturer_data={1: b"\x02"},
+            rssi=-20,
+        )
+        inject_advertisement_with_time_and_source_connectable(
+            device,
+            non_connectable_adv,
+            now,
+            NON_CONNECTABLE_REMOTE_SOURCE_ADDRESS,
+            False,
+        )
+    finally:
+        cancel()
+
+    assert discovered
+    assert discovered[-1].connectable is True
+    assert bleak_devices
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_non_connectable_adv_not_promoted_after_connectable_scanner_unregisters() -> (  # noqa: E501
+    None
+):
+    """
+    A lingering connectable_history entry does not promote once its source is gone.
+
+    connectable_history is only pruned by the periodic unavailable check, so an
+    unregistered connectable scanner can leave a stale entry behind. The promotion
+    must verify the stored source is still registered before claiming a live path.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:46"
+    now = time.monotonic()
+
+    discovered: list[BluetoothServiceInfoBleak] = []
+    manager._subclass_discover_info = Mock(side_effect=discovered.append)
+    bleak_devices: list[BLEDevice] = []
+
+    def _on_bleak(dev: BLEDevice, _adv: AdvertisementData) -> None:
+        bleak_devices.append(dev)
+
+    # Register up front so the connectable_history replay on registration cannot
+    # be mistaken for a promotion dispatch.
+    cancel = manager.async_register_bleak_callback(_on_bleak, {})
+    try:
+        connectable_scanner = FakeScanner(HCI0_SOURCE_ADDRESS, "hci0")
+        connectable_scanner.connectable = True
+        cancel_scanner = manager.async_register_scanner(connectable_scanner)
+
+        device = generate_ble_device(address, "wohand")
+        connectable_adv = generate_advertisement_data(
+            local_name="wohand",
+            service_uuids=[],
+            manufacturer_data={1: b"\x01"},
+            rssi=-60,
+        )
+        inject_advertisement_with_time_and_source_connectable(
+            device, connectable_adv, now, HCI0_SOURCE_ADDRESS, True
+        )
+
+        # Unregister the only connectable scanner; the connectable_history entry
+        # intentionally lingers since unregister does not prune it.
+        cancel_scanner()
+        assert HCI0_SOURCE_ADDRESS not in manager._sources
+        assert address in manager._connectable_history
+
+        discovered.clear()
+        bleak_devices.clear()
+
+        non_connectable_adv = generate_advertisement_data(
+            local_name="wohand",
+            service_uuids=[],
+            manufacturer_data={1: b"\x02"},
+            rssi=-20,
+        )
+        inject_advertisement_with_time_and_source_connectable(
+            device,
+            non_connectable_adv,
+            now,
+            NON_CONNECTABLE_REMOTE_SOURCE_ADDRESS,
+            False,
+        )
+    finally:
+        cancel()
+
+    assert discovered
+    assert discovered[-1].connectable is False
+    assert not bleak_devices
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_connectable_adv_still_dispatches_to_bleak_callbacks(
+    register_hci0_scanner: None,
+) -> None:
+    """A normal connectable adv still dispatches to bleak callbacks unchanged."""
+    manager = get_manager()
+    address = "44:44:33:11:23:47"
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", service_uuids=[], rssi=-40)
+
+    bleak_devices: list[BLEDevice] = []
+
+    def _on_bleak(dev: BLEDevice, _adv: AdvertisementData) -> None:
+        bleak_devices.append(dev)
+
+    cancel = manager.async_register_bleak_callback(_on_bleak, {})
+    try:
+        inject_advertisement_with_time_and_source_connectable(
+            device, adv, time.monotonic(), HCI0_SOURCE_ADDRESS, True
+        )
+    finally:
+        cancel()
+
+    assert bleak_devices == [device]
