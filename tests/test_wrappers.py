@@ -1852,6 +1852,56 @@ async def test_connection_params_no_adapter_idx(
 
 
 @pytest.mark.asyncio
+async def test_connection_path_selection_tolerates_none_rssi() -> None:
+    """A device advertising with rssi=None must not crash connect()."""
+    manager = _get_manager()
+
+    class FakeBleakClientNoConnect(BaseFakeBleakClient):
+        """Fake bleak client that refuses to connect."""
+
+        async def connect(self, *args, **kwargs):
+            """Don't actually connect."""
+            msg = "Test - connection not needed"
+            raise BleakError(msg)
+
+    connector1 = HaBluetoothConnector(
+        client=FakeBleakClientNoConnect, source="scanner1", can_connect=lambda: True
+    )
+    connector2 = HaBluetoothConnector(
+        client=FakeBleakClientNoConnect, source="scanner2", can_connect=lambda: True
+    )
+    scanner1 = FakeScanner("scanner1", "Scanner 1", connector1, True)
+    scanner2 = FakeScanner("scanner2", "Scanner 2", connector2, True)
+
+    cancel1 = manager.async_register_scanner(scanner1)
+    cancel2 = manager.async_register_scanner(scanner2)
+
+    # scanner1 reports no signal strength (rssi=None); scanner2 has a real rssi.
+    device1 = generate_ble_device(
+        "00:00:00:00:00:01", "Test Device", {"source": "scanner1"}
+    )
+    scanner1.inject_advertisement(
+        device1, generate_advertisement_data(local_name="Test Device", rssi=None)
+    )
+    device2 = generate_ble_device(
+        "00:00:00:00:00:01", "Test Device", {"source": "scanner2"}
+    )
+    scanner2.inject_advertisement(
+        device2, generate_advertisement_data(local_name="Test Device", rssi=-65)
+    )
+
+    await asyncio.sleep(0)
+
+    # Before the fix this raised TypeError when sorting None against an int.
+    client = bleak.BleakClient("00:00:00:00:00:01")
+    with suppress(BleakError):
+        await client.connect()
+
+    cancel1()
+    cancel2()
+
+
+@pytest.mark.asyncio
 async def test_connection_path_scoring_with_slots_and_logging(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
