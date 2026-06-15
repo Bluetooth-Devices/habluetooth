@@ -707,6 +707,7 @@ files = [
     {file = "dbus_fast-5.0.22-cp39-cp39-musllinux_1_2_x86_64.whl", hash = "sha256:7f2af2fc27f3f188387befad5901953863fc8fa6451202083c2b9ec9f970028f"},
     {file = "dbus_fast-5.0.22.tar.gz", hash = "sha256:34dc67d7d21a12399828dd13e63b352750580beea54ea7c729e708f2d2905fef"},
 ]
+markers = {main = "sys_platform == \"linux\" or platform_system == \"Linux\""}
 
 [[package]]
 name = "docutils"
@@ -1137,14 +1138,14 @@ files = [
 
 [[package]]
 name = "pytest"
-version = "9.0.3"
+version = "9.1.0"
 description = "pytest: simple powerful testing with Python"
 optional = false
 python-versions = ">=3.10"
 groups = ["dev"]
 files = [
-    {file = "pytest-9.0.3-py3-none-any.whl", hash = "sha256:2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9"},
-    {file = "pytest-9.0.3.tar.gz", hash = "sha256:b86ada508af81d19edeb213c681b1d48246c1a91d304c6c81a427674c17eb91c"},
+    {file = "pytest-9.1.0-py3-none-any.whl", hash = "sha256:8ebb0e7888bdf2bdfc602ec51f8f62d50200af37356c74e503c79a94f5c81f32"},
+    {file = "pytest-9.1.0.tar.gz", hash = "sha256:41dd9148c08072446394cefd3d79701701335a9f4cae69ba92e39f6c7f5c061c"},
 ]
 
 [package.dependencies]
@@ -2225,4 +2226,4 @@ all = ["winrt-Windows.Foundation.Collections[all] (>=3.2.1.0,<3.3.0.0)", "winrt-
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "9d60749e4331f2ed2f431726d00282ecbca23e2bb4ec6fb19c41f07efae8e8f2"
+content-hash = "5fff80991df58a4ac925c4a1b7d777858f5e0a7dc02f63fcada48574bf82e657"
