@@ -40,17 +40,39 @@ ADV_MONITOR_DEVICE_FOUND = 0x002F
 
 # Management commands
 MGMT_OP_GET_CONNECTIONS = 0x0015
+MGMT_OP_START_DISCOVERY = 0x0023
+MGMT_OP_STOP_DISCOVERY = 0x0024
 MGMT_OP_LOAD_CONN_PARAM = 0x0035
+MGMT_OP_ADD_ADV_PATTERNS_MONITOR = 0x0052
+MGMT_OP_REMOVE_ADV_MONITOR = 0x0053
 
 # Management events
 MGMT_EV_CMD_COMPLETE = 0x0001
 MGMT_EV_CMD_STATUS = 0x0002
+
+# Discovery address-type bitmask: BR/EDR (0x01) | LE Public (0x02) | LE Random (0x04).
+# We only scan for LE devices, so we combine the two LE bits.
+SCAN_TYPE_LE = 0x06
+
+# Management command status codes
+MGMT_STATUS_SUCCESS = 0x00
+# Busy means another mgmt client (e.g. bluetoothd) already started discovery;
+# device-found events are still delivered to every open socket, so we treat it
+# as success for our purposes.
+MGMT_STATUS_BUSY = 0x0A
 
 # Pre-compiled struct formats for performance
 COMMAND_HEADER = Struct("<HHH")
 COMMAND_HEADER_PACK = COMMAND_HEADER.pack
 CONN_PARAM_STRUCT = Struct("<H6sBHHHH")
 CONN_PARAM_PACK = CONN_PARAM_STRUCT.pack
+# START/STOP_DISCOVERY carry a single address-type bitmask byte.
+DISCOVERY_STRUCT = Struct("<B")
+DISCOVERY_PACK = DISCOVERY_STRUCT.pack
+# REMOVE_ADV_MONITOR carries a uint16 monitor handle.
+MONITOR_HANDLE_STRUCT = Struct("<H")
+MONITOR_HANDLE_PACK = MONITOR_HANDLE_STRUCT.pack
+MONITOR_HANDLE_UNPACK = MONITOR_HANDLE_STRUCT.unpack
 
 CONNECTION_ERRORS = (
     BluetoothSocketError,
@@ -86,7 +108,11 @@ class BluetoothMGMTProtocol:
         self._scanners = scanners
         self._on_connection_lost = on_connection_lost
         self._is_shutting_down = is_shutting_down
-        self._pending_commands: dict[int, asyncio.Future[tuple[int, bytes]]] = {}
+        # Keyed by (opcode, controller_idx) so the same command can be in flight
+        # on more than one adapter at once without the responses colliding.
+        self._pending_commands: dict[
+            tuple[int, int], asyncio.Future[tuple[int, bytes]]
+        ] = {}
         self._sock = sock
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
@@ -122,25 +148,31 @@ class BluetoothMGMTProtocol:
 
     @asynccontextmanager
     async def command_response(
-        self, opcode: int
+        self, opcode: int, controller_idx: int
     ) -> AsyncIterator[asyncio.Future[tuple[int, bytes]]]:
         """
         Context manager for handling command responses.
 
+        Only one command per (opcode, controller_idx) may be in flight at a
+        time: a second concurrent call with the same key overwrites the first
+        waiter, which would then never resolve. The mgmt command wrappers never
+        double-issue the same command on one adapter, so this is sufficient.
+
         Usage:
-            async with protocol.command_response(opcode) as future:
+            async with protocol.command_response(opcode, controller_idx) as future:
                 transport.write(command)
                 status, data = await future
         """
         future: asyncio.Future[tuple[int, bytes]] = (
             asyncio.get_running_loop().create_future()
         )
-        self._pending_commands[opcode] = future
+        key = (opcode, controller_idx)
+        self._pending_commands[key] = future
         try:
             yield future
         finally:
             # Clean up if the future wasn't resolved
-            self._pending_commands.pop(opcode, None)
+            self._pending_commands.pop(key, None)
 
     def _add_to_buffer(self, data: bytes | bytearray | memoryview) -> None:
         """Add data to the buffer."""
@@ -209,15 +241,15 @@ class BluetoothMGMTProtocol:
                     opcode = header[6] | (header[7] << 8)
                     status = header[8]
                     if opcode == MGMT_OP_LOAD_CONN_PARAM:
+                        # Fire-and-forget command, no waiter to resolve.
                         self._handle_load_conn_param_response(status, controller_idx)
                     elif (
-                        opcode == MGMT_OP_GET_CONNECTIONS
-                        and opcode in self._pending_commands
-                    ):
-                        # Handle GET_CONNECTIONS response for capability check
-                        future = self._pending_commands.pop(opcode)
+                        future := self._pending_commands.get((opcode, controller_idx))
+                    ) is not None:
+                        # Resolve whatever awaited this (opcode, controller_idx):
+                        # capability check, discovery, advertisement monitor, etc.
+                        del self._pending_commands[(opcode, controller_idx)]
                         if not future.done():
-                            # Return status and any response data
                             response_data = (
                                 header[9 : self._pos] if param_len > 3 else b""
                             )
@@ -296,6 +328,9 @@ class MGMTBluetoothCtl:
         self._reconnect_task: asyncio.Task[None] | None = None
         self._on_connection_lost_future: asyncio.Future[None] | None = None
         self._shutting_down = False
+        # Set once setup() confirms NET_ADMIN/NET_RAW; the same privileges that
+        # allow the capability probe allow driving discovery over the socket.
+        self.can_discover = False
 
     def close(self) -> None:
         """Close the management interface."""
@@ -427,7 +462,7 @@ class MGMTBluetoothCtl:
             assert self.protocol.transport is not None
 
         async with self.protocol.command_response(
-            MGMT_OP_GET_CONNECTIONS
+            MGMT_OP_GET_CONNECTIONS, 0
         ) as response_future:
             self.protocol._write_to_socket(header)
             # Wait for response with timeout
@@ -450,7 +485,127 @@ class MGMTBluetoothCtl:
             msg = "Missing NET_ADMIN/NET_RAW capabilities for Bluetooth management"
             raise PermissionError(msg)
 
+        self.can_discover = True
         self._reconnect_task = asyncio.create_task(self.reconnect_task())
+
+    async def _send_command_await(
+        self, opcode: int, adapter_idx: int, cmd_data: bytes
+    ) -> tuple[int, bytes] | None:
+        """
+        Send a mgmt command and await its command-complete/status response.
+
+        Returns ``(status, response_params)``, or ``None`` if the socket is
+        down, the write fails, or no response arrives within the timeout.
+        """
+        if not self.protocol or not self.protocol.transport:
+            _LOGGER.error("Cannot send mgmt command %#x: no connection", opcode)
+            return None
+        header = COMMAND_HEADER_PACK(opcode, adapter_idx, len(cmd_data))
+        try:
+            async with self.protocol.command_response(opcode, adapter_idx) as future:
+                # _write_to_socket can raise OSError or BluetoothSocketError when
+                # the socket has gone away; treat any of these as a soft failure.
+                self.protocol._write_to_socket(header + cmd_data)
+                async with asyncio_timeout(self.timeout):
+                    return await future
+        except (TimeoutError, OSError, BluetoothSocketError) as ex:
+            _LOGGER.debug("hci%u: mgmt command %#x failed: %s", adapter_idx, opcode, ex)
+            return None
+
+    async def start_discovery(self, adapter_idx: int) -> bool:
+        """
+        Start LE discovery on an adapter over the management socket.
+
+        Returns True if discovery is running, including the case where another
+        mgmt client (e.g. bluetoothd) already started it (BUSY); device-found
+        events are delivered to every open socket regardless of who started
+        discovery. A failure here means the adapter produces no advertisements,
+        so it is logged at warning level.
+        """
+        result = await self._send_command_await(
+            MGMT_OP_START_DISCOVERY, adapter_idx, DISCOVERY_PACK(SCAN_TYPE_LE)
+        )
+        if result is not None and result[0] in (
+            MGMT_STATUS_SUCCESS,
+            MGMT_STATUS_BUSY,
+        ):
+            return True
+        _LOGGER.warning(
+            "hci%u: failed to start discovery: %s",
+            adapter_idx,
+            "no response" if result is None else f"status={result[0]:#x}",
+        )
+        return False
+
+    async def stop_discovery(self, adapter_idx: int) -> bool:
+        """
+        Stop LE discovery on an adapter over the management socket.
+
+        Only MGMT_STATUS_SUCCESS means discovery actually stopped. Unlike start,
+        a BUSY status here means the kernel did NOT stop discovery (e.g. another
+        mgmt client is still discovering), so it is not treated as success.
+        """
+        result = await self._send_command_await(
+            MGMT_OP_STOP_DISCOVERY, adapter_idx, DISCOVERY_PACK(SCAN_TYPE_LE)
+        )
+        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+            return True
+        # Best-effort cleanup on a shared socket, so this stays at debug, but
+        # log the no-response case too for parity with the other wrappers.
+        _LOGGER.debug(
+            "hci%u: stop discovery did not stop: %s",
+            adapter_idx,
+            "no response" if result is None else f"status={result[0]:#x}",
+        )
+        return False
+
+    async def add_adv_pattern_monitor(self, adapter_idx: int) -> int | None:
+        """
+        Register a match-all advertisement monitor for passive scanning.
+
+        A pattern_count of 0 tells the controller to report every
+        advertisement via ADV_MONITOR_DEVICE_FOUND. Returns the assigned
+        monitor handle (for later removal), or None on failure.
+        """
+        result = await self._send_command_await(
+            MGMT_OP_ADD_ADV_PATTERNS_MONITOR, adapter_idx, b"\x00"
+        )
+        if result is None:
+            return None
+        status, data = result
+        if status == MGMT_STATUS_SUCCESS:
+            if len(data) >= 2:
+                return MONITOR_HANDLE_UNPACK(data[:2])[0]
+            # Success without the 2-byte handle: the monitor may be registered
+            # in the controller but we cannot track it for later removal.
+            _LOGGER.warning(
+                "hci%u: add advertisement monitor succeeded without a handle",
+                adapter_idx,
+            )
+            return None
+        _LOGGER.warning(
+            "hci%u: failed to add advertisement monitor: status=%#x",
+            adapter_idx,
+            status,
+        )
+        return None
+
+    async def remove_adv_monitor(self, adapter_idx: int, handle: int) -> bool:
+        """Remove a previously registered advertisement monitor by handle."""
+        result = await self._send_command_await(
+            MGMT_OP_REMOVE_ADV_MONITOR, adapter_idx, MONITOR_HANDLE_PACK(handle)
+        )
+        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+            return True
+        # A failed removal leaves the monitor registered controller-side, so
+        # surface it at warning level to make a leaked handle diagnosable.
+        _LOGGER.warning(
+            "hci%u: failed to remove advertisement monitor %u: %s",
+            adapter_idx,
+            handle,
+            "no response" if result is None else f"status={result[0]:#x}",
+        )
+        return False
 
     def load_conn_params(
         self,
