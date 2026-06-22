@@ -22,6 +22,10 @@ class FakeBluetoothAdapters(BluetoothAdapters):
     def adapters(self) -> dict[str, AdapterDetails]:
         return {}
 
+    @property
+    def default_adapter(self) -> str:
+        return "hci0"
+
 
 class FakeScannerMixin:
     def get_discovered_device_advertisement_data(
