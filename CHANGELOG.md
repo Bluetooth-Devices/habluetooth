@@ -1,5 +1,31 @@
 # Changelog
 
+## v6.9.0 (2026-06-22)
+
+### Features
+
+
+- Add mgmt discovery commands to bluez channel ([`d352cbf`](https://github.com/Bluetooth-Devices/habluetooth/commit/d352cbf928cfea3e28bc51212efa6f971e372ebe))
+
+
+### Testing
+
+
+- Implement default_adapter on fakebluetoothadapters ([`def01e0`](https://github.com/Bluetooth-Devices/habluetooth/commit/def01e0a81cac030816dfc7a55289f6831f85cf0))
+
+
+- Benchmark connecting-fallback resolution path ([`ac56ebe`](https://github.com/Bluetooth-Devices/habluetooth/commit/ac56ebe641bfab0b6e7ea5528b18afb7785b3ac2))
+
+
+- Cover wrapper connect/param edge branches ([`48ca1ec`](https://github.com/Bluetooth-Devices/habluetooth/commit/48ca1ece7e9b39fba0c4671bc79ee4c6063806f0))
+
+
+### Refactoring
+
+
+- Split scanner into scanner_bleak with import shim ([`24d6ef3`](https://github.com/Bluetooth-Devices/habluetooth/commit/24d6ef3ac74bbedb338d4bbea98aeea0e5d7203c))
+
+
 ## v6.8.3 (2026-06-07)
 
 ### Bug fixes
