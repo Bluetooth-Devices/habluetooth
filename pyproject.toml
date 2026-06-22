@@ -45,7 +45,7 @@ dbus-fast = { version = ">=5.0.22", markers = "platform_system == 'Linux'" }
 btsocket = ">=0.3.0"
 
 [tool.poetry.group.dev.dependencies]
-pytest = ">=9.1.0,<10"
+pytest = ">=9.1.1,<10"
 pytest-cov = ">=7.1.0,<8"
 pytest-asyncio = ">=1.4.0,<1.5.0"
 pytest-codspeed = ">=5.0.3,<6.0.0"
