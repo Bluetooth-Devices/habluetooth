@@ -4,9 +4,11 @@ import asyncio
 import logging
 from asyncio import timeout as asyncio_timeout
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from struct import Struct
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
+from bluetooth_data_tools import monotonic_time_coarse
 from btsocket import btmgmt_socket
 from btsocket.btmgmt_socket import BluetoothSocketError
 
@@ -26,7 +28,7 @@ if TYPE_CHECKING:
     import socket
     from collections.abc import AsyncIterator, Callable
 
-    from ..scanner_bleak import HaScanner
+    from ..base_scanner import BaseHaScanner
 
 _LOGGER = logging.getLogger(__name__)
 _int = int
@@ -88,13 +90,31 @@ def _set_future_if_not_done(future: asyncio.Future[None] | None) -> None:
         future.set_result(None)
 
 
+@lru_cache(maxsize=512)
+def bytes_mac_to_str(mac: bytes) -> str:
+    """Convert a MAC address in bytes to a string in big-endian (MSB-first) order."""
+    return ":".join(f"{b:02X}" for b in reversed(mac))
+
+
+@lru_cache(maxsize=512)
+def make_bluez_details(address: str, adapter: str) -> dict[str, Any]:
+    """Make the BlueZ details dict for a raw advertisement."""
+    base_path = f"/org/bluez/{adapter}"
+    return {
+        "path": f"{base_path}/dev_{address.replace(':', '_')}",
+        "props": {
+            "Adapter": base_path,
+        },
+    }
+
+
 class BluetoothMGMTProtocol:
     """Bluetooth MGMT protocol."""
 
     def __init__(
         self,
         connection_made_future: asyncio.Future[None],
-        scanners: dict[int, HaScanner],
+        scanners: dict[int, BaseHaScanner],
         on_connection_lost: Callable[[], None],
         is_shutting_down: Callable[[], bool],
         sock: socket.socket,
@@ -260,31 +280,27 @@ class BluetoothMGMTProtocol:
                 self._remove_from_buffer()
                 continue
             address = header[parse_offset : parse_offset + 6]
-            address_type = header[parse_offset + 6]
             rssi = header[parse_offset + 7]
             if rssi > 128:
                 rssi -= 256
 
-            flags = (
-                header[parse_offset + 8]
-                | (header[parse_offset + 9] << 8)
-                | (header[parse_offset + 10] << 16)
-                | (header[parse_offset + 11] << 24)
-            )
-
-            # Skip AD_Data_Length (2 bytes) at parse_offset+12 and +13
+            # Skip address_type (+6), flags (+8..+11) and AD_Data_Length
+            # (+12..+13); the advertising data payload starts at +14.
             data = header[parse_offset + 14 : self._pos]
             self._remove_from_buffer()
 
             if (scanner := self._scanners.get(controller_idx)) is not None:
-                # We have a scanner for this controller, so we can
-                # pass the data to it.
-                scanner._async_on_raw_bluez_advertisement(
-                    address,
-                    address_type,
+                # Adapt the raw BlueZ advertisement onto the generic ingestion
+                # path. The BlueZ-specific bits (MAC byte order, object path)
+                # live here in the channel rather than on the scanner classes,
+                # which only expose the platform-agnostic _async_on_raw_advertisement.
+                address_str = bytes_mac_to_str(address)
+                scanner._async_on_raw_advertisement(
+                    address_str,
                     rssi,
-                    flags,
                     data,
+                    make_bluez_details(address_str, scanner.adapter),
+                    monotonic_time_coarse(),
                 )
 
     def _handle_load_conn_param_response(
@@ -318,7 +334,7 @@ class BluetoothMGMTProtocol:
 class MGMTBluetoothCtl:
     """Class to control interfaces using the BlueZ management API."""
 
-    def __init__(self, timeout: float, scanners: dict[int, HaScanner]) -> None:
+    def __init__(self, timeout: float, scanners: dict[int, BaseHaScanner]) -> None:
         """Initialize the control class."""
         # Internal state
         self.timeout = timeout

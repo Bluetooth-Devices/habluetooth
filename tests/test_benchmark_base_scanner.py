@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from bleak.backends.scanner import AdvertisementData
     from pytest_codspeed import BenchmarkFixture
 
+    from habluetooth.base_scanner import BaseHaScanner
+
 pytestmark = pytest.mark.timeout(60)
 
 
@@ -937,7 +939,7 @@ async def test_inject_100_bluez_raw_end_to_end_unchanged(
     scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
-    scanners: dict[int, HaScanner] = {0: scanner}
+    scanners: dict[int, BaseHaScanner] = {0: scanner}
     future: asyncio.Future[None] = loop.create_future()
     mock_sock = MagicMock()
     protocol = BluetoothMGMTProtocol(
@@ -988,7 +990,7 @@ async def test_inject_100_bluez_raw_end_to_end_changed(
     scanner.async_setup()
     cancel = manager.async_register_scanner(scanner)
 
-    scanners: dict[int, HaScanner] = {0: scanner}
+    scanners: dict[int, BaseHaScanner] = {0: scanner}
     future: asyncio.Future[None] = loop.create_future()
     mock_sock = MagicMock()
     protocol = BluetoothMGMTProtocol(

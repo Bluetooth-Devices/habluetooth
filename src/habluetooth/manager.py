@@ -63,7 +63,6 @@ if TYPE_CHECKING:
     from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 
     from .base_scanner import BaseHaScanner
-    from .scanner_bleak import HaScanner
 
 
 SYSTEM = platform.system()
@@ -202,7 +201,7 @@ class BluetoothManager:
         self._debug = _LOGGER.isEnabledFor(logging.DEBUG)
         self.shutdown = False
         self.has_advertising_side_channel = False
-        self._side_channel_scanners: dict[int, HaScanner] = {}
+        self._side_channel_scanners: dict[int, BaseHaScanner] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._adapter_refresh_future: asyncio.Future[None] | None = None
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
@@ -1204,7 +1203,7 @@ class BluetoothManager:
         self._sources[scanner.source] = scanner
         self._adapter_sources[scanner.adapter] = scanner.source
         if (idx := scanner.adapter_idx) is not None:
-            self._side_channel_scanners[idx] = scanner  # type: ignore[assignment]
+            self._side_channel_scanners[idx] = scanner
         if connection_slots:
             self.slot_manager.register_adapter(scanner.adapter, connection_slots)
             self.async_on_allocation_changed(

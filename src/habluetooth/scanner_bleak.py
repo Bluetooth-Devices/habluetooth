@@ -7,7 +7,6 @@ import contextlib
 import logging
 import math
 import platform
-from functools import lru_cache
 from typing import TYPE_CHECKING, Any, no_type_check
 
 import async_interrupt
@@ -36,8 +35,6 @@ if TYPE_CHECKING:
 
     from bleak.backends.device import BLEDevice
     from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
-
-int_ = int
 
 SYSTEM = platform.system()
 IS_LINUX = SYSTEM == "Linux"
@@ -216,24 +213,6 @@ def _error_indicates_wait_for_adapter_to_init(error_str: str) -> bool:
     )
 
 
-@lru_cache(maxsize=512)
-def bytes_mac_to_str(mac: bytes) -> str:
-    """Convert a MAC address in bytes to a string in big-endian (MSB-first) order."""
-    return ":".join(f"{b:02X}" for b in reversed(mac))
-
-
-@lru_cache(maxsize=512)
-def make_bluez_details(address: str, adapter: str) -> dict[str, Any]:
-    """Make the details for a bluez advertisement."""
-    base_path = f"/org/bluez/{adapter}"
-    return {
-        "path": f"{base_path}/dev_{address.replace(':', '_')}",
-        "props": {
-            "Adapter": base_path,
-        },
-    }
-
-
 class HaScanner(BaseHaScanner):
     """
     Operate and automatically recover a BleakScanner.
@@ -329,24 +308,6 @@ class HaScanner(BaseHaScanner):
         """Return diagnostic information about the scanner."""
         base_diag = await super().async_diagnostics()
         return base_diag | {"adapter": self.adapter}
-
-    def _async_on_raw_bluez_advertisement(
-        self,
-        address: bytes,
-        address_type: int_,
-        rssi: int_,
-        flags: int_,
-        data: bytes,
-    ) -> None:
-        """Handle raw advertisement data."""
-        address_str = bytes_mac_to_str(address)
-        self._async_on_raw_advertisement(
-            address_str,
-            rssi,
-            data,
-            make_bluez_details(address_str, self.adapter),
-            monotonic_time_coarse(),
-        )
 
     def _async_detection_callback(
         self,
