@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock, patch
 
 import pytest
 from btsocket.btmgmt_socket import BluetoothSocketError
 
 from habluetooth.channels.bluez import (
+    MGMT_OP_ADD_ADV_PATTERNS_MONITOR,
+    MGMT_OP_REMOVE_ADV_MONITOR,
+    MGMT_OP_START_DISCOVERY,
+    MGMT_OP_STOP_DISCOVERY,
+    SCAN_TYPE_LE,
     BluetoothMGMTProtocol,
     MGMTBluetoothCtl,
 )
@@ -28,6 +33,9 @@ from habluetooth.const import (
     ConnectParams,
 )
 from habluetooth.scanner_bleak import HaScanner
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class MockHaScanner(HaScanner):
@@ -1234,7 +1242,7 @@ async def test_command_response_context_manager() -> None:
 
     # Test successful command response
     opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
-    async with protocol.command_response(opcode) as response_future:
+    async with protocol.command_response(opcode, 0) as response_future:
         # Verify we got a future
         assert response_future is not None
         assert isinstance(response_future, asyncio.Future)
@@ -1275,7 +1283,7 @@ async def test_command_response_cleanup_on_exception() -> None:
 
     # Test cleanup on exception
     async def _raise_inside_command_response() -> None:
-        async with protocol.command_response(opcode) as response_future:
+        async with protocol.command_response(opcode, 0) as response_future:
             assert response_future is not None
             msg = "Test exception"
             raise ValueError(msg)
@@ -1303,7 +1311,7 @@ async def test_get_connections_response_handling() -> None:
     opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
 
     # Use the command_response context manager to register the command
-    async with protocol.command_response(opcode) as response_future:
+    async with protocol.command_response(opcode, 0) as response_future:
         # Test with permission denied status (0x14)
         response_data = (
             b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
@@ -1337,7 +1345,7 @@ async def test_get_connections_response_with_data() -> None:
     opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
 
     # Use the command_response context manager to register the command
-    async with protocol.command_response(opcode) as response_future:
+    async with protocol.command_response(opcode, 0) as response_future:
         # Test with success status and additional data
         extra_data = b"\x01\x02\x03\x04"
         response_data = (
@@ -1391,7 +1399,7 @@ async def test_check_capabilities_success() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return success
-    def mock_command_response(opcode: int) -> object:
+    def mock_command_response(opcode: int, controller_idx: int) -> object:
         future = asyncio.get_running_loop().create_future()
         future.set_result((0x00, b""))  # Success status
 
@@ -1431,7 +1439,7 @@ async def test_check_capabilities_permission_denied() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return permission denied
-    def mock_command_response(opcode: int) -> object:
+    def mock_command_response(opcode: int, controller_idx: int) -> object:
         future = asyncio.get_running_loop().create_future()
         future.set_result((0x14, b""))  # Permission denied status
 
@@ -1463,7 +1471,7 @@ async def test_check_capabilities_invalid_index() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return invalid index
-    def mock_command_response(opcode: int) -> object:
+    def mock_command_response(opcode: int, controller_idx: int) -> object:
         future = asyncio.get_running_loop().create_future()
         future.set_result((0x11, b""))  # Invalid index
 
@@ -1496,7 +1504,7 @@ async def test_check_capabilities_unknown_status() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to return unknown status
-    def mock_command_response(opcode: int) -> object:
+    def mock_command_response(opcode: int, controller_idx: int) -> object:
         future = asyncio.get_running_loop().create_future()
         future.set_result((0xFF, b""))  # Unknown status
 
@@ -1528,7 +1536,7 @@ async def test_check_capabilities_timeout() -> None:
     mgmt_ctl.protocol = mock_protocol
 
     # Mock command_response to timeout
-    def mock_command_response(opcode: int) -> object:
+    def mock_command_response(opcode: int, controller_idx: int) -> object:
         future = asyncio.get_running_loop().create_future()
         # Never resolve the future
 
@@ -1614,3 +1622,275 @@ async def test_setup_with_failed_capabilities() -> None:
         assert mgmt_ctl._shutting_down is True
         mock_transport.close.assert_called_once()
         mock_btmgmt.close.assert_called_once_with(mock_socket)
+
+
+def _stub_command_response(
+    status: int, data: bytes = b""
+) -> Callable[[int, int], object]:
+    """Build a command_response stub that resolves with (status, data)."""
+
+    def _command_response(opcode: int, controller_idx: int) -> object:
+        future = asyncio.get_running_loop().create_future()
+        future.set_result((status, data))
+
+        class MockContext:
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
+                return future
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+        return MockContext()
+
+    return _command_response
+
+
+def _mgmt_ctl_with_mock_protocol() -> tuple[MGMTBluetoothCtl, Mock]:
+    """Return a MGMTBluetoothCtl wired to a mock protocol/transport."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_protocol.transport = Mock()
+    mock_protocol._write_to_socket = Mock()
+    mgmt_ctl.protocol = mock_protocol
+    return mgmt_ctl, mock_protocol
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [0x00, 0x0A])
+async def test_start_discovery_success(status: int) -> None:
+    """start_discovery returns True on success or busy and sends the LE bitmask."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(status)
+
+    assert await mgmt_ctl.start_discovery(0) is True
+
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    # header opcode (2) + controller_idx (2) + param_len (2) + address-type byte
+    assert sent[0:2] == MGMT_OP_START_DISCOVERY.to_bytes(2, "little")
+    assert sent[2:4] == b"\x00\x00"
+    assert sent[6] == SCAN_TYPE_LE
+
+
+@pytest.mark.asyncio
+async def test_start_discovery_failure() -> None:
+    """start_discovery returns False on an error status."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x0C)
+
+    assert await mgmt_ctl.start_discovery(0) is False
+
+
+@pytest.mark.asyncio
+async def test_stop_discovery_success() -> None:
+    """stop_discovery returns True and targets the requested controller."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+
+    assert await mgmt_ctl.stop_discovery(2) is True
+
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[0:2] == MGMT_OP_STOP_DISCOVERY.to_bytes(2, "little")
+    assert sent[2:4] == (2).to_bytes(2, "little")
+
+
+@pytest.mark.asyncio
+async def test_stop_discovery_busy_is_not_success() -> None:
+    """BUSY on stop means discovery did not stop, so it must report False."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x0A)
+
+    assert await mgmt_ctl.stop_discovery(0) is False
+
+
+@pytest.mark.asyncio
+async def test_discovery_command_timeout() -> None:
+    """A command whose response never arrives times out and reports failure."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mgmt_ctl.timeout = 0.01
+
+    def _never_resolving(opcode: int, controller_idx: int) -> object:
+        future = asyncio.get_running_loop().create_future()  # never resolved
+
+        class MockContext:
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
+                return future
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+        return MockContext()
+
+    mock_protocol.command_response = _never_resolving
+
+    assert await mgmt_ctl.start_discovery(0) is False
+
+
+@pytest.mark.asyncio
+async def test_discovery_no_connection() -> None:
+    """Discovery and monitor commands fail gracefully when the socket is down."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+    assert mgmt_ctl.protocol is None
+    assert await mgmt_ctl.start_discovery(0) is False
+    assert await mgmt_ctl.stop_discovery(0) is False
+    assert await mgmt_ctl.add_adv_pattern_monitor(0) is None
+    assert await mgmt_ctl.remove_adv_monitor(0, 7) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc_type", [OSError, BluetoothSocketError])
+async def test_discovery_command_response_error(exc_type: type[Exception]) -> None:
+    """
+    A socket error while sending a command is handled, not raised.
+
+    BluetoothSocketError is not an OSError subclass, so it must be caught
+    explicitly; _write_to_socket can raise either one.
+    """
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+
+    def _raising_command_response(opcode: int, controller_idx: int) -> object:
+        class MockContext:
+            async def __aenter__(self) -> asyncio.Future[tuple[int, bytes]]:
+                msg = "socket gone"
+                raise exc_type(msg)
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+        return MockContext()
+
+    mock_protocol.command_response = _raising_command_response
+
+    assert await mgmt_ctl.start_discovery(0) is False
+    assert await mgmt_ctl.add_adv_pattern_monitor(0) is None
+    assert await mgmt_ctl.remove_adv_monitor(0, 7) is False
+
+
+@pytest.mark.asyncio
+async def test_command_response_skips_already_resolved_future() -> None:
+    """A command-complete for an already-resolved future does not re-set it."""
+    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    future.set_result(None)
+    protocol = BluetoothMGMTProtocol(
+        future, {}, Mock(), Mock(return_value=False), Mock()
+    )
+    async with protocol.command_response(MGMT_OP_START_DISCOVERY, 0) as fut:
+        # Resolve early, then deliver a late response for the same command.
+        fut.set_result((0x00, b""))
+        protocol.data_received(
+            b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
+            b"\x00\x00"  # controller index 0
+            b"\x03\x00"  # param_len
+            + MGMT_OP_START_DISCOVERY.to_bytes(2, "little")
+            + b"\x05"  # different status, must be ignored
+        )
+        assert fut.result() == (0x00, b"")
+
+
+@pytest.mark.asyncio
+async def test_command_response_for_unregistered_command_is_ignored() -> None:
+    """A command-complete with no waiter is dropped without breaking later ones."""
+    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    future.set_result(None)
+    protocol = BluetoothMGMTProtocol(
+        future, {}, Mock(), Mock(return_value=False), Mock()
+    )
+    # No command_response registered for this opcode/controller: must not raise.
+    protocol.data_received(
+        b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
+        b"\x00\x00"  # controller index 0
+        b"\x03\x00"  # param_len
+        + MGMT_OP_START_DISCOVERY.to_bytes(2, "little")
+        + b"\x00"  # status success
+    )
+    # A subsequently registered command still resolves normally.
+    async with protocol.command_response(MGMT_OP_STOP_DISCOVERY, 0) as fut:
+        protocol.data_received(
+            b"\x01\x00"
+            b"\x00\x00"
+            b"\x03\x00" + MGMT_OP_STOP_DISCOVERY.to_bytes(2, "little") + b"\x00"
+        )
+        status, _ = await fut
+        assert status == 0x00
+
+
+@pytest.mark.asyncio
+async def test_add_adv_pattern_monitor_success() -> None:
+    """add_adv_pattern_monitor returns the handle and sends a match-all monitor."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    # Command complete returns the assigned monitor handle (uint16 little-endian).
+    mock_protocol.command_response = _stub_command_response(0x00, b"\x07\x00")
+
+    assert await mgmt_ctl.add_adv_pattern_monitor(0) == 7
+
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[0:2] == MGMT_OP_ADD_ADV_PATTERNS_MONITOR.to_bytes(2, "little")
+    # param_len 1, pattern_count 0 (match all)
+    assert sent[4:6] == b"\x01\x00"
+    assert sent[6] == 0x00
+
+
+@pytest.mark.asyncio
+async def test_add_adv_pattern_monitor_failure() -> None:
+    """add_adv_pattern_monitor returns None on an error status."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x0C, b"")
+
+    assert await mgmt_ctl.add_adv_pattern_monitor(0) is None
+
+
+@pytest.mark.asyncio
+async def test_add_adv_pattern_monitor_success_without_handle() -> None:
+    """A success response missing the 2-byte handle is reported as failure."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00, b"")
+
+    assert await mgmt_ctl.add_adv_pattern_monitor(0) is None
+
+
+@pytest.mark.asyncio
+async def test_remove_adv_monitor() -> None:
+    """remove_adv_monitor returns True on success and sends the handle."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+
+    assert await mgmt_ctl.remove_adv_monitor(0, 7) is True
+
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[0:2] == MGMT_OP_REMOVE_ADV_MONITOR.to_bytes(2, "little")
+    assert sent[6:8] == (7).to_bytes(2, "little")
+
+
+@pytest.mark.asyncio
+async def test_remove_adv_monitor_failure() -> None:
+    """remove_adv_monitor returns False on an error status."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x0C)
+
+    assert await mgmt_ctl.remove_adv_monitor(0, 7) is False
+
+
+@pytest.mark.asyncio
+async def test_per_controller_command_response_isolation() -> None:
+    """Concurrent same-opcode commands on two controllers do not collide."""
+    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    future.set_result(None)
+    protocol = BluetoothMGMTProtocol(
+        future, {}, Mock(), Mock(return_value=False), Mock()
+    )
+
+    async with (
+        protocol.command_response(MGMT_OP_START_DISCOVERY, 0) as fut0,
+        protocol.command_response(MGMT_OP_START_DISCOVERY, 1) as fut1,
+    ):
+        # Command complete for controller 1 only.
+        protocol.data_received(
+            b"\x01\x00"  # MGMT_EV_CMD_COMPLETE
+            b"\x01\x00"  # controller index 1
+            b"\x03\x00"  # param_len
+            + MGMT_OP_START_DISCOVERY.to_bytes(2, "little")
+            + b"\x00"  # status success
+        )
+        assert fut1.done()
+        assert not fut0.done()
+        status, _ = await fut1
+        assert status == 0x00
