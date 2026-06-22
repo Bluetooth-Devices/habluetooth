@@ -33,12 +33,12 @@ from habluetooth import scanner_bleak as scanner
 from habluetooth.channels.bluez import (
     BluetoothMGMTProtocol,
     MGMTBluetoothCtl,
+    bytes_mac_to_str,
+    make_bluez_details,
 )
 from habluetooth.scanner_bleak import (
     InvalidMessageError,
-    bytes_mac_to_str,
     create_bleak_scanner,
-    make_bluez_details,
 )
 
 from . import (
@@ -136,20 +136,6 @@ def mock_btmgmt_socket():
 def test_scanner_module_aliases_scanner_bleak() -> None:
     """habluetooth.scanner is a back-compat alias of the scanner_bleak module."""
     assert scanner_shim is scanner
-
-
-def test_bytes_mac_to_str() -> None:
-    """Test bytes_mac_to_str."""
-    assert bytes_mac_to_str(b"\xff\xee\xdd\xcc\xbb\xaa") == "AA:BB:CC:DD:EE:FF"
-    assert bytes_mac_to_str(b"\xff\xee\xdd\xcc\xbb\xaa") == "AA:BB:CC:DD:EE:FF"
-
-
-def test_make_bluez_details() -> None:
-    """Test make_bluez_details."""
-    assert make_bluez_details("AA:BB:CC:DD:EE:FF", "hci0") == {
-        "path": "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF",
-        "props": {"Adapter": "/org/bluez/hci0"},
-    }
 
 
 def test_create_bleak_scanner_linux_no_adapter_active() -> None:
@@ -1094,7 +1080,6 @@ async def test_scanner_with_bluez_mgmt_side_channel(mock_btmgmt_socket: Mock) ->
         # Simulate the protocol calling the scanner's raw advertisement handler
         test_address = b"\xaa\xbb\xcc\xdd\xee\xff"
         test_rssi = -60
-        test_flags = 0x06
         # Create valid advertisement data with flags
         # Each AD structure is: length (1 byte), type (1 byte), data
         test_data = (
@@ -1103,13 +1088,15 @@ async def test_scanner_with_bluez_mgmt_side_channel(mock_btmgmt_socket: Mock) ->
             b"\x08\x09TestDev"
         )
 
-        # Call the method that the protocol would call
-        scanner._async_on_raw_bluez_advertisement(
-            test_address,
-            1,  # address_type: BDADDR_LE_PUBLIC
+        # Replicate what the BlueZ channel does on a raw advertisement: convert
+        # the address and build the details, then call the generic handler.
+        test_address_str = bytes_mac_to_str(test_address)
+        scanner._async_on_raw_advertisement(
+            test_address_str,
             test_rssi,
-            test_flags,
             test_data,
+            make_bluez_details(test_address_str, scanner.adapter),
+            time.monotonic(),
         )
 
         # Allow time for processing

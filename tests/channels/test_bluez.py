@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 from btsocket.btmgmt_socket import BluetoothSocketError
@@ -18,6 +18,8 @@ from habluetooth.channels.bluez import (
     SCAN_TYPE_LE,
     BluetoothMGMTProtocol,
     MGMTBluetoothCtl,
+    bytes_mac_to_str,
+    make_bluez_details,
 )
 from habluetooth.const import (
     BDADDR_LE_PUBLIC,
@@ -37,6 +39,8 @@ from habluetooth.scanner_bleak import HaScanner
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from habluetooth.base_scanner import BaseHaScanner
+
 
 class MockHaScanner(HaScanner):
     """Mock HaScanner for testing with Cython."""
@@ -44,9 +48,10 @@ class MockHaScanner(HaScanner):
     def __init__(self):
         """Initialize without calling parent __init__ to avoid BleakScanner setup."""
         self.source = "test"
+        self.adapter = "hci0"
         self.connectable = True
         # Mock the method that will be called
-        self._async_on_raw_bluez_advertisement: Any = Mock()
+        self._async_on_raw_advertisement: Any = Mock()
 
 
 @pytest.fixture
@@ -80,7 +85,7 @@ def test_connection_made(
 ) -> None:
     """Test connection_made sets up the protocol correctly."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -100,7 +105,7 @@ def test_connection_lost(
 ) -> None:
     """Test connection_lost handles disconnection."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -123,7 +128,7 @@ def test_connection_lost_no_exception(
 ) -> None:
     """Test connection_lost without exception."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -143,7 +148,7 @@ def test_data_received_device_found(
 ) -> None:
     """Test data_received handles DEVICE_FOUND event."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    scanners: dict[int, BaseHaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -172,12 +177,13 @@ def test_data_received_device_found(
 
     protocol.data_received(header + params)
 
-    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once_with(
-        b"\xaa\xbb\xcc\xdd\xee\xff",
-        1,
+    expected_address = bytes_mac_to_str(b"\xaa\xbb\xcc\xdd\xee\xff")
+    mock_scanner._async_on_raw_advertisement.assert_called_once_with(
+        expected_address,
         -56,
-        0,
         ad_data,
+        make_bluez_details(expected_address, "hci0"),
+        ANY,
     )
 
 
@@ -186,7 +192,7 @@ def test_data_received_adv_monitor_device_found(
 ) -> None:
     """Test data_received handles ADV_MONITOR_DEVICE_FOUND event."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    scanners: dict[int, BaseHaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -214,12 +220,13 @@ def test_data_received_adv_monitor_device_found(
 
     protocol.data_received(header + params)
 
-    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once_with(
-        b"\xaa\xbb\xcc\xdd\xee\xff",
-        2,
+    expected_address = bytes_mac_to_str(b"\xaa\xbb\xcc\xdd\xee\xff")
+    mock_scanner._async_on_raw_advertisement.assert_called_once_with(
+        expected_address,
         100,
-        0,
         ad_data,
+        make_bluez_details(expected_address, "hci0"),
+        ANY,
     )
 
 
@@ -229,7 +236,7 @@ def test_data_received_cmd_complete_success(
 ) -> None:
     """Test data_received handles successful MGMT_EV_CMD_COMPLETE."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -257,7 +264,7 @@ def test_data_received_cmd_complete_failure(
 ) -> None:
     """Test data_received handles failed MGMT_EV_CMD_COMPLETE."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -284,7 +291,7 @@ def test_data_received_cmd_status(
 ) -> None:
     """Test data_received handles MGMT_EV_CMD_STATUS."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -311,7 +318,7 @@ def test_data_received_partial_data(
 ) -> None:
     """Test data_received handles partial data correctly."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    scanners: dict[int, BaseHaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -330,11 +337,11 @@ def test_data_received_partial_data(
 
     # Send header first
     protocol.data_received(full_data[:6])
-    mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
+    mock_scanner._async_on_raw_advertisement.assert_not_called()
 
     # Send rest of data
     protocol.data_received(full_data[6:])
-    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once()
+    mock_scanner._async_on_raw_advertisement.assert_called_once()
 
 
 def test_data_received_partial_data_split_in_params(
@@ -342,7 +349,7 @@ def test_data_received_partial_data_split_in_params(
 ) -> None:
     """Test data_received handles data split in the middle of params."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    scanners: dict[int, BaseHaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -361,16 +368,17 @@ def test_data_received_partial_data_split_in_params(
 
     # Split in the middle of the address
     protocol.data_received(full_data[:10])  # Header + part of address
-    mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
+    mock_scanner._async_on_raw_advertisement.assert_not_called()
 
     # Send rest of data
     protocol.data_received(full_data[10:])
-    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once_with(
-        b"\xaa\xbb\xcc\xdd\xee\xff",
-        1,
+    expected_address = bytes_mac_to_str(b"\xaa\xbb\xcc\xdd\xee\xff")
+    mock_scanner._async_on_raw_advertisement.assert_called_once_with(
+        expected_address,
         -56,
-        0,
         ad_data,
+        make_bluez_details(expected_address, "hci0"),
+        ANY,
     )
 
 
@@ -379,7 +387,7 @@ def test_data_received_multiple_small_chunks(
 ) -> None:
     """Test data_received handles data sent in many small chunks."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    scanners: dict[int, BaseHaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -400,10 +408,10 @@ def test_data_received_multiple_small_chunks(
     for i in range(len(full_data)):
         protocol.data_received(full_data[i : i + 1])
         if i < len(full_data) - 1:
-            mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
+            mock_scanner._async_on_raw_advertisement.assert_not_called()
 
     # After all bytes are sent, callback should be called once
-    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once()
+    mock_scanner._async_on_raw_advertisement.assert_called_once()
 
 
 def test_data_received_multiple_events_in_one_chunk(
@@ -413,7 +421,7 @@ def test_data_received_multiple_events_in_one_chunk(
 ) -> None:
     """Test data_received handles multiple events in one data chunk."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    scanners: dict[int, BaseHaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -437,7 +445,7 @@ def test_data_received_multiple_events_in_one_chunk(
     protocol.data_received(event1 + event2)
 
     # Both events should be processed
-    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once()
+    mock_scanner._async_on_raw_advertisement.assert_called_once()
     assert "Connection parameters loaded successfully" in caplog.text
 
 
@@ -446,7 +454,7 @@ def test_data_received_partial_then_multiple_events(
 ) -> None:
     """Test partial data followed by multiple complete events."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    scanners: dict[int, BaseHaScanner] = {0: mock_scanner}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -472,31 +480,33 @@ def test_data_received_partial_then_multiple_events(
 
     # Send partial first event
     protocol.data_received(event1[:15])
-    mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
+    mock_scanner._async_on_raw_advertisement.assert_not_called()
 
     # Send rest of first event + second event
     protocol.data_received(event1[15:] + event2)
 
     # Both callbacks should be called
-    assert mock_scanner._async_on_raw_bluez_advertisement.call_count == 2
-    calls = mock_scanner._async_on_raw_bluez_advertisement.call_args_list
+    assert mock_scanner._async_on_raw_advertisement.call_count == 2
+    calls = mock_scanner._async_on_raw_advertisement.call_args_list
 
     # First call
+    first_address = bytes_mac_to_str(b"\x11\x22\x33\x44\x55\x66")
     assert calls[0][0] == (
-        b"\x11\x22\x33\x44\x55\x66",
-        1,
+        first_address,
         -56,
-        0,
         ad_data1,
+        make_bluez_details(first_address, "hci0"),
+        ANY,
     )
 
     # Second call
+    second_address = bytes_mac_to_str(b"\x77\x88\x99\xaa\xbb\xcc")
     assert calls[1][0] == (
-        b"\x77\x88\x99\xaa\xbb\xcc",
-        2,
+        second_address,
         100,
-        0,
         ad_data2,
+        make_bluez_details(second_address, "hci0"),
+        ANY,
     )
 
 
@@ -505,7 +515,7 @@ def test_data_received_cmd_complete_different_opcode(
 ) -> None:
     """Test data_received handles CMD_COMPLETE for different opcodes."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -533,7 +543,7 @@ def test_data_received_cmd_status_different_opcode(
 ) -> None:
     """Test data_received handles CMD_STATUS for different opcodes."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -561,7 +571,7 @@ def test_data_received_cmd_complete_short_params(
 ) -> None:
     """Test data_received handles CMD_COMPLETE with param_len < 3."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -588,7 +598,7 @@ def test_data_received_cmd_status_param_len_1(
 ) -> None:
     """Test data_received handles CMD_STATUS with param_len = 1."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -615,7 +625,7 @@ def test_data_received_cmd_complete_param_len_0(
 ) -> None:
     """Test data_received handles CMD_COMPLETE with param_len = 0."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -638,7 +648,7 @@ def test_data_received_cmd_complete_param_len_0(
 def test_data_received_unknown_event(event_loop: asyncio.AbstractEventLoop) -> None:
     """Test data_received ignores unknown events."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -662,7 +672,7 @@ def test_data_received_no_scanner_for_controller(
 ) -> None:
     """Test data_received handles missing scanner gracefully."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}  # No scanner for controller 0
+    scanners: dict[int, BaseHaScanner] = {}  # No scanner for controller 0
     on_connection_lost = Mock()
 
     is_shutting_down = Mock(return_value=False)
@@ -1003,7 +1013,7 @@ def test_kernel_bug_workaround_send_returns_zero(
 ) -> None:
     """Test that the kernel bug workaround handles send returning 0."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
@@ -1029,7 +1039,7 @@ def test_kernel_bug_workaround_send_raises_exception(
 ) -> None:
     """Test that _write_to_socket handles and re-raises exceptions."""
     future = event_loop.create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
@@ -1231,7 +1241,7 @@ async def test_command_response_context_manager() -> None:
     """Test the command_response context manager."""
     future = asyncio.get_running_loop().create_future()
     future.set_result(None)  # Mark connection as made
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
@@ -1270,7 +1280,7 @@ async def test_command_response_context_manager() -> None:
 async def test_command_response_cleanup_on_exception() -> None:
     """Test that command_response cleans up even if an exception occurs."""
     future = asyncio.get_running_loop().create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
@@ -1299,7 +1309,7 @@ async def test_command_response_cleanup_on_exception() -> None:
 async def test_get_connections_response_handling() -> None:
     """Test handling of GET_CONNECTIONS command response."""
     future = asyncio.get_running_loop().create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
@@ -1333,7 +1343,7 @@ async def test_get_connections_response_handling() -> None:
 async def test_get_connections_response_with_data() -> None:
     """Test GET_CONNECTIONS response with additional data."""
     future = asyncio.get_running_loop().create_future()
-    scanners: dict[int, HaScanner] = {}
+    scanners: dict[int, BaseHaScanner] = {}
     on_connection_lost = Mock()
     is_shutting_down = Mock(return_value=False)
 
@@ -1894,3 +1904,17 @@ async def test_per_controller_command_response_isolation() -> None:
         assert not fut0.done()
         status, _ = await fut1
         assert status == 0x00
+
+
+def test_bytes_mac_to_str() -> None:
+    """Test bytes_mac_to_str."""
+    assert bytes_mac_to_str(b"\xff\xee\xdd\xcc\xbb\xaa") == "AA:BB:CC:DD:EE:FF"
+    assert bytes_mac_to_str(b"\xff\xee\xdd\xcc\xbb\xaa") == "AA:BB:CC:DD:EE:FF"
+
+
+def test_make_bluez_details() -> None:
+    """Test make_bluez_details."""
+    assert make_bluez_details("AA:BB:CC:DD:EE:FF", "hci0") == {
+        "path": "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF",
+        "props": {"Adapter": "/org/bluez/hci0"},
+    }
