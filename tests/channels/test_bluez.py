@@ -215,6 +215,82 @@ def test_data_received_adv_monitor_device_found(
     )
 
 
+def test_data_received_truncated_device_found(
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
+) -> None:
+    """A short DEVICE_FOUND frame is dropped without raising or dispatching."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    on_connection_lost = Mock()
+    is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+    )
+
+    # A DEVICE_FOUND frame whose param_len stops after address + address_type
+    # (8 bytes), i.e. before rssi/flags. The kernel never emits this, but a
+    # malformed packet must not raise IndexError and tear down the handler.
+    params = b"\xaa\xbb\xcc\xdd\xee\xff\x01"  # address (6) + address_type (1)
+    param_len = len(params)
+    truncated = b"\x12\x00" + b"\x00\x00" + param_len.to_bytes(2, "little") + params
+
+    protocol.data_received(truncated)
+
+    mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
+
+    # The buffer must be drained so a subsequent valid frame is still parsed
+    # (proves the short frame was consumed, not left to loop forever).
+    ad_data = b"\x02\x01\x06"
+    good_param_len = 6 + 1 + 1 + 4 + 2 + len(ad_data)
+    good = b"\x12\x00" + b"\x00\x00" + good_param_len.to_bytes(2, "little")
+    good += b"\xaa\xbb\xcc\xdd\xee\xff\x01\xc8\x00\x00\x00\x00"
+    good += len(ad_data).to_bytes(2, "little") + ad_data
+    protocol.data_received(good)
+    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once_with(
+        b"\xaa\xbb\xcc\xdd\xee\xff", 1, -56, 0, ad_data
+    )
+
+
+def test_data_received_truncated_adv_monitor_device_found(
+    event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
+) -> None:
+    """A short ADV_MONITOR_DEVICE_FOUND frame is dropped without raising."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    on_connection_lost = Mock()
+    is_shutting_down = Mock(return_value=False)
+    mock_sock = Mock()
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+    )
+
+    # 2-byte monitor handle + address + address_type, but no rssi/flags.
+    params = b"\x00\x00\xaa\xbb\xcc\xdd\xee\xff\x01"
+    param_len = len(params)
+    truncated = b"\x2f\x00" + b"\x00\x00" + param_len.to_bytes(2, "little") + params
+
+    protocol.data_received(truncated)
+
+    mock_scanner._async_on_raw_bluez_advertisement.assert_not_called()
+
+    # The buffer must be drained so a subsequent valid frame is still parsed
+    # (proves the short frame was consumed, not left to loop forever). We assert
+    # this via observable behavior rather than reading the private ``_buffer``
+    # attribute, which is a non-public ``cdef`` field invisible in the compiled
+    # Cython build.
+    ad_data = b"\x02\x01\x06"
+    good_param_len = 2 + 6 + 1 + 1 + 4 + 2 + len(ad_data)  # +2 monitor handle
+    good = b"\x2f\x00" + b"\x00\x00" + good_param_len.to_bytes(2, "little")
+    good += b"\x00\x00"  # monitor handle
+    good += b"\xaa\xbb\xcc\xdd\xee\xff\x01\xc8\x00\x00\x00\x00"
+    good += len(ad_data).to_bytes(2, "little") + ad_data
+    protocol.data_received(good)
+    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once_with(
+        b"\xaa\xbb\xcc\xdd\xee\xff", 1, -56, 0, ad_data
+    )
+
+
 def test_data_received_cmd_complete_success(
     event_loop: asyncio.AbstractEventLoop,
     caplog: pytest.LogCaptureFixture,
