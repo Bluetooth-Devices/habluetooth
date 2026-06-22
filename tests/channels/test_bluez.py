@@ -27,7 +27,7 @@ from habluetooth.const import (
     MEDIUM_MIN_CONN_INTERVAL,
     ConnectParams,
 )
-from habluetooth.scanner import HaScanner
+from habluetooth.scanner_bleak import HaScanner
 
 
 class MockHaScanner(HaScanner):

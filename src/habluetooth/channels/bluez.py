@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import socket
     from collections.abc import AsyncIterator, Callable
 
-    from ..scanner import HaScanner
+    from ..scanner_bleak import HaScanner
 
 _LOGGER = logging.getLogger(__name__)
 _int = int

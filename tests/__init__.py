@@ -85,7 +85,9 @@ def patch_bluetooth_time(mock_time: float) -> Generator[Any, None, None]:
     with (
         patch("habluetooth.base_scanner.monotonic_time_coarse", return_value=mock_time),
         patch("habluetooth.manager.monotonic_time_coarse", return_value=mock_time),
-        patch("habluetooth.scanner.monotonic_time_coarse", return_value=mock_time),
+        patch(
+            "habluetooth.scanner_bleak.monotonic_time_coarse", return_value=mock_time
+        ),
     ):
         yield
 
@@ -210,7 +212,7 @@ def patch_bleak_scanner_factory(factory: Any) -> Any:
     used at every mock-scanner site.
     """
     return patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         side_effect=lambda *_a, **_kw: factory(),
     )
 

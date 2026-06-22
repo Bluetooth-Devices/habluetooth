@@ -15,6 +15,7 @@ from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 from bleak_retry_connector import Allocations, BleakSlotManager
 
+import habluetooth.scanner as scanner_shim
 from habluetooth import (
     SCANNER_WATCHDOG_INTERVAL,
     SCANNER_WATCHDOG_TIMEOUT,
@@ -26,14 +27,14 @@ from habluetooth import (
     HaScannerType,
     ScannerStartError,
     get_manager,
-    scanner,
     set_manager,
 )
+from habluetooth import scanner_bleak as scanner
 from habluetooth.channels.bluez import (
     BluetoothMGMTProtocol,
     MGMTBluetoothCtl,
 )
-from habluetooth.scanner import (
+from habluetooth.scanner_bleak import (
     InvalidMessageError,
     bytes_mac_to_str,
     create_bleak_scanner,
@@ -89,8 +90,8 @@ NEED_RESET_ERRORS = [
 def disable_stop_discovery():
     """Disable stop discovery."""
     with (
-        patch("habluetooth.scanner.stop_discovery"),
-        patch("habluetooth.scanner.restore_discoveries"),
+        patch("habluetooth.scanner_bleak.stop_discovery"),
+        patch("habluetooth.scanner_bleak.restore_discoveries"),
     ):
         yield
 
@@ -105,8 +106,8 @@ def force_linux_scanner_mode() -> Generator[None, None, None]:
     on macOS short-circuits to permanent active.
     """
     with (
-        patch("habluetooth.scanner.IS_LINUX", True),
-        patch("habluetooth.scanner.IS_MACOS", False),
+        patch("habluetooth.scanner_bleak.IS_LINUX", True),
+        patch("habluetooth.scanner_bleak.IS_MACOS", False),
     ):
         yield
 
@@ -132,6 +133,11 @@ def mock_btmgmt_socket():
         yield mock_btmgmt
 
 
+def test_scanner_module_aliases_scanner_bleak() -> None:
+    """habluetooth.scanner is a back-compat alias of the scanner_bleak module."""
+    assert scanner_shim is scanner
+
+
 def test_bytes_mac_to_str() -> None:
     """Test bytes_mac_to_str."""
     assert bytes_mac_to_str(b"\xff\xee\xdd\xcc\xbb\xaa") == "AA:BB:CC:DD:EE:FF"
@@ -151,7 +157,7 @@ def test_create_bleak_scanner_linux_no_adapter_active() -> None:
     with (
         patch.object(scanner, "IS_LINUX", True),
         patch.object(scanner, "IS_MACOS", False),
-        patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner,
+        patch("habluetooth.scanner_bleak.OriginalBleakScanner") as mock_scanner,
     ):
         create_bleak_scanner(None, BluetoothScanningMode.ACTIVE, None)
     kwargs = mock_scanner.call_args.kwargs
@@ -164,7 +170,7 @@ def test_create_bleak_scanner_linux_no_adapter_passive() -> None:
     with (
         patch.object(scanner, "IS_LINUX", True),
         patch.object(scanner, "IS_MACOS", False),
-        patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner,
+        patch("habluetooth.scanner_bleak.OriginalBleakScanner") as mock_scanner,
     ):
         create_bleak_scanner(None, BluetoothScanningMode.PASSIVE, None)
     bluez = mock_scanner.call_args.kwargs["bluez"]
@@ -178,7 +184,7 @@ def test_create_bleak_scanner_linux_adapter_active() -> None:
     with (
         patch.object(scanner, "IS_LINUX", True),
         patch.object(scanner, "IS_MACOS", False),
-        patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner,
+        patch("habluetooth.scanner_bleak.OriginalBleakScanner") as mock_scanner,
     ):
         create_bleak_scanner(None, BluetoothScanningMode.ACTIVE, "hci2")
     bluez = mock_scanner.call_args.kwargs["bluez"]
@@ -190,7 +196,7 @@ def test_create_bleak_scanner_linux_adapter_passive() -> None:
     with (
         patch.object(scanner, "IS_LINUX", True),
         patch.object(scanner, "IS_MACOS", False),
-        patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner,
+        patch("habluetooth.scanner_bleak.OriginalBleakScanner") as mock_scanner,
     ):
         create_bleak_scanner(None, BluetoothScanningMode.PASSIVE, "hci1")
     bluez = mock_scanner.call_args.kwargs["bluez"]
@@ -216,13 +222,13 @@ async def test_dbus_socket_missing_in_container(
 ) -> None:
     """Test we handle dbus being missing in the container."""
     with (
-        patch("habluetooth.scanner.is_docker_env", return_value=True),
+        patch("habluetooth.scanner_bleak.is_docker_env", return_value=True),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.start",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.start",
             side_effect=FileNotFoundError,
         ),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.stop",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.stop",
         ) as mock_stop,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -240,13 +246,13 @@ async def test_dbus_socket_missing_in_container(
 async def test_dbus_socket_missing(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle dbus being missing."""
     with (
-        patch("habluetooth.scanner.is_docker_env", return_value=False),
+        patch("habluetooth.scanner_bleak.is_docker_env", return_value=False),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.start",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.start",
             side_effect=FileNotFoundError,
         ),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.stop",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.stop",
         ) as mock_stop,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -264,13 +270,13 @@ async def test_dbus_socket_missing(caplog: pytest.LogCaptureFixture) -> None:
 async def test_handle_cancellation(caplog: pytest.LogCaptureFixture) -> None:
     """Test cancellation stops."""
     with (
-        patch("habluetooth.scanner.is_docker_env", return_value=False),
+        patch("habluetooth.scanner_bleak.is_docker_env", return_value=False),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.start",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.start",
             side_effect=asyncio.CancelledError,
         ),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.stop",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.stop",
         ) as mock_stop,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -289,10 +295,10 @@ async def test_handle_stop_while_starting(caplog: pytest.LogCaptureFixture) -> N
         await asyncio.sleep(1000)
 
     with (
-        patch("habluetooth.scanner.is_docker_env", return_value=False),
-        patch("habluetooth.scanner.OriginalBleakScanner.start", _start),
+        patch("habluetooth.scanner_bleak.is_docker_env", return_value=False),
+        patch("habluetooth.scanner_bleak.OriginalBleakScanner.start", _start),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.stop",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.stop",
         ) as mock_stop,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -313,13 +319,13 @@ async def test_handle_stop_while_starting(caplog: pytest.LogCaptureFixture) -> N
 async def test_dbus_broken_pipe_in_container(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle dbus broken pipe in the container."""
     with (
-        patch("habluetooth.scanner.is_docker_env", return_value=True),
+        patch("habluetooth.scanner_bleak.is_docker_env", return_value=True),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.start",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.start",
             side_effect=BrokenPipeError,
         ),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.stop",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.stop",
         ) as mock_stop,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -334,13 +340,13 @@ async def test_dbus_broken_pipe_in_container(caplog: pytest.LogCaptureFixture) -
 async def test_dbus_broken_pipe(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle dbus broken pipe."""
     with (
-        patch("habluetooth.scanner.is_docker_env", return_value=False),
+        patch("habluetooth.scanner_bleak.is_docker_env", return_value=False),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.start",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.start",
             side_effect=BrokenPipeError,
         ),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner.stop",
+            "habluetooth.scanner_bleak.OriginalBleakScanner.stop",
         ) as mock_stop,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -355,7 +361,7 @@ async def test_dbus_broken_pipe(caplog: pytest.LogCaptureFixture) -> None:
 async def test_invalid_dbus_message(caplog: pytest.LogCaptureFixture) -> None:
     """Test we handle invalid dbus message."""
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner.start",
+        "habluetooth.scanner_bleak.OriginalBleakScanner.start",
         side_effect=InvalidMessageError,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -400,7 +406,9 @@ async def test_adapter_needs_reset_at_start(
     mock_scanner = _DBusRecoveryScanner()
 
     with (
-        patch("habluetooth.scanner.OriginalBleakScanner", return_value=mock_scanner),
+        patch(
+            "habluetooth.scanner_bleak.OriginalBleakScanner", return_value=mock_scanner
+        ),
         patch(
             "habluetooth.util.recover_adapter", return_value=True
         ) as mock_recover_adapter,
@@ -446,7 +454,7 @@ async def test_recovery_from_dbus_restart() -> None:
             return mock_discovered
 
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         _CallbackCapturingScanner,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -533,7 +541,7 @@ async def test_adapter_recovery() -> None:
             start_time_monotonic,
         ),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner",
+            "habluetooth.scanner_bleak.OriginalBleakScanner",
             return_value=mock_scanner,
         ),
     ):
@@ -590,6 +598,32 @@ async def test_adapter_recovery() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_start_completes_when_all_attempts_return_false() -> None:
+    """
+    All start attempts returning False still finishes the start sequence.
+
+    Covers the ``_async_start`` loop fall-through where every attempt reports a
+    recoverable failure and the loop is exhausted without breaking.
+    """
+    success_calls = 0
+
+    class _AllAttemptsFailScanner(HaScanner):
+        async def _async_start_attempt(self, attempt: int) -> bool:
+            return False
+
+        async def _async_on_successful_start(self) -> None:
+            nonlocal success_calls
+            success_calls += 1
+
+    ha_scanner = _AllAttemptsFailScanner(
+        BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF"
+    )
+    ha_scanner.async_setup()
+    await ha_scanner._async_start()
+    assert success_calls == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(IS_WINDOWS)
 async def test_adapter_scanner_fails_to_start_first_time() -> None:
     """
@@ -634,7 +668,7 @@ async def test_adapter_scanner_fails_to_start_first_time() -> None:
             start_time_monotonic,
         ),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner",
+            "habluetooth.scanner_bleak.OriginalBleakScanner",
             return_value=mock_scanner,
         ),
     ):
@@ -747,14 +781,14 @@ async def test_adapter_fails_to_start_and_takes_a_bit_to_init(
 
     with (
         patch(
-            "habluetooth.scanner.ADAPTER_INIT_TIME",
+            "habluetooth.scanner_bleak.ADAPTER_INIT_TIME",
             0,
         ),
         patch_bluetooth_time(
             start_time_monotonic,
         ),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner",
+            "habluetooth.scanner_bleak.OriginalBleakScanner",
             return_value=mock_scanner,
         ),
         patch(
@@ -797,14 +831,14 @@ async def test_restart_takes_longer_than_watchdog_time(
 
     with (
         patch(
-            "habluetooth.scanner.ADAPTER_INIT_TIME",
+            "habluetooth.scanner_bleak.ADAPTER_INIT_TIME",
             0,
         ),
         patch_bluetooth_time(
             start_time_monotonic,
         ),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner",
+            "habluetooth.scanner_bleak.OriginalBleakScanner",
             return_value=mock_scanner,
         ),
         patch("habluetooth.util.recover_adapter", return_value=True),
@@ -845,7 +879,7 @@ async def test_setup_and_stop_macos() -> None:
             init_kwargs = kwargs
 
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         _KwargsCapturingScanner,
     ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -903,18 +937,18 @@ async def test_adapter_init_fails_fallback_to_passive(
 
     with (
         patch(
-            "habluetooth.scanner.IS_LINUX",
+            "habluetooth.scanner_bleak.IS_LINUX",
             True,
         ),
         patch(
-            "habluetooth.scanner.ADAPTER_INIT_TIME",
+            "habluetooth.scanner_bleak.ADAPTER_INIT_TIME",
             0,
         ),
         patch_bluetooth_time(
             start_time_monotonic,
         ),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner",
+            "habluetooth.scanner_bleak.OriginalBleakScanner",
             return_value=mock_scanner,
         ),
         patch(
@@ -1032,7 +1066,9 @@ async def test_scanner_with_bluez_mgmt_side_channel(mock_btmgmt_socket: Mock) ->
         manager.async_register_scanner(scanner, connection_slots=2)
 
         # Start scanner - should be created without detection callback
-        with patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner_class:
+        with patch(
+            "habluetooth.scanner_bleak.OriginalBleakScanner"
+        ) as mock_scanner_class:
             mock_scanner = Mock()
             mock_scanner.start = AsyncMock()
             mock_scanner.stop = AsyncMock()
@@ -1128,7 +1164,7 @@ async def test_scanner_without_bluez_mgmt_side_channel() -> None:
     manager.async_register_scanner(scanner, connection_slots=2)
 
     # Start scanner - should be created with detection callback
-    with patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner_class:
+    with patch("habluetooth.scanner_bleak.OriginalBleakScanner") as mock_scanner_class:
         mock_scanner = Mock()
         mock_scanner.start = AsyncMock()
         mock_scanner.stop = AsyncMock()
@@ -1210,7 +1246,9 @@ async def test_bluez_mgmt_protocol_data_flow(mock_btmgmt_socket: Mock) -> None:
         manager.async_register_scanner(scanner1, connection_slots=2)
 
         # Start scanners
-        with patch("habluetooth.scanner.OriginalBleakScanner") as mock_scanner_class:
+        with patch(
+            "habluetooth.scanner_bleak.OriginalBleakScanner"
+        ) as mock_scanner_class:
             mock_scanner = Mock()
             mock_scanner.start = AsyncMock()
             mock_scanner.stop = AsyncMock()
@@ -1717,7 +1755,7 @@ async def test_async_request_active_window_restarts_scanner_in_active_mode() -> 
         starts.append(kwargs["scanning_mode"])
         return MockBleakScanner()
 
-    with patch("habluetooth.scanner.OriginalBleakScanner", side_effect=_factory):
+    with patch("habluetooth.scanner_bleak.OriginalBleakScanner", side_effect=_factory):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         await scanner.async_start()
@@ -1767,7 +1805,7 @@ async def test_active_window_restart_does_not_log_fallback_warning(
     start in) so it only triggers on a real fallback.
     """
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         side_effect=lambda *_a, **_kw: MockBleakScanner(),
     ):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -1905,7 +1943,7 @@ async def test_arm_active_window_timer_cancels_existing_handle() -> None:
     _arm_active_window_timer must defend against it.
     """
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         side_effect=lambda *_a, **_kw: MockBleakScanner(),
     ):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -1935,7 +1973,7 @@ async def test_async_request_active_window_extends_existing_window() -> None:
         starts.append(kwargs["scanning_mode"])
         return MockBleakScanner()
 
-    with patch("habluetooth.scanner.OriginalBleakScanner", side_effect=_factory):
+    with patch("habluetooth.scanner_bleak.OriginalBleakScanner", side_effect=_factory):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         await scanner.async_start()
@@ -2050,7 +2088,7 @@ async def test_async_request_active_window_skips_restart_if_still_active() -> No
         starts.append(kwargs["scanning_mode"])
         return MockBleakScanner()
 
-    with patch("habluetooth.scanner.OriginalBleakScanner", side_effect=_factory):
+    with patch("habluetooth.scanner_bleak.OriginalBleakScanner", side_effect=_factory):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         await scanner.async_start()
@@ -2099,7 +2137,7 @@ async def test_async_request_active_window_still_active_does_not_shrink() -> Non
     lockless fast-path uses.
     """
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         side_effect=lambda *_, **__: MockBleakScanner(),
     ):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -2131,7 +2169,7 @@ async def test_async_request_active_window_still_active_does_not_shrink() -> Non
 async def test_async_stop_clears_active_window_state() -> None:
     """Stopping mid-window cancels the timer and clears the override."""
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         side_effect=lambda *_, **__: MockBleakScanner(),
     ):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -2257,7 +2295,7 @@ async def test_base_scanner_default_active_window_is_noop(
 async def test_async_end_active_window_defers_to_new_window() -> None:
     """If a new window armed the timer, the end-window task returns early."""
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         side_effect=lambda *_, **__: MockBleakScanner(),
     ):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -2278,7 +2316,7 @@ async def test_async_end_active_window_defers_to_new_window() -> None:
 async def test_async_end_active_window_skips_when_not_scanning() -> None:
     """If the scanner was stopped during the window the restart is skipped."""
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         side_effect=lambda *_, **__: MockBleakScanner(),
     ):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
@@ -2313,10 +2351,10 @@ async def test_async_request_active_window_passive_fallback_on_linux() -> None:
                 raise BleakError(msg)
 
     with (
-        patch("habluetooth.scanner.IS_LINUX", True),
+        patch("habluetooth.scanner_bleak.IS_LINUX", True),
         patch_bleak_scanner_factory(_PassiveFallbackScanner),
-        patch("habluetooth.scanner.async_reset_adapter", AsyncMock()),
-        patch("habluetooth.scanner.ADAPTER_INIT_TIME", 0),
+        patch("habluetooth.scanner_bleak.async_reset_adapter", AsyncMock()),
+        patch("habluetooth.scanner_bleak.ADAPTER_INIT_TIME", 0),
     ):
         scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
@@ -2384,7 +2422,7 @@ def test_create_bleak_scanner_wraps_init_error(exc: Exception) -> None:
         patch.object(scanner, "IS_LINUX", True),
         patch.object(scanner, "IS_MACOS", False),
         patch(
-            "habluetooth.scanner.OriginalBleakScanner",
+            "habluetooth.scanner_bleak.OriginalBleakScanner",
             side_effect=exc,
         ),
         pytest.raises(RuntimeError, match="Failed to initialize Bluetooth"),
@@ -2402,7 +2440,9 @@ async def test_async_stop_scanner_logs_when_scanner_stop_raises(
     mock_scanner = MagicMock()
     mock_scanner.start = AsyncMock()
     mock_scanner.stop = AsyncMock(side_effect=exc)
-    with patch("habluetooth.scanner.OriginalBleakScanner", return_value=mock_scanner):
+    with patch(
+        "habluetooth.scanner_bleak.OriginalBleakScanner", return_value=mock_scanner
+    ):
         scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner.async_setup()
         await scanner.async_start()
@@ -2420,7 +2460,9 @@ async def test_async_force_stop_discovery_logs_on_timeout(
     """Force-stop logs an error when ``stop_discovery`` times out."""
     ha_scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
     ha_scanner.async_setup()
-    with patch("habluetooth.scanner.stop_discovery", side_effect=TimeoutError("slow")):
+    with patch(
+        "habluetooth.scanner_bleak.stop_discovery", side_effect=TimeoutError("slow")
+    ):
         await ha_scanner._async_force_stop_discovery()
     assert "Timeout force stopping scanner" in caplog.text
     await ha_scanner.async_stop()
@@ -2434,7 +2476,9 @@ async def test_async_force_stop_discovery_logs_on_unexpected_error(
     """Force-stop logs an error when ``stop_discovery`` raises an unexpected error."""
     ha_scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
     ha_scanner.async_setup()
-    with patch("habluetooth.scanner.stop_discovery", side_effect=BleakError("boom")):
+    with patch(
+        "habluetooth.scanner_bleak.stop_discovery", side_effect=BleakError("boom")
+    ):
         await ha_scanner._async_force_stop_discovery()
     assert "Failed to force stop scanner" in caplog.text
     await ha_scanner.async_stop()
@@ -2601,8 +2645,8 @@ async def test_async_restart_scanner_logs_when_start_raises(
 def force_non_linux_non_macos_scanner_mode() -> Generator[None, None, None]:
     """Force the non-Linux, non-macOS branch of the active-window entry."""
     with (
-        patch("habluetooth.scanner.IS_LINUX", False),
-        patch("habluetooth.scanner.IS_MACOS", False),
+        patch("habluetooth.scanner_bleak.IS_LINUX", False),
+        patch("habluetooth.scanner_bleak.IS_MACOS", False),
     ):
         yield
 
@@ -2941,8 +2985,8 @@ async def test_auto_scanner_current_mode_reports_passive_on_linux() -> None:
 def force_macos_scanner_mode() -> Generator[None, None, None]:
     """Force scanner.IS_LINUX=False / IS_MACOS=True for the AUTO->ACTIVE path."""
     with (
-        patch("habluetooth.scanner.IS_LINUX", False),
-        patch("habluetooth.scanner.IS_MACOS", True),
+        patch("habluetooth.scanner_bleak.IS_LINUX", False),
+        patch("habluetooth.scanner_bleak.IS_MACOS", True),
     ):
         yield
 
@@ -2980,7 +3024,7 @@ async def test_auto_scanner_current_mode_active_during_active_window() -> None:
     ``current_mode`` to a single literal across both transitions.
     """
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         side_effect=lambda *_a, **_kw: MockBleakScanner(),
     ):
         ha_scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:A2")
@@ -3005,7 +3049,7 @@ async def test_auto_scanner_current_mode_passive_after_active_window() -> None:
     than reverting to the AUTO label.
     """
     with patch(
-        "habluetooth.scanner.OriginalBleakScanner",
+        "habluetooth.scanner_bleak.OriginalBleakScanner",
         side_effect=lambda *_a, **_kw: MockBleakScanner(),
     ):
         ha_scanner = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:A3")

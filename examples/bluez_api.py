@@ -1,8 +1,7 @@
 import asyncio
 import logging
 
-from habluetooth import BluetoothManager, BluetoothScanningMode
-from habluetooth.scanner import HaScanner
+from habluetooth import BluetoothManager, BluetoothScanningMode, HaScanner
 
 int_ = int
 

@@ -28,7 +28,7 @@ from .models import (
     HaScannerRegistrationEvent,
     HaScannerType,
 )
-from .scanner import BluetoothScanningMode, HaScanner, ScannerStartError
+from .scanner_bleak import BluetoothScanningMode, HaScanner, ScannerStartError
 from .scanner_device import BluetoothScannerDevice
 from .storage import (
     DiscoveredDeviceAdvertisementData,
