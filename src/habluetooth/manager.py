@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 
     from .base_scanner import BaseHaScanner
-    from .scanner import HaScanner
+    from .scanner_bleak import HaScanner
 
 
 SYSTEM = platform.system()

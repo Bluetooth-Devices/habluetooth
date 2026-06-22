@@ -1,7 +1,7 @@
 
 import cython
 
-from ..scanner cimport HaScanner
+from ..scanner_bleak cimport HaScanner
 cdef bint TYPE_CHECKING
 
 cdef unsigned short DEVICE_FOUND

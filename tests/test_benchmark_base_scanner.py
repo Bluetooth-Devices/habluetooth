@@ -12,7 +12,7 @@ from bluetooth_data_tools import monotonic_time_coarse
 from habluetooth import BaseHaRemoteScanner, HaBluetoothConnector, get_manager
 from habluetooth.channels.bluez import BluetoothMGMTProtocol
 from habluetooth.models import BluetoothScanningMode, BluetoothServiceInfoBleak
-from habluetooth.scanner import HaScanner
+from habluetooth.scanner_bleak import HaScanner
 
 from . import (
     MockBleakClient,

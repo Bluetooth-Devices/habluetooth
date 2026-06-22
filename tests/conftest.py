@@ -14,7 +14,7 @@ from habluetooth import (
     get_manager,
     set_manager,
 )
-from habluetooth import scanner as bluetooth_scanner
+from habluetooth import scanner_bleak as bluetooth_scanner
 
 
 class FakeBluetoothAdapters(BluetoothAdapters):
@@ -138,7 +138,7 @@ def two_adapters_fixture():
     """Fixture that mocks two adapters on Linux."""
     with (
         patch(
-            "habluetooth.scanner.platform.system",
+            "habluetooth.scanner_bleak.platform.system",
             return_value="Linux",
         ),
         patch("bluetooth_adapters.systems.platform.system", return_value="Linux"),
@@ -180,14 +180,14 @@ def macos_adapter() -> Generator[None, None, None]:
     with (
         patch("bleak.get_platform_scanner_backend_type"),
         patch(
-            "habluetooth.scanner.platform.system",
+            "habluetooth.scanner_bleak.platform.system",
             return_value="Darwin",
         ),
         patch(
             "bluetooth_adapters.systems.platform.system",
             return_value="Darwin",
         ),
-        patch("habluetooth.scanner.SYSTEM", "Darwin"),
+        patch("habluetooth.scanner_bleak.SYSTEM", "Darwin"),
     ):
         yield
 

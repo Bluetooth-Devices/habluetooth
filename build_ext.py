@@ -19,7 +19,7 @@ TO_CYTHONIZE = [
     "src/habluetooth/base_scanner.py",
     "src/habluetooth/manager.py",
     "src/habluetooth/models.py",
-    "src/habluetooth/scanner.py",
+    "src/habluetooth/scanner_bleak.py",
     "src/habluetooth/channels/bluez.py",
 ]
 
