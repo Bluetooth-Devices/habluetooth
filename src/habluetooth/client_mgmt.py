@@ -157,7 +157,14 @@ class HaMgmtClient(BaseBleakClient):
         self.services = self._build_services(services)
         self._connected = True
         if self._register_connection is not None:
-            self._register_connection(self.address)
+            # Slot bookkeeping is best-effort; a failure must not undo a
+            # connection that is already established.
+            try:
+                self._register_connection(self.address)
+            except Exception:
+                _LOGGER.exception(
+                    "%s: connection slot register callback failed", self.address
+                )
 
     async def disconnect(self) -> None:
         """
@@ -194,7 +201,15 @@ class HaMgmtClient(BaseBleakClient):
             self._sock = None
         if was_connected:
             if self._unregister_connection is not None:
-                self._unregister_connection(self.address)
+                # Best-effort: a bookkeeping failure must not stop the
+                # disconnected callback from firing.
+                try:
+                    self._unregister_connection(self.address)
+                except Exception:
+                    _LOGGER.exception(
+                        "%s: connection slot unregister callback failed",
+                        self.address,
+                    )
             if self._disconnected_callback is not None:
                 self._disconnected_callback()
 

@@ -111,6 +111,13 @@ async def test_factory_falls_back_without_real_address(use_mgmt: FakeMgmt) -> No
     assert type(scanner) is HaScanner
 
 
+async def test_factory_falls_back_for_auto_mode(use_mgmt: FakeMgmt) -> None:
+    """AUTO needs active-window promotion the mgmt scanner lacks, so use bleak."""
+    with patch("habluetooth.scanner_mgmt.IS_LINUX", True):
+        scanner = create_local_scanner(BluetoothScanningMode.AUTO, _ADAPTER, _ADDRESS)
+    assert type(scanner) is HaScanner
+
+
 async def test_factory_returns_mgmt_scanner_when_available(
     use_mgmt: FakeMgmt,
 ) -> None:
@@ -118,6 +125,12 @@ async def test_factory_returns_mgmt_scanner_when_available(
     with patch("habluetooth.scanner_mgmt.IS_LINUX", True):
         scanner = create_local_scanner(BluetoothScanningMode.ACTIVE, _ADAPTER, _ADDRESS)
     assert type(scanner) is HaScannerMgmt
+
+
+async def test_init_rejects_default_address() -> None:
+    """Direct construction without a real BD_ADDR fails fast."""
+    with pytest.raises(ValueError, match="real adapter address"):
+        HaScannerMgmt(BluetoothScanningMode.ACTIVE, _ADAPTER, DEFAULT_ADDRESS)
 
 
 # -- construction ---------------------------------------------------------
@@ -264,6 +277,22 @@ async def test_get_allocations_clamps_free_at_zero() -> None:
     allocations = scanner.get_allocations()
     assert allocations is not None
     assert allocations.free == 0
+
+
+async def test_get_allocations_sorts_allocated() -> None:
+    """Allocated addresses are reported in a stable sorted order."""
+    scanner = _scanner()
+    get_manager().slot_manager.register_adapter(_ADAPTER, 5)
+    scanner._register_connection("CC:CC:CC:CC:CC:CC")
+    scanner._register_connection("AA:AA:AA:AA:AA:AA")
+    scanner._register_connection("BB:BB:BB:BB:BB:BB")
+    allocations = scanner.get_allocations()
+    assert allocations is not None
+    assert allocations.allocated == [
+        "AA:AA:AA:AA:AA:AA",
+        "BB:BB:BB:BB:BB:BB",
+        "CC:CC:CC:CC:CC:CC",
+    ]
 
 
 # -- watchdog -------------------------------------------------------------

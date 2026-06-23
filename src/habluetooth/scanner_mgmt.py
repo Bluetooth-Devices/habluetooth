@@ -40,7 +40,6 @@ from bluetooth_adapters import DEFAULT_ADDRESS
 from .base_scanner import BaseHaScanner
 from .central_manager import get_manager
 from .client_mgmt import HaMgmtClient, MgmtClientData
-from .const import SOURCE_LOCAL
 from .models import BluetoothScanningMode, HaBluetoothConnector
 from .scanner_bleak import IS_LINUX, HaScanner, ScannerStartError, _resolve_radio_mode
 
@@ -74,8 +73,15 @@ class HaScannerMgmt(BaseHaScanner):
 
     def __init__(self, mode: BluetoothScanningMode, adapter: str, address: str) -> None:
         """Set up the scanner and wire connections to the mgmt GATT client."""
+        if address == DEFAULT_ADDRESS:
+            # The L2CAP connect path binds to this address to pin connections to
+            # the discovering adapter; without a real BD_ADDR it would bind to
+            # BDADDR_ANY and route through the wrong radio. Fail fast rather than
+            # mis-route (the factory already guards against this).
+            msg = "HaScannerMgmt requires a real adapter address, not DEFAULT_ADDRESS"
+            raise ValueError(msg)
         self.mac_address = address
-        source = address if address != DEFAULT_ADDRESS else adapter or SOURCE_LOCAL
+        source = address
         connector = HaBluetoothConnector(
             # partial-bind the per-connection data; the wrapper calls
             # connector.client(device, ...) like any backend class.
@@ -241,7 +247,9 @@ class HaScannerMgmt(BaseHaScanner):
             # Clamp at 0: a TOCTOU overshoot past the advisory gate must not
             # report negative free slots.
             max(0, slots - len(self._connections)),
-            list(self._connections),
+            # Sorted for stable output (the set order is arbitrary), so repeated
+            # reads do not look like allocation changes.
+            sorted(self._connections),
         )
 
     # -- discovered-device read-out ---------------------------------------
@@ -291,6 +299,10 @@ def create_local_scanner(
     A real ``address`` is required because the L2CAP connect path binds to it to
     pin connections to the adapter that discovered the device; a missing address
     would bind to ``BDADDR_ANY`` and let the kernel pick a different radio.
+
+    AUTO mode falls back to :class:`HaScanner`: the mgmt scanner does not yet
+    implement active-window promotion (``async_request_active_window``), so it
+    cannot satisfy AUTO's on-demand switch to active scanning.
     """
     manager = get_manager()
     mgmt = manager.get_bluez_mgmt_ctl()
@@ -300,6 +312,7 @@ def create_local_scanner(
         and mgmt.can_discover
         and adapter.startswith("hci")
         and address != DEFAULT_ADDRESS
+        and mode is not BluetoothScanningMode.AUTO
     ):
         return HaScannerMgmt(mode, adapter, address)
     return HaScanner(mode, adapter, address)
