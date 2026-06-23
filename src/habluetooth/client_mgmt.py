@@ -170,6 +170,11 @@ class HaMgmtClient(BaseBleakClient):
 
     def _handle_disconnect(self, exc: Exception | None) -> None:
         """Tear the channel down once and notify on an unexpected drop."""
+        if exc is not None:
+            # The codec only passes a cause on an unexpected drop; a deliberate
+            # disconnect() passes None and stays silent. bleak's callback takes
+            # no args, so this log is the only place the reason can surface.
+            _LOGGER.debug("%s: L2CAP/ATT channel lost: %s", self.address, exc)
         was_connected = self._connected
         self._connected = False
         self._att = None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -411,6 +412,18 @@ async def test_unexpected_drop_fires_disconnected_callback() -> None:
     holder["transport"].drop(OSError("reset"))
     assert fired == [True]
     assert client.is_connected is False
+
+
+async def test_unexpected_drop_logs_cause(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unexpected drop logs the originating cause for diagnosability."""
+    holder: dict[str, FakeTransport] = {}
+    _client, _scanner = await _connect(holder)
+    with caplog.at_level(logging.DEBUG, logger="habluetooth.client_mgmt"):
+        holder["transport"].drop(OSError("connection reset by peer"))
+    assert "channel lost" in caplog.text
+    assert "connection reset by peer" in caplog.text
 
 
 async def test_operations_raise_after_disconnect() -> None:
