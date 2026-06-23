@@ -33,11 +33,13 @@ import struct
 from typing import TYPE_CHECKING
 
 from bleak import BleakError
+from bluetooth_data_tools import mac_to_int
 
 from ..const import BDADDR_LE_PUBLIC
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import NoReturn
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,13 +80,9 @@ def str_to_bdaddr(address: str) -> bytes:
     Pack ``AA:BB:CC:DD:EE:FF`` into the 6 little-endian bytes the kernel wants.
 
     BD_ADDRs go on the wire least-significant-octet first, so the textual
-    address is reversed.
+    address is reversed. Raises ``ValueError`` for a malformed address.
     """
-    parts = address.split(":")
-    if len(parts) != 6:
-        msg = f"invalid Bluetooth address: {address!r}"
-        raise ValueError(msg)
-    return bytes(int(part, 16) for part in reversed(parts))
+    return mac_to_int(address).to_bytes(6, "little")
 
 
 def make_sockaddr_l2(address: str, cid: int, bdaddr_type: int) -> _SockaddrL2:
@@ -127,6 +125,10 @@ class L2CAPSocket:
     disconnect, socket error) is reported once to ``on_close``. Outbound PDUs go
     through :meth:`send`, which is backpressure aware. ``on_data`` runs in the
     event loop read callback, so it must not block.
+
+    The loop's reader holds a reference to this socket (and thus to the
+    callbacks), so the owner must call :meth:`close` to release it; a peer
+    disconnect or read error closes it automatically.
     """
 
     def __init__(
@@ -172,53 +174,12 @@ class L2CAPSocket:
             sock.setblocking(False)
             if security_level:
                 _set_bt_security(sock, security_level)
-            cls._bind(sock, source)
-            await cls._connect(sock, address, address_type, loop, timeout)
+            _bind(sock, source)
+            await _connect(sock, address, address_type, loop, timeout)
         except BaseException:
             sock.close()
             raise
         return cls(sock, loop, on_data, on_close)
-
-    @staticmethod
-    def _bind(sock: socket.socket, source: str) -> None:
-        """Bind the socket to the local adapter so the route is deterministic."""
-        addr = make_sockaddr_l2(source, ATT_CID, BDADDR_LE_PUBLIC)
-        if (err := _bind_fd(sock.fileno(), addr)) != 0:
-            raise OSError(err, os.strerror(err))
-
-    @staticmethod
-    async def _connect(
-        sock: socket.socket,
-        address: str,
-        address_type: int,
-        loop: asyncio.AbstractEventLoop,
-        timeout: float,
-    ) -> None:
-        """Issue the non-blocking connect and await the result via SO_ERROR."""
-        addr = make_sockaddr_l2(address, ATT_CID, address_type)
-        err = _connect_fd(sock.fileno(), addr)
-        if err in (errno.EINPROGRESS, errno.EALREADY, errno.EAGAIN):
-            await L2CAPSocket._wait_connected(sock, loop, timeout)
-        elif err != 0:
-            raise OSError(err, os.strerror(err))
-
-    @staticmethod
-    async def _wait_connected(
-        sock: socket.socket,
-        loop: asyncio.AbstractEventLoop,
-        timeout: float,
-    ) -> None:
-        """Wait for the in-progress connect to settle, then check SO_ERROR."""
-        fut: asyncio.Future[None] = loop.create_future()
-        fd = sock.fileno()
-        loop.add_writer(fd, _set_result_if_pending, fut)
-        try:
-            async with asyncio.timeout(timeout):
-                await fut
-        finally:
-            loop.remove_writer(fd)
-        if (err := _so_error(sock)) != 0:
-            raise OSError(err, os.strerror(err))
 
     async def send(self, data: bytes) -> None:
         """Write one ATT PDU, awaiting socket writability under backpressure."""
@@ -256,6 +217,52 @@ class L2CAPSocket:
         self._closed = True
         self._loop.remove_reader(self._sock.fileno())
         self._sock.close()
+
+
+def _bind(sock: socket.socket, source: str) -> None:
+    """Bind the socket to the local adapter so the route is deterministic."""
+    addr = make_sockaddr_l2(source, ATT_CID, BDADDR_LE_PUBLIC)
+    if (err := _bind_fd(sock.fileno(), addr)) != 0:
+        _raise_errno(err)
+
+
+async def _connect(
+    sock: socket.socket,
+    address: str,
+    address_type: int,
+    loop: asyncio.AbstractEventLoop,
+    timeout: float,
+) -> None:
+    """Issue the non-blocking connect and await the result via SO_ERROR."""
+    addr = make_sockaddr_l2(address, ATT_CID, address_type)
+    err = _connect_fd(sock.fileno(), addr)
+    if err in (errno.EINPROGRESS, errno.EALREADY, errno.EAGAIN):
+        await _wait_connected(sock, loop, timeout)
+    elif err != 0:
+        _raise_errno(err)
+
+
+async def _wait_connected(
+    sock: socket.socket,
+    loop: asyncio.AbstractEventLoop,
+    timeout: float,
+) -> None:
+    """Wait for the in-progress connect to settle, then check SO_ERROR."""
+    fut: asyncio.Future[None] = loop.create_future()
+    fd = sock.fileno()
+    loop.add_writer(fd, _set_result_if_pending, fut)
+    try:
+        async with asyncio.timeout(timeout):
+            await fut
+    finally:
+        loop.remove_writer(fd)
+    if (err := _so_error(sock)) != 0:
+        _raise_errno(err)
+
+
+def _raise_errno(err: int) -> NoReturn:
+    """Raise an ``OSError`` carrying ``err`` and its platform message."""
+    raise OSError(err, os.strerror(err))
 
 
 def _set_bt_security(  # pragma: no cover - BT-only setsockopt
