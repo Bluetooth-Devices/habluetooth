@@ -231,6 +231,8 @@ class _ScannerWorker:
 
     __slots__ = (
         "_failed_window",
+        "_last_window_at",
+        "_last_window_duration",
         "_manager",
         "_owned_due_at",
         "_scanner",
@@ -257,6 +259,11 @@ class _ScannerWorker:
         self._sweep_last_completed: float = 0.0
         self._failed_window: bool = False
         self._warned_no_fallback: bool = False
+        # When this worker last opened (or was delegated) an active
+        # window, and that window's duration. Diagnostics-only; 0.0
+        # means "never". Set at dispatch (pre-await), like _window_end.
+        self._last_window_at: float = 0.0
+        self._last_window_duration: float = 0.0
         # Subset of _due_at owned by this worker; inner dicts aliased so
         # in-place advances stay visible. Mutated only via _attach_owned
         # / _detach_owned / _clear_owned, driven by _ScanSchedule.
@@ -338,6 +345,8 @@ class _ScannerWorker:
             self._window_end = window_end
         if self._sweep_last_completed < now:
             self._sweep_last_completed = now
+        self._last_window_at = now
+        self._last_window_duration = window_end - now
 
     def _next_event_at(self, now: float) -> float:
         """
@@ -426,7 +435,10 @@ class _ScannerWorker:
         Called before the scanner await so a mid-window ownership
         flip can't let a new owner double-fire.
         """
+        last_window_by_address = self._scheduler._last_window_by_address
+        source = self._scanner.source
         for _address, entries, due in due_buckets:
+            last_window_by_address[_address] = (from_time, source)
             for request in due:
                 entries[request] = from_time + request.scan_interval
 
@@ -472,6 +484,8 @@ class _ScannerWorker:
             if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
                 duration = _AUTO_REDISCOVERY_SWEEP_DURATION
             self._window_end = now + duration
+            self._last_window_at = now
+            self._last_window_duration = duration
             # Advance pre-await: a new owner that wakes mid-window
             # must see the entries already advanced, otherwise an
             # RSSI flip would let the new owner fire a duplicate
@@ -555,6 +569,10 @@ class _ScannerWorker:
                 continue
             for request in due:
                 entries[request] = now + request.scan_interval
+            self._scheduler._last_window_by_address[address] = (
+                now,
+                fallback.source if fallback is not None else None,
+            )
             had_any_progress = True
             if fallback is None:
                 continue
@@ -715,6 +733,7 @@ class AutoScanScheduler:
     """Coordinates on-demand active windows across AUTO-mode scanners."""
 
     __slots__ = (
+        "_last_window_by_address",
         "_loop",
         "_manager",
         "_on_demand_sweep_end",
@@ -731,6 +750,13 @@ class AutoScanScheduler:
         self._requests_by_address: dict[str, set[ActiveScanRequest]] = {}
         self._workers: dict[str, _ScannerWorker] = {}
         self._schedule = _ScanSchedule(self._workers)
+        # address -> (loop.time(), source) of the last active window that
+        # covered it. ``source`` is the scanner that ran the window (the
+        # owner on the normal path, the fallback when delegated, or None
+        # when another ACTIVE scanner already covered it). Compare source
+        # to the current owner to see if the right scanner scanned it.
+        # Diagnostics-only; pruned with requests.
+        self._last_window_by_address: dict[str, tuple[float, str | None]] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._on_demand_sweep_future: asyncio.Future[None] | None = None
@@ -792,6 +818,7 @@ class AutoScanScheduler:
             worker.stop()
         self._schedule.clear()
         self._workers.clear()
+        self._last_window_by_address.clear()
         # done() guard mirrors the leader's finally for symmetry;
         # a future left non-None after completion would otherwise
         # raise InvalidStateError here.
@@ -881,6 +908,7 @@ class AutoScanScheduler:
             bucket.discard(request)
             if not bucket:
                 del self._requests_by_address[request.address]
+                self._last_window_by_address.pop(request.address, None)
         self._schedule.drop(request.address, request)
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
@@ -1180,6 +1208,17 @@ class AutoScanScheduler:
         ``loop.time()`` values so callers can compute deltas; before
         ``start()`` (or after ``stop()``) ``_loop`` is None and these
         are reported as 0.0.
+
+        ``last_window_at`` / ``last_window_duration`` (per worker) and
+        ``last_active_window`` (per request address) record when an
+        active window last opened, recorded at dispatch (pre-await),
+        so a window the scanner then failed to open still shows here;
+        pair with ``failed_window`` to tell the two apart. 0.0 / None
+        means no active window has fired for that worker / address.
+        ``last_active_window_source`` is the scanner that ran that
+        window (None if another ACTIVE scanner covered it); compare it
+        to ``owner_source`` to see whether the device's current owner
+        is the one actually active-scanning it.
         """
         loop = self._loop
         now = loop.time() if loop is not None else 0.0
@@ -1188,6 +1227,8 @@ class AutoScanScheduler:
             workers[source] = {
                 "name": worker._scanner.name,
                 "window_end": worker._window_end,
+                "last_window_at": worker._last_window_at,
+                "last_window_duration": worker._last_window_duration,
                 "sweep_last_completed": worker._sweep_last_completed,
                 "next_sweep_at": (
                     worker._sweep_last_completed + _AUTO_REDISCOVERY_INTERVAL
@@ -1204,12 +1245,19 @@ class AutoScanScheduler:
             entries = self._schedule._due_at.get(address, {})
             history = last_service_info(address, False)
             owner_source = history.source if history is not None else None
+            last_window = self._last_window_by_address.get(address)
+            last_active_window = last_window[0] if last_window is not None else None
+            last_active_window_source = (
+                last_window[1] if last_window is not None else None
+            )
             requests[address] = [
                 {
                     "scan_interval": request.scan_interval,
                     "scan_duration": request.scan_duration,
                     "next_due": entries.get(request),
                     "owner_source": owner_source,
+                    "last_active_window": last_active_window,
+                    "last_active_window_source": last_active_window_source,
                 }
                 for request in bucket
             ]
