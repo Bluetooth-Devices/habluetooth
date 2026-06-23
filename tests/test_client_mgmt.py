@@ -391,6 +391,29 @@ async def test_disconnect_closes_transport() -> None:
     assert client.is_connected is False
 
 
+async def test_connection_register_callbacks_fire() -> None:
+    """The client reports connect/disconnect to the scanner's slot callbacks."""
+    holder: dict[str, FakeTransport] = {}
+    registered: list[str] = []
+    unregistered: list[str] = []
+    client = HaMgmtClient(
+        _ble_device(),
+        client_data=MgmtClientData(
+            adapter_address=_ADAPTER,
+            scanner=FakeScanner(),
+            register_connection=registered.append,
+            unregister_connection=unregistered.append,
+        ),
+        timeout=5.0,
+    )
+    with _patch_transport(make_responder(), holder):
+        await client.connect(False)
+    assert registered == [_PEER]
+    assert unregistered == []
+    await client.disconnect()
+    assert unregistered == [_PEER]
+
+
 async def test_disconnect_fires_disconnected_callback() -> None:
     """A deliberate disconnect fires the callback, matching the BlueZ backend."""
     holder: dict[str, FakeTransport] = {}
