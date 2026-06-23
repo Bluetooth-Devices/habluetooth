@@ -200,7 +200,15 @@ class L2CAPSocket:
             if self._closed:
                 msg = "L2CAP socket is closed"
                 raise BleakError(msg)
-            await self._loop.sock_sendall(self._sock, data)
+            try:
+                await self._loop.sock_sendall(self._sock, data)
+            except OSError as exc:
+                # Mirror the read path: a write-side transport failure tears the
+                # channel down and notifies on_close once before surfacing to
+                # the caller, rather than leaving it half-open until a read event
+                # happens to detect the loss.
+                self._fail(exc)
+                raise
 
     def _read_ready(self) -> None:
         """Read one inbound PDU and hand it to ``on_data`` (reader callback)."""

@@ -309,6 +309,27 @@ async def test_send_rechecks_closed_after_acquiring_lock(
             await second
 
 
+async def test_send_error_tears_down_channel(
+    pair: tuple[socket.socket, socket.socket],
+) -> None:
+    """A write-side socket error closes the channel and notifies on_close once."""
+    left, _right = pair
+    closed: list[Exception | None] = []
+    sock = await _connect(left, on_data=lambda _d: None, on_close=closed.append)
+    boom = OSError("epipe")
+
+    async def fake_sendall(_sock: socket.socket, _data: bytes) -> None:
+        raise boom
+
+    with (
+        patch.object(sock._loop, "sock_sendall", fake_sendall),
+        pytest.raises(OSError, match="epipe"),
+    ):
+        await sock.send(b"A")
+    assert sock._closed is True
+    assert closed == [boom]
+
+
 async def test_send_after_close_raises(
     pair: tuple[socket.socket, socket.socket],
 ) -> None:
