@@ -1868,6 +1868,30 @@ async def test_coalesce_clamps_oversize_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_window_honors_35s_request() -> None:
+    """A 35s scan_duration is dispatched as-is, not clamped down."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=60.0, scan_duration=35.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        entries = sched._schedule._due_at[address]
+        for req in list(entries):
+            entries[req] = loop.time() - 1.0
+        await sched._workers[scanner.source]._tick()
+        assert scanner.active_window_calls == [35.0]
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
 async def test_coalesce_only_due_requests_count() -> None:
     """Only the requests that are actually due contribute to coalesced duration."""
     manager = get_manager()

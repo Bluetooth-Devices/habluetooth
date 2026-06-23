@@ -1251,7 +1251,7 @@ class BluetoothManager:
         DEFAULT_ACTIVE_SCAN_DURATION (10s); pass smaller values to
         get a tighter cadence. The effective window is clamped to
         [AUTO_WINDOW_MIN_DURATION, AUTO_WINDOW_MAX_DURATION]
-        (5s..30s) and coalesced with other due requests for the
+        (5s..35s) and coalesced with other due requests for the
         scanner; very large ``scan_duration`` values are capped.
         ``scan_interval`` is measured between window starts (not
         between successive windows). ACTIVE / PASSIVE scanners

@@ -65,7 +65,7 @@ AUTO_REDISCOVERY_SWEEP_DURATION: Final = 15.0
 # matches the validation in async_register_active_scan; the ceiling is
 # the longest single ACTIVE flip we'll ever do for one device tick.
 AUTO_WINDOW_MIN_DURATION: Final = 5.0
-AUTO_WINDOW_MAX_DURATION: Final = 30.0
+AUTO_WINDOW_MAX_DURATION: Final = 35.0
 
 # Per-device entries due within AUTO_COALESCE_LOOKAHEAD of now are
 # pulled into the current window so staggered registrations sync up
