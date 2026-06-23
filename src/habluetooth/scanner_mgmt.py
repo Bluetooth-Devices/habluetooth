@@ -207,7 +207,15 @@ class HaScannerMgmt(BaseHaScanner):
         """Run a coroutine, keeping a reference so it is not GC'd mid-flight."""
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._on_background_task_done)
+
+    def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
+        """Drop the task reference and surface any escaped exception in logs."""
+        self._background_tasks.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            # Otherwise this only shows up as asyncio's "Task exception was
+            # never retrieved" at GC time, which is easy to miss.
+            _LOGGER.error("%s: background task failed", self.name, exc_info=exc)
 
     # -- connection slots --------------------------------------------------
     def _can_connect(self) -> bool:

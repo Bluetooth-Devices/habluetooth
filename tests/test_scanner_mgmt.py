@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -354,6 +355,25 @@ async def test_watchdog_restart_logs_on_failure(
             await task
     assert "failed to restart" in caplog.text
     await scanner.async_stop()
+
+
+async def test_background_task_failure_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An exception escaping a background task is logged, not lost at GC."""
+    scanner = _scanner()
+
+    async def boom() -> None:
+        msg = "kaboom"
+        raise RuntimeError(msg)
+
+    with caplog.at_level("ERROR", logger="habluetooth.scanner_mgmt"):
+        scanner._create_background_task(boom())
+        task = next(iter(scanner._background_tasks))
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)  # let the done-callback run
+    assert "background task failed" in caplog.text
+    assert scanner._background_tasks == set()  # reference dropped
 
 
 async def test_unsetup_stops_watchdog(use_mgmt: FakeMgmt) -> None:
