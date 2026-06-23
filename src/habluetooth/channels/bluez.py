@@ -4,6 +4,7 @@ import asyncio
 import logging
 from asyncio import timeout as asyncio_timeout
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from functools import lru_cache
 from struct import Struct
 from typing import TYPE_CHECKING, Any, cast
@@ -41,6 +42,7 @@ DEVICE_FOUND = 0x0012
 ADV_MONITOR_DEVICE_FOUND = 0x002F
 
 # Management commands
+MGMT_OP_LOAD_LONG_TERM_KEYS = 0x0013
 MGMT_OP_DISCONNECT = 0x0014
 MGMT_OP_GET_CONNECTIONS = 0x0015
 MGMT_OP_PAIR_DEVICE = 0x0019
@@ -91,6 +93,15 @@ PAIR_DEVICE_PACK = PAIR_DEVICE_STRUCT.pack
 # UNPAIR_DEVICE carries bdaddr (6) + address type (1) + disconnect flag (1).
 UNPAIR_DEVICE_STRUCT = Struct("<6sBB")
 UNPAIR_DEVICE_PACK = UNPAIR_DEVICE_STRUCT.pack
+# LOAD_LONG_TERM_KEYS carries a uint16 key count followed by mgmt_ltk_info
+# records: bdaddr (6) + address type (1) + key type (1) + central flag (1) +
+# encryption size (1) + ediv (2) + rand (8) + value (16) = 36 bytes each.
+LTK_COUNT_STRUCT = Struct("<H")
+LTK_COUNT_PACK = LTK_COUNT_STRUCT.pack
+LTK_INFO_STRUCT = Struct("<6sBBBBH8s16s")
+LTK_INFO_PACK = LTK_INFO_STRUCT.pack
+_LTK_RAND_LEN = 8
+_LTK_VALUE_LEN = 16
 
 CONNECTION_ERRORS = (
     BluetoothSocketError,
@@ -104,6 +115,27 @@ def _set_future_if_not_done(future: asyncio.Future[None] | None) -> None:
     """Set the future result if not done."""
     if future is not None and not future.done():
         future.set_result(None)
+
+
+@dataclass(slots=True, frozen=True)
+class LongTermKey:
+    """
+    A bonded LE long-term key (the mgmt ``mgmt_ltk_info`` record).
+
+    These are captured from NEW_LONG_TERM_KEY events when pairing completes and
+    fed back via :meth:`MGMTBluetoothCtl.load_long_term_keys` on reconnect so the
+    kernel re-encrypts the link without re-pairing. ``rand`` is 8 bytes and
+    ``value`` is 16 bytes.
+    """
+
+    address: str
+    address_type: int
+    key_type: int
+    central: bool  # the mgmt API calls this "master"
+    encryption_size: int
+    ediv: int
+    rand: bytes
+    value: bytes
 
 
 def _mgmt_address_bytes(address: str) -> bytes | None:
@@ -735,6 +767,56 @@ class MGMTBluetoothCtl:
             "hci%u: failed to disconnect %s: %s",
             adapter_idx,
             address,
+            "no response" if result is None else f"status={result[0]:#x}",
+        )
+        return False
+
+    async def load_long_term_keys(
+        self, adapter_idx: int, keys: list[LongTermKey]
+    ) -> bool:
+        """
+        Restore bonded long-term keys for an adapter.
+
+        Replaces the controller's LTK list (an empty list clears it) so the
+        kernel can re-encrypt links to already-bonded peers without re-pairing.
+        """
+        records: list[bytes] = []
+        for key in keys:
+            addr = _mgmt_address_bytes(key.address)
+            if addr is None:
+                _LOGGER.error(
+                    "hci%u: invalid address in long-term key: %s",
+                    adapter_idx,
+                    key.address,
+                )
+                return False
+            if len(key.rand) != _LTK_RAND_LEN or len(key.value) != _LTK_VALUE_LEN:
+                _LOGGER.error(
+                    "hci%u: malformed long-term key for %s", adapter_idx, key.address
+                )
+                return False
+            records.append(
+                LTK_INFO_PACK(
+                    addr,
+                    key.address_type,
+                    key.key_type,
+                    1 if key.central else 0,
+                    key.encryption_size,
+                    key.ediv,
+                    key.rand,
+                    key.value,
+                )
+            )
+        cmd_data = LTK_COUNT_PACK(len(keys)) + b"".join(records)
+        result = await self._send_command_await(
+            MGMT_OP_LOAD_LONG_TERM_KEYS, adapter_idx, cmd_data
+        )
+        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+            return True
+        _LOGGER.warning(
+            "hci%u: failed to load %d long-term key(s): %s",
+            adapter_idx,
+            len(keys),
             "no response" if result is None else f"status={result[0]:#x}",
         )
         return False
