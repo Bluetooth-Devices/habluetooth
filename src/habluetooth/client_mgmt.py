@@ -1,0 +1,316 @@
+"""
+Kernel/L2CAP GATT client backend (bleak ``BaseBleakClient``).
+
+``HaMgmtClient`` is a bleak-compatible client that talks to a peripheral over a
+raw L2CAP ATT channel instead of going through bluetoothd/DBus. It wires the
+:class:`~habluetooth.channels.l2cap.L2CAPSocket` transport to the
+:class:`~habluetooth.channels.att.ATTClient` codec, runs MTU exchange and GATT
+discovery on connect, and translates the discovered tree into bleak's unified
+GATT model so existing integrations can use it unchanged.
+
+It is **not** wired into Home Assistant: the scanner selection still builds the
+DBus-backed ``HaScanner`` and bleak's platform client. This module is the
+connect-side backend that a later mgmt scanner / factory change will route to;
+on its own nothing imports it, so it has no effect on the running system.
+
+Pairing is intentionally out of scope here. ``pair``/``unpair`` raise, and
+``connect`` ignores the ``pair`` flag; the kernel still drives LE encryption
+from bonded keys via the socket's ``BT_SECURITY`` level. Mgmt-driven bonding
+lands in a follow-up alongside the mgmt connect/pairing commands.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+from bleak import BleakError
+from bleak.backends.characteristic import BleakGATTCharacteristic
+from bleak.backends.client import BaseBleakClient
+from bleak.backends.descriptor import BleakGATTDescriptor
+from bleak.backends.service import BleakGATTService, BleakGATTServiceCollection
+
+from .channels.att import (
+    CCCD_UUID,
+    DEFAULT_MTU,
+    PREFERRED_MTU,
+    ATTClient,
+    properties_to_strings,
+)
+from .channels.l2cap import L2CAPSocket
+from .const import BDADDR_LE_PUBLIC
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from contextlib import AbstractContextManager
+
+    from bleak.args import SizedBuffer
+    from bleak.assigned_numbers import CharacteristicPropertyName
+    from bleak.backends.device import BLEDevice
+
+    from .channels.att import GattService
+
+
+class SupportsConnecting(Protocol):
+    """The slice of a scanner the client needs: a scan-pause context manager."""
+
+    def connecting(self) -> AbstractContextManager[None]:
+        """Pause scanning for the duration of a connection attempt."""
+
+
+_LOGGER = logging.getLogger(__name__)
+
+# Fallback connect timeout; the bleak wrapper always supplies ``timeout``.
+DEFAULT_TIMEOUT = 10.0
+
+# Client Characteristic Configuration Descriptor payloads (Core Vol 3 Part G).
+_CCCD_NOTIFY = b"\x01\x00"
+_CCCD_INDICATE = b"\x02\x00"
+_CCCD_OFF = b"\x00\x00"
+
+
+@dataclass(slots=True)
+class MgmtClientData:
+    """Per-connection wiring the mgmt scanner hands to each client instance."""
+
+    adapter_address: str  # local adapter BD_ADDR the L2CAP socket binds/sends from
+    scanner: SupportsConnecting  # provides connecting() to pause scanning
+
+
+class HaMgmtClient(BaseBleakClient):
+    """A bleak client that drives GATT over a raw L2CAP ATT channel."""
+
+    def __init__(
+        self,
+        address_or_ble_device: BLEDevice | str,
+        *args: Any,
+        client_data: MgmtClientData,
+        **kwargs: Any,
+    ) -> None:
+        """Bind the client to its peer address and adapter wiring."""
+        kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
+        super().__init__(address_or_ble_device, *args, **kwargs)
+        self._adapter_address = client_data.adapter_address
+        self._scanner = client_data.scanner
+        details = getattr(address_or_ble_device, "details", None) or {}
+        if "address_type" in details:
+            self._address_type: int = details["address_type"]
+        else:
+            # Adverts always carry the peer address type, so the scanner should
+            # populate it; fall back to public but log so a missing field is not
+            # only visible as an opaque L2CAP connect timeout later.
+            self._address_type = BDADDR_LE_PUBLIC
+            _LOGGER.debug(
+                "%s: no address_type in details; assuming LE public", self.address
+            )
+        self._att: ATTClient | None = None
+        self._sock: L2CAPSocket | None = None
+        self._connected = False
+
+    # -- properties --------------------------------------------------------
+    @property
+    def is_connected(self) -> bool:
+        """Whether the L2CAP/ATT channel is currently up."""
+        return self._connected
+
+    @property
+    def mtu_size(self) -> int:
+        """The negotiated ATT MTU, or the default until it is exchanged."""
+        return self._att.mtu if self._att is not None else DEFAULT_MTU
+
+    # -- connection --------------------------------------------------------
+    async def connect(self, pair: bool, **kwargs: Any) -> None:
+        """Open the L2CAP channel, exchange MTU, and discover services."""
+        if self._connected:
+            msg = "already connected"
+            raise BleakError(msg)
+        if pair:
+            _LOGGER.debug(
+                "%s: mgmt client does not pair on connect; relying on bonded keys",
+                self.address,
+            )
+        att = ATTClient(send=self._send_pdu, on_disconnect=self._handle_disconnect)
+        self._att = att
+        try:
+            with self._scanner.connecting():
+                self._sock = await L2CAPSocket.create_connection(
+                    source=self._adapter_address,
+                    address=self.address,
+                    address_type=self._address_type,
+                    on_data=att.data_received,
+                    on_close=att.connection_lost,
+                    timeout=self._timeout,
+                )
+                await att.exchange_mtu(PREFERRED_MTU)
+                services = await att.discover()
+        except BaseException:
+            self._handle_disconnect(None)
+            raise
+        self.services = self._build_services(services)
+        self._connected = True
+
+    async def disconnect(self) -> None:
+        """
+        Close the channel; idempotent.
+
+        Like the BlueZ backend this replaces (and unlike CoreBluetooth/WinRT),
+        a deliberate disconnect also fires the disconnected callback.
+        """
+        self._handle_disconnect(None)
+
+    async def _send_pdu(self, data: bytes) -> None:
+        """Write one ATT PDU through the transport (bound into the codec)."""
+        # _att is created before the socket, but its send is only driven after
+        # create_connection has returned and assigned _sock.
+        if self._sock is None:  # pragma: no cover - send only runs once connected
+            msg = "transport not connected"
+            raise BleakError(msg)
+        await self._sock.send(data)
+
+    def _handle_disconnect(self, exc: Exception | None) -> None:
+        """Tear the channel down once and notify on an unexpected drop."""
+        if exc is not None:
+            # The codec only passes a cause on an unexpected drop; a deliberate
+            # disconnect() passes None and stays silent. bleak's callback takes
+            # no args, so this log is the only place the reason can surface.
+            _LOGGER.debug("%s: L2CAP/ATT channel lost: %s", self.address, exc)
+        was_connected = self._connected
+        self._connected = False
+        self._att = None
+        if self._sock is not None:
+            # Idempotent: a transport-level drop already closed it; a request
+            # timeout poisons the codec without closing, so close it here.
+            self._sock.close()
+            self._sock = None
+        if was_connected and self._disconnected_callback is not None:
+            self._disconnected_callback()
+
+    # -- GATT model --------------------------------------------------------
+    def _build_services(
+        self, services: list[GattService]
+    ) -> BleakGATTServiceCollection:
+        """Translate the discovered tree into bleak's GATT collection."""
+        collection = BleakGATTServiceCollection()
+        for svc in services:
+            bleak_service = BleakGATTService(svc, svc.handle, svc.uuid)
+            collection.add_service(bleak_service)
+            for char in svc.characteristics:
+                bleak_char = BleakGATTCharacteristic(
+                    char,
+                    # Reads/writes target the value handle, so that is the
+                    # handle bleak resolves operations against.
+                    char.value_handle,
+                    char.uuid,
+                    cast(
+                        "list[CharacteristicPropertyName]",
+                        properties_to_strings(char.properties),
+                    ),
+                    self._max_write_without_response_size,
+                    bleak_service,
+                )
+                collection.add_characteristic(bleak_char)
+                for desc in char.descriptors:
+                    collection.add_descriptor(
+                        BleakGATTDescriptor(desc, desc.handle, desc.uuid, bleak_char)
+                    )
+        return collection
+
+    def _max_write_without_response_size(self) -> int:
+        """Largest write-without-response payload for the current MTU."""
+        return self.mtu_size - 3
+
+    # -- GATT operations ---------------------------------------------------
+    async def read_gatt_char(
+        self,
+        characteristic: BleakGATTCharacteristic,
+        *,
+        use_cached: bool = False,
+        **kwargs: Any,
+    ) -> bytearray:
+        """Read a characteristic value by its value handle."""
+        return bytearray(await self._codec().read(characteristic.handle))
+
+    async def read_gatt_descriptor(
+        self,
+        descriptor: BleakGATTDescriptor,
+        *,
+        use_cached: bool = False,
+        **kwargs: Any,
+    ) -> bytearray:
+        """Read a descriptor value by its handle."""
+        return bytearray(await self._codec().read(descriptor.handle))
+
+    async def write_gatt_char(
+        self,
+        characteristic: BleakGATTCharacteristic,
+        data: SizedBuffer,
+        response: bool,
+    ) -> None:
+        """Write a characteristic value, with or without a response."""
+        codec = self._codec()
+        if response:
+            await codec.write(characteristic.handle, bytes(data))
+        else:
+            await codec.write_command(characteristic.handle, bytes(data))
+
+    async def write_gatt_descriptor(
+        self, descriptor: BleakGATTDescriptor, data: SizedBuffer
+    ) -> None:
+        """Write a descriptor value with a response."""
+        await self._codec().write(descriptor.handle, bytes(data))
+
+    async def start_notify(
+        self,
+        characteristic: BleakGATTCharacteristic,
+        callback: Callable[[bytearray], None],
+        **kwargs: Any,
+    ) -> None:
+        """Enable notifications/indications by writing the CCCD and routing them."""
+        codec = self._codec()
+        if "notify" in characteristic.properties:
+            cccd_value = _CCCD_NOTIFY
+        elif "indicate" in characteristic.properties:
+            cccd_value = _CCCD_INDICATE
+        else:
+            msg = "characteristic does not support notify or indicate"
+            raise BleakError(msg)
+        cccd = characteristic.get_descriptor(CCCD_UUID)
+        if cccd is None:
+            msg = "characteristic has no client configuration descriptor"
+            raise BleakError(msg)
+        # Register before enabling so a notification racing in right after the
+        # CCCD write is not lost; unwind if the write fails so no handler is left
+        # registered for notifications that were never enabled.
+        codec.set_notify_handler(characteristic.handle, callback)
+        try:
+            await codec.write(cccd.handle, cccd_value)
+        except BaseException:
+            codec.remove_notify_handler(characteristic.handle)
+            raise
+
+    async def stop_notify(self, characteristic: BleakGATTCharacteristic) -> None:
+        """Disable notifications by clearing the CCCD and dropping the handler."""
+        codec = self._codec()
+        cccd = characteristic.get_descriptor(CCCD_UUID)
+        if cccd is not None:
+            await codec.write(cccd.handle, _CCCD_OFF)
+        codec.remove_notify_handler(characteristic.handle)
+
+    # -- pairing (not yet supported) --------------------------------------
+    async def pair(self, *args: Any, **kwargs: Any) -> None:
+        """Pairing via mgmt is not implemented yet."""
+        msg = "pairing is not supported by the mgmt client yet"
+        raise NotImplementedError(msg)
+
+    async def unpair(self) -> None:
+        """Unpairing via mgmt is not implemented yet."""
+        msg = "unpairing is not supported by the mgmt client yet"
+        raise NotImplementedError(msg)
+
+    def _codec(self) -> ATTClient:
+        """Return the live ATT codec or raise if the channel is down."""
+        if self._att is None or not self._connected:
+            msg = "not connected"
+            raise BleakError(msg)
+        return self._att
