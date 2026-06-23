@@ -357,6 +357,26 @@ async def test_watchdog_restart_logs_on_failure(
     await scanner.async_stop()
 
 
+async def test_restart_does_not_stack_monitor_on_failed_removal(
+    use_mgmt: FakeMgmt,
+) -> None:
+    """If a passive monitor cannot be removed, the restart does not add another."""
+    use_mgmt.remove_ok = False
+    scanner = _scanner(BluetoothScanningMode.PASSIVE)
+    scanner.async_setup()
+    await scanner.async_start()
+    assert use_mgmt.monitors_added == [_ADAPTER_IDX]
+    with patch.object(scanner, "_async_watchdog_triggered", return_value=True):
+        scanner._async_scanner_watchdog()
+        for task in list(scanner._background_tasks):
+            await task
+    # Removal failed, so no second monitor was registered (no stacking/leak),
+    # and the handle is preserved for a retry on the next tick.
+    assert use_mgmt.monitors_added == [_ADAPTER_IDX]
+    assert scanner._monitor_handle == 7
+    await scanner.async_stop()
+
+
 async def test_background_task_failure_is_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

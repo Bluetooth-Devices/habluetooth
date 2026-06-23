@@ -198,6 +198,16 @@ class HaScannerMgmt(BaseHaScanner):
         """Stop and start discovery again under the start/stop lock."""
         async with self._start_stop_lock:
             await self._async_stop_discovery()
+            if self._monitor_handle is not None:
+                # The passive monitor could not be removed; do not re-add one or
+                # we would stack (and leak) a second kernel monitor over the
+                # still-registered handle. The watchdog re-fires next tick to
+                # retry the removal.
+                _LOGGER.debug(
+                    "%s: monitor removal pending, deferring discovery restart",
+                    self.name,
+                )
+                return
             try:
                 await self._async_start()
             except ScannerStartError:
