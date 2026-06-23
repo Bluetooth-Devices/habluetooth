@@ -45,10 +45,12 @@ from .models import BluetoothScanningMode, HaBluetoothConnector
 from .scanner_bleak import IS_LINUX, HaScanner, ScannerStartError, _resolve_radio_mode
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine
+    from collections.abc import Coroutine, Iterable
     from typing import Any
 
     from bleak.backends.client import BaseBleakClient
+    from bleak.backends.device import BLEDevice
+    from bleak.backends.scanner import AdvertisementData
 
     from .const import CALLBACK_TYPE
 
@@ -139,12 +141,24 @@ class HaScannerMgmt(BaseHaScanner):
         idx = self.adapter_idx
         mgmt = get_manager().get_bluez_mgmt_ctl()
         if idx is None or mgmt is None:
+            # The controller went away with discovery possibly still running in
+            # the kernel; log so the orphaned state is observable.
+            _LOGGER.debug(
+                "%s: cannot stop discovery, mgmt controller unavailable", self.name
+            )
             return
         if self._monitor_handle is not None:
-            await mgmt.remove_adv_monitor(idx, self._monitor_handle)
-            self._monitor_handle = None
-        else:
-            await mgmt.stop_discovery(idx)
+            if await mgmt.remove_adv_monitor(idx, self._monitor_handle):
+                self._monitor_handle = None
+            else:
+                # Keep the handle so a later stop can retry rather than leak it.
+                _LOGGER.warning(
+                    "%s: failed to remove advertisement monitor %s",
+                    self.name,
+                    self._monitor_handle,
+                )
+        elif not await mgmt.stop_discovery(idx):
+            _LOGGER.warning("%s: failed to stop mgmt discovery", self.name)
 
     def _async_scanner_watchdog(self) -> None:
         """Restart discovery if the adapter has gone quiet."""
@@ -177,7 +191,14 @@ class HaScannerMgmt(BaseHaScanner):
 
     # -- connection slots --------------------------------------------------
     def _can_connect(self) -> bool:
-        """Whether a new connection fits within the adapter's slot budget."""
+        """
+        Whether a new connection fits within the adapter's slot budget.
+
+        This is an advisory gate, not a reservation: the slot is only recorded
+        once the client connects, so two attempts that both pass here before
+        either registers can overshoot the budget by one. The bleak slot path
+        has the same shape; it bounds, it does not strictly serialize.
+        """
         if not self.connectable:
             return False
         slots = self._slot_limit()
@@ -207,6 +228,39 @@ class HaScannerMgmt(BaseHaScanner):
             list(self._connections),
         )
 
+    # -- discovered-device read-out ---------------------------------------
+    # BaseHaScanner leaves these abstract; only remote scanners implement them.
+    # They are served from _previous_service_info (populated by the inherited
+    # ingestion path) so the manager's unavailable tracking, connect path, and
+    # diagnostics work once this scanner is registered.
+    @property
+    def discovered_devices(self) -> list[BLEDevice]:
+        """Return the devices seen so far."""
+        return [info.device for info in self._previous_service_info.values()]
+
+    @property
+    def discovered_devices_and_advertisement_data(
+        self,
+    ) -> dict[str, tuple[BLEDevice, AdvertisementData]]:
+        """Return each discovered device with its latest advertisement."""
+        return {
+            address: (info.device, info.advertisement)
+            for address, info in self._previous_service_info.items()
+        }
+
+    @property
+    def discovered_addresses(self) -> Iterable[str]:
+        """Return the addresses seen so far."""
+        return self._previous_service_info
+
+    def get_discovered_device_advertisement_data(
+        self, address: str
+    ) -> tuple[BLEDevice, AdvertisementData] | None:
+        """Return the device and advertisement for a discovered address."""
+        if (info := self._previous_service_info.get(address)) is not None:
+            return info.device, info.advertisement
+        return None
+
 
 def create_local_scanner(
     mode: BluetoothScanningMode, adapter: str, address: str
@@ -215,8 +269,12 @@ def create_local_scanner(
     Build the best local scanner for an adapter.
 
     Returns :class:`HaScannerMgmt` when mgmt discovery is available (Linux with a
-    usable management socket and an ``hciN`` adapter), otherwise the bleak-backed
-    :class:`HaScanner`.
+    usable management socket, an ``hciN`` adapter, and a real adapter BD_ADDR),
+    otherwise the bleak-backed :class:`HaScanner`.
+
+    A real ``address`` is required because the L2CAP connect path binds to it to
+    pin connections to the adapter that discovered the device; a missing address
+    would bind to ``BDADDR_ANY`` and let the kernel pick a different radio.
     """
     manager = get_manager()
     mgmt = manager.get_bluez_mgmt_ctl()
@@ -225,6 +283,7 @@ def create_local_scanner(
         and mgmt is not None
         and mgmt.can_discover
         and adapter.startswith("hci")
+        and address != DEFAULT_ADDRESS
     ):
         return HaScannerMgmt(mode, adapter, address)
     return HaScanner(mode, adapter, address)

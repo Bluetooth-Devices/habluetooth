@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from bluetooth_adapters import DEFAULT_ADDRESS
+from bluetooth_data_tools import monotonic_time_coarse
 
 from habluetooth import (
     BluetoothScanningMode,
@@ -37,6 +39,8 @@ class FakeMgmt:
         self.monitors_added: list[int] = []
         self.monitors_removed: list[tuple[int, int]] = []
         self.start_ok = True
+        self.stop_ok = True
+        self.remove_ok = True
         self.monitor_handle: int | None = 7
 
     async def start_discovery(self, idx: int) -> bool:
@@ -45,7 +49,7 @@ class FakeMgmt:
 
     async def stop_discovery(self, idx: int) -> bool:
         self.stopped.append(idx)
-        return True
+        return self.stop_ok
 
     async def add_adv_pattern_monitor(self, idx: int) -> int | None:
         self.monitors_added.append(idx)
@@ -53,7 +57,7 @@ class FakeMgmt:
 
     async def remove_adv_monitor(self, idx: int, handle: int) -> bool:
         self.monitors_removed.append((idx, handle))
-        return True
+        return self.remove_ok
 
 
 @pytest.fixture
@@ -94,6 +98,15 @@ async def test_factory_falls_back_for_non_hci_adapter(use_mgmt: FakeMgmt) -> Non
     with patch("habluetooth.scanner_mgmt.IS_LINUX", True):
         scanner = create_local_scanner(
             BluetoothScanningMode.ACTIVE, "CoreBluetooth", _ADDRESS
+        )
+    assert type(scanner) is HaScanner
+
+
+async def test_factory_falls_back_without_real_address(use_mgmt: FakeMgmt) -> None:
+    """Without a real adapter BD_ADDR the mgmt scanner cannot pin connects."""
+    with patch("habluetooth.scanner_mgmt.IS_LINUX", True):
+        scanner = create_local_scanner(
+            BluetoothScanningMode.ACTIVE, _ADAPTER, DEFAULT_ADDRESS
         )
     assert type(scanner) is HaScanner
 
@@ -307,6 +320,59 @@ async def test_stop_discovery_noop_without_mgmt() -> None:
     scanner = _scanner()
     with patch.object(get_manager(), "get_bluez_mgmt_ctl", return_value=None):
         await scanner._async_stop_discovery()  # does not raise
+
+
+async def test_stop_active_warns_on_failure(
+    use_mgmt: FakeMgmt, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failed stop_discovery is logged and the scanner still stops scanning."""
+    use_mgmt.stop_ok = False
+    scanner = _scanner(BluetoothScanningMode.ACTIVE)
+    scanner.async_setup()
+    await scanner.async_start()
+    with caplog.at_level("WARNING", logger="habluetooth.scanner_mgmt"):
+        await scanner.async_stop()
+    assert "failed to stop mgmt discovery" in caplog.text
+    assert scanner.scanning is False
+
+
+async def test_stop_passive_keeps_handle_on_failed_removal(
+    use_mgmt: FakeMgmt, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failed monitor removal keeps the handle so a later stop can retry."""
+    use_mgmt.remove_ok = False
+    scanner = _scanner(BluetoothScanningMode.PASSIVE)
+    scanner.async_setup()
+    await scanner.async_start()
+    with caplog.at_level("WARNING", logger="habluetooth.scanner_mgmt"):
+        await scanner.async_stop()
+    assert "failed to remove advertisement monitor" in caplog.text
+    assert scanner._monitor_handle == 7  # not cleared, so a retry is possible
+
+
+async def test_registered_scanner_reports_discovered_devices(
+    use_mgmt: FakeMgmt,
+) -> None:
+    """Once registered, the inherited ingestion feeds the read-out overrides."""
+    scanner = _scanner()
+    scanner.async_setup()
+    unregister = get_manager().async_register_scanner(scanner)
+    try:
+        assert list(scanner.discovered_addresses) == []
+        assert scanner.discovered_devices == []
+        assert scanner.discovered_devices_and_advertisement_data == {}
+        assert scanner.get_discovered_device_advertisement_data(_PEER) is None
+        scanner._async_on_advertisement(
+            _PEER, -60, "dev", [], {}, {}, None, {}, monotonic_time_coarse()
+        )
+        assert _PEER in scanner.discovered_addresses
+        assert _PEER in scanner.discovered_devices_and_advertisement_data
+        result = scanner.get_discovered_device_advertisement_data(_PEER)
+        assert result is not None
+        assert result[0].address == _PEER
+        assert scanner.discovered_devices[0].address == _PEER
+    finally:
+        unregister()
 
 
 async def test_slot_limit_zero_when_adapter_unregistered() -> None:
