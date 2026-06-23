@@ -11,10 +11,14 @@ import pytest
 from btsocket.btmgmt_socket import BluetoothSocketError
 
 from habluetooth.channels.bluez import (
+    IO_CAPABILITY_NO_INPUT_NO_OUTPUT,
     MGMT_OP_ADD_ADV_PATTERNS_MONITOR,
+    MGMT_OP_DISCONNECT,
+    MGMT_OP_PAIR_DEVICE,
     MGMT_OP_REMOVE_ADV_MONITOR,
     MGMT_OP_START_DISCOVERY,
     MGMT_OP_STOP_DISCOVERY,
+    MGMT_OP_UNPAIR_DEVICE,
     SCAN_TYPE_LE,
     BluetoothMGMTProtocol,
     MGMTBluetoothCtl,
@@ -1918,3 +1922,117 @@ def test_make_bluez_details() -> None:
         "path": "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF",
         "props": {"Adapter": "/org/bluez/hci0"},
     }
+
+
+# -- pairing / disconnect commands ----------------------------------------
+@pytest.mark.asyncio
+async def test_pair_device_success() -> None:
+    """pair_device sends bdaddr + type + IO capability and returns True."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+
+    assert await mgmt_ctl.pair_device(0, "AA:BB:CC:DD:EE:FF", BDADDR_LE_RANDOM) is True
+
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[0:2] == MGMT_OP_PAIR_DEVICE.to_bytes(2, "little")
+    assert sent[2:4] == b"\x00\x00"  # controller idx
+    assert sent[6:12] == bytes([0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA])  # reversed
+    assert sent[12] == BDADDR_LE_RANDOM
+    assert sent[13] == IO_CAPABILITY_NO_INPUT_NO_OUTPUT
+
+
+@pytest.mark.asyncio
+async def test_pair_device_failure() -> None:
+    """pair_device returns False on a non-success status."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x03)
+    assert await mgmt_ctl.pair_device(0, "AA:BB:CC:DD:EE:FF", BDADDR_LE_PUBLIC) is False
+
+
+@pytest.mark.asyncio
+async def test_unpair_device_success() -> None:
+    """unpair_device sends bdaddr + type + disconnect flag and returns True."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+
+    assert (
+        await mgmt_ctl.unpair_device(0, "AA:BB:CC:DD:EE:FF", BDADDR_LE_PUBLIC) is True
+    )
+
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[0:2] == MGMT_OP_UNPAIR_DEVICE.to_bytes(2, "little")
+    assert sent[6:12] == bytes([0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA])
+    assert sent[12] == BDADDR_LE_PUBLIC
+    assert sent[13] == 1  # disconnect default
+
+
+@pytest.mark.asyncio
+async def test_unpair_device_without_disconnect() -> None:
+    """unpair_device(disconnect=False) clears the disconnect flag."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+
+    assert (
+        await mgmt_ctl.unpair_device(
+            0, "AA:BB:CC:DD:EE:FF", BDADDR_LE_PUBLIC, disconnect=False
+        )
+        is True
+    )
+    assert mock_protocol._write_to_socket.call_args[0][0][13] == 0
+
+
+@pytest.mark.asyncio
+async def test_disconnect_device_success() -> None:
+    """disconnect_device sends bdaddr + type and returns True."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+
+    assert (
+        await mgmt_ctl.disconnect_device(0, "AA:BB:CC:DD:EE:FF", BDADDR_LE_RANDOM)
+        is True
+    )
+
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[0:2] == MGMT_OP_DISCONNECT.to_bytes(2, "little")
+    assert sent[6:12] == bytes([0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA])
+    assert sent[12] == BDADDR_LE_RANDOM
+
+
+@pytest.mark.asyncio
+async def test_disconnect_device_no_response() -> None:
+    """A command with no response (timeout) returns False."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.transport = None  # no connection -> _send_command_await None
+    assert (
+        await mgmt_ctl.disconnect_device(0, "AA:BB:CC:DD:EE:FF", BDADDR_LE_PUBLIC)
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_unpair_device_failure() -> None:
+    """unpair_device returns False on a non-success status."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x03)
+    assert (
+        await mgmt_ctl.unpair_device(0, "AA:BB:CC:DD:EE:FF", BDADDR_LE_PUBLIC) is False
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    ["pair_device", "unpair_device", "disconnect_device"],
+)
+@pytest.mark.parametrize(
+    "bad_address",
+    ["AA:BB", "ZZ:BB:CC:DD:EE:FF"],  # too short, and non-hex
+)
+async def test_pairing_commands_reject_invalid_address(
+    command: str, bad_address: str
+) -> None:
+    """A malformed address is a soft failure, not an exception."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    assert await getattr(mgmt_ctl, command)(0, bad_address, BDADDR_LE_PUBLIC) is False
+    mock_protocol._write_to_socket.assert_not_called()
