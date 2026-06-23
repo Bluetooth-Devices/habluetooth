@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.13.0 (2026-06-23)
+
+### Features
+
+
+- Raise the maximum auto active scan window to 35s ([`eb05581`](https://github.com/Bluetooth-Devices/habluetooth/commit/eb05581216a5e6e2f334885aed0d11d3af48f0e6))
+
+
 ## v6.12.0 (2026-06-23)
 
 ### Features
