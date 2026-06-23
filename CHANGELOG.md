@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.12.0 (2026-06-23)
+
+### Features
+
+
+- Add l2cap gatt client backend ([`f660749`](https://github.com/Bluetooth-Devices/habluetooth/commit/f660749b3117c08a91c4b1759de537241891d261))
+
+
 ## v6.11.0 (2026-06-23)
 
 ### Features
