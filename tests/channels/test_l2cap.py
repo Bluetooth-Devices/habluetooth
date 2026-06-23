@@ -7,6 +7,7 @@ import errno
 import os
 import re
 import socket
+import sys
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
@@ -27,7 +28,16 @@ from habluetooth.const import BDADDR_LE_RANDOM
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [
+    pytest.mark.asyncio,
+    # L2CAP is Linux only; the transport drives the socket with add_reader /
+    # add_writer / sock_sendall, which the Windows proactor event loop does not
+    # implement. The selector loops on Linux and macOS run these fine.
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="L2CAP transport needs a selector event loop (Linux/macOS)",
+    ),
+]
 
 _SOURCE = "00:11:22:33:44:55"
 _PEER = "AA:BB:CC:DD:EE:FF"
@@ -236,6 +246,41 @@ async def test_send_writes_one_pdu(
     sock = await _connect(left, on_data=lambda _d: None, on_close=lambda _e: None)
     await sock.send(b"\x02\x17\x00")
     assert right.recv(64) == b"\x02\x17\x00"
+    sock.close()
+
+
+async def test_send_serializes_concurrent_writes(
+    pair: tuple[socket.socket, socket.socket],
+) -> None:
+    """Concurrent sends are serialized so one cannot stall another mid-write."""
+    left, _right = pair
+    sock = await _connect(left, on_data=lambda _d: None, on_close=lambda _e: None)
+    order: list[tuple[str, bytes]] = []
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def fake_sendall(_sock: socket.socket, data: bytes) -> None:
+        order.append(("enter", data))
+        if data == b"A":
+            first_entered.set()
+            await release_first.wait()
+        order.append(("exit", data))
+
+    with patch.object(sock._loop, "sock_sendall", fake_sendall):
+        first = asyncio.create_task(sock.send(b"A"))
+        await first_entered.wait()
+        second = asyncio.create_task(sock.send(b"B"))
+        await asyncio.sleep(0)
+        # The second send is blocked on the lock while the first is in flight.
+        assert order == [("enter", b"A")]
+        release_first.set()
+        await asyncio.gather(first, second)
+    assert order == [
+        ("enter", b"A"),
+        ("exit", b"A"),
+        ("enter", b"B"),
+        ("exit", b"B"),
+    ]
     sock.close()
 
 

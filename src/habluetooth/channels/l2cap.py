@@ -144,6 +144,7 @@ class L2CAPSocket:
         self._on_data = on_data
         self._on_close = on_close
         self._closed = False
+        self._write_lock = asyncio.Lock()
         loop.add_reader(sock.fileno(), self._read_ready)
 
     @classmethod
@@ -182,11 +183,20 @@ class L2CAPSocket:
         return cls(sock, loop, on_data, on_close)
 
     async def send(self, data: bytes) -> None:
-        """Write one ATT PDU, awaiting socket writability under backpressure."""
+        """
+        Write one ATT PDU, awaiting socket writability under backpressure.
+
+        Serialized with a lock: ATTClient may call this concurrently (e.g. an
+        indication confirmation or a write-without-response alongside a pending
+        request), and ``loop.sock_sendall`` is not safe to run concurrently on
+        one fd (a second backpressured call would replace the first's writer and
+        stall it). SEQPACKET keeps each write framed as one PDU.
+        """
         if self._closed:
             msg = "L2CAP socket is closed"
             raise BleakError(msg)
-        await self._loop.sock_sendall(self._sock, data)
+        async with self._write_lock:
+            await self._loop.sock_sendall(self._sock, data)
 
     def _read_ready(self) -> None:
         """Read one inbound PDU and hand it to ``on_data`` (reader callback)."""
