@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.11.0 (2026-06-23)
+
+### Features
+
+
+- Add l2cap att socket transport ([`2432667`](https://github.com/Bluetooth-Devices/habluetooth/commit/24326672059b69650e8cb7b722c50c91fa69502e))
+
+
 ## v6.10.0 (2026-06-23)
 
 ### Features
