@@ -57,6 +57,18 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+class _MgmtClientFactory(partial):  # type: ignore[type-arg]
+    """A functools.partial that binds per-connection data into HaMgmtClient."""
+
+
+# The connect path derives the backend id from
+# ``type(scanner.connector.client).__name__`` (wrappers.py); a bare partial
+# reads as the generic "partial", so name this factory after the client it
+# builds for clear connect diagnostics.
+_MgmtClientFactory.__name__ = "HaMgmtClient"
+_MgmtClientFactory.__qualname__ = "HaMgmtClient"
+
+
 class HaScannerMgmt(BaseHaScanner):
     """A local scanner that discovers and connects over the BlueZ mgmt socket."""
 
@@ -69,7 +81,7 @@ class HaScannerMgmt(BaseHaScanner):
             # connector.client(device, ...) like any backend class.
             client=cast(
                 "type[BaseBleakClient]",
-                partial(
+                _MgmtClientFactory(
                     HaMgmtClient,
                     client_data=MgmtClientData(
                         adapter_address=address,
@@ -124,7 +136,9 @@ class HaScannerMgmt(BaseHaScanner):
                 msg = f"{self.name}: failed to add advertisement monitor"
                 raise ScannerStartError(msg)
             self._monitor_handle = handle
-        self.current_mode = mode
+        # Use the setter so mode-change subscribers are notified, matching
+        # HaScanner.
+        self.set_current_mode(mode)
         self.scanning = True
         self._async_setup_scanner_watchdog()
         self._on_start_success()
@@ -224,7 +238,9 @@ class HaScannerMgmt(BaseHaScanner):
         return Allocations(
             self.adapter,
             slots,
-            slots - len(self._connections),
+            # Clamp at 0: a TOCTOU overshoot past the advisory gate must not
+            # report negative free slots.
+            max(0, slots - len(self._connections)),
             list(self._connections),
         )
 

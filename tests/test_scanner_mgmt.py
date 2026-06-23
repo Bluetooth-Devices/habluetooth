@@ -128,6 +128,9 @@ async def test_init_is_connectable_with_connector() -> None:
     assert scanner.connector is not None
     assert scanner.connector.source == _ADDRESS
     assert scanner.connector.can_connect == scanner._can_connect
+    # The connect path derives the backend id from this; it should read as the
+    # client, not the generic "partial".
+    assert type(scanner.connector.client).__name__ == "HaMgmtClient"
 
 
 # -- discovery lifecycle --------------------------------------------------
@@ -139,6 +142,16 @@ async def test_async_start_active_uses_start_discovery(use_mgmt: FakeMgmt) -> No
     assert use_mgmt.started == [_ADAPTER_IDX]
     assert scanner.scanning is True
     assert scanner.current_mode is BluetoothScanningMode.ACTIVE
+    await scanner.async_stop()
+
+
+async def test_start_notifies_mode_change(use_mgmt: FakeMgmt) -> None:
+    """Starting sets the radio mode through the manager notification path."""
+    scanner = _scanner(BluetoothScanningMode.ACTIVE)
+    scanner.async_setup()
+    with patch.object(get_manager(), "scanner_mode_changed") as notify:
+        await scanner.async_start()
+    notify.assert_called_once_with(scanner)
     await scanner.async_stop()
 
 
@@ -240,6 +253,17 @@ async def test_get_allocations_reflects_tracked_connections() -> None:
     assert allocations.slots == 3
     assert allocations.free == 2
     assert allocations.allocated == [_PEER]
+
+
+async def test_get_allocations_clamps_free_at_zero() -> None:
+    """An overshoot past the advisory gate reports zero free, never negative."""
+    scanner = _scanner()
+    get_manager().slot_manager.register_adapter(_ADAPTER, 1)
+    scanner._register_connection(_PEER)
+    scanner._register_connection("11:22:33:44:55:66")  # overshoot the 1 slot
+    allocations = scanner.get_allocations()
+    assert allocations is not None
+    assert allocations.free == 0
 
 
 # -- watchdog -------------------------------------------------------------
