@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.15.0 (2026-06-23)
+
+### Features
+
+
+- Add mgmt pair, unpair, and disconnect commands ([`ff963bf`](https://github.com/Bluetooth-Devices/habluetooth/commit/ff963bff2e06067a11344e2ab7e1525b99f3a8d5))
+
+
 ## v6.14.0 (2026-06-23)
 
 ### Features

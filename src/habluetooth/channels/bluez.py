@@ -41,12 +41,19 @@ DEVICE_FOUND = 0x0012
 ADV_MONITOR_DEVICE_FOUND = 0x002F
 
 # Management commands
+MGMT_OP_DISCONNECT = 0x0014
 MGMT_OP_GET_CONNECTIONS = 0x0015
+MGMT_OP_PAIR_DEVICE = 0x0019
+MGMT_OP_UNPAIR_DEVICE = 0x001B
 MGMT_OP_START_DISCOVERY = 0x0023
 MGMT_OP_STOP_DISCOVERY = 0x0024
 MGMT_OP_LOAD_CONN_PARAM = 0x0035
 MGMT_OP_ADD_ADV_PATTERNS_MONITOR = 0x0052
 MGMT_OP_REMOVE_ADV_MONITOR = 0x0053
+
+# IO capability for pairing; NoInputNoOutput selects "Just Works" (no PIN or
+# passkey prompt), which is what a headless host can satisfy.
+IO_CAPABILITY_NO_INPUT_NO_OUTPUT = 0x03
 
 # Management events
 MGMT_EV_CMD_COMPLETE = 0x0001
@@ -75,6 +82,15 @@ DISCOVERY_PACK = DISCOVERY_STRUCT.pack
 MONITOR_HANDLE_STRUCT = Struct("<H")
 MONITOR_HANDLE_PACK = MONITOR_HANDLE_STRUCT.pack
 MONITOR_HANDLE_UNPACK = MONITOR_HANDLE_STRUCT.unpack
+# DISCONNECT carries bdaddr (6) + address type (1).
+DISCONNECT_STRUCT = Struct("<6sB")
+DISCONNECT_PACK = DISCONNECT_STRUCT.pack
+# PAIR_DEVICE carries bdaddr (6) + address type (1) + IO capability (1).
+PAIR_DEVICE_STRUCT = Struct("<6sBB")
+PAIR_DEVICE_PACK = PAIR_DEVICE_STRUCT.pack
+# UNPAIR_DEVICE carries bdaddr (6) + address type (1) + disconnect flag (1).
+UNPAIR_DEVICE_STRUCT = Struct("<6sBB")
+UNPAIR_DEVICE_PACK = UNPAIR_DEVICE_STRUCT.pack
 
 CONNECTION_ERRORS = (
     BluetoothSocketError,
@@ -88,6 +104,22 @@ def _set_future_if_not_done(future: asyncio.Future[None] | None) -> None:
     """Set the future result if not done."""
     if future is not None and not future.done():
         future.set_result(None)
+
+
+def _mgmt_address_bytes(address: str) -> bytes | None:
+    """
+    Pack ``AA:BB:CC:DD:EE:FF`` into the 6 little-endian bytes mgmt expects.
+
+    Returns ``None`` for a malformed address (the caller treats that as a soft
+    failure rather than raising into the mgmt command path).
+    """
+    try:
+        addr_bytes = bytes.fromhex(address.replace(":", ""))
+    except ValueError:
+        return None
+    if len(addr_bytes) != 6:
+        return None
+    return addr_bytes[::-1]
 
 
 @lru_cache(maxsize=512)
@@ -619,6 +651,90 @@ class MGMTBluetoothCtl:
             "hci%u: failed to remove advertisement monitor %u: %s",
             adapter_idx,
             handle,
+            "no response" if result is None else f"status={result[0]:#x}",
+        )
+        return False
+
+    async def pair_device(
+        self,
+        adapter_idx: int,
+        address: str,
+        address_type: int,
+        io_capability: int = IO_CAPABILITY_NO_INPUT_NO_OUTPUT,
+    ) -> bool:
+        """
+        Pair (bond) with a device over the management socket.
+
+        ``io_capability`` defaults to NoInputNoOutput, which drives "Just Works"
+        pairing; the kernel performs SMP and stores the keys. Returns True when
+        the controller reports the pairing completed.
+        """
+        addr = _mgmt_address_bytes(address)
+        if addr is None:
+            _LOGGER.error("hci%u: invalid address to pair: %s", adapter_idx, address)
+            return False
+        result = await self._send_command_await(
+            MGMT_OP_PAIR_DEVICE,
+            adapter_idx,
+            PAIR_DEVICE_PACK(addr, address_type, io_capability),
+        )
+        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+            return True
+        _LOGGER.warning(
+            "hci%u: failed to pair with %s: %s",
+            adapter_idx,
+            address,
+            "no response" if result is None else f"status={result[0]:#x}",
+        )
+        return False
+
+    async def unpair_device(
+        self,
+        adapter_idx: int,
+        address: str,
+        address_type: int,
+        *,
+        disconnect: bool = True,
+    ) -> bool:
+        """Remove the bond for a device (and disconnect it by default)."""
+        addr = _mgmt_address_bytes(address)
+        if addr is None:
+            _LOGGER.error("hci%u: invalid address to unpair: %s", adapter_idx, address)
+            return False
+        result = await self._send_command_await(
+            MGMT_OP_UNPAIR_DEVICE,
+            adapter_idx,
+            UNPAIR_DEVICE_PACK(addr, address_type, 1 if disconnect else 0),
+        )
+        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+            return True
+        _LOGGER.warning(
+            "hci%u: failed to unpair %s: %s",
+            adapter_idx,
+            address,
+            "no response" if result is None else f"status={result[0]:#x}",
+        )
+        return False
+
+    async def disconnect_device(
+        self, adapter_idx: int, address: str, address_type: int
+    ) -> bool:
+        """Force-disconnect a device at the controller over the mgmt socket."""
+        addr = _mgmt_address_bytes(address)
+        if addr is None:
+            _LOGGER.error(
+                "hci%u: invalid address to disconnect: %s", adapter_idx, address
+            )
+            return False
+        result = await self._send_command_await(
+            MGMT_OP_DISCONNECT, adapter_idx, DISCONNECT_PACK(addr, address_type)
+        )
+        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+            return True
+        _LOGGER.warning(
+            "hci%u: failed to disconnect %s: %s",
+            adapter_idx,
+            address,
             "no response" if result is None else f"status={result[0]:#x}",
         )
         return False
