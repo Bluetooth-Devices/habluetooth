@@ -107,7 +107,7 @@ class HaScannerMgmt(BaseHaScanner):
     async def _async_start(self) -> None:
         """Issue the discovery/monitor command and arm the watchdog."""
         idx = self.adapter_idx
-        mgmt = self._manager.get_bluez_mgmt_ctl() if self._manager else None
+        mgmt = get_manager().get_bluez_mgmt_ctl()
         if idx is None or mgmt is None or not mgmt.can_discover:
             msg = f"{self.name}: mgmt discovery is not available"
             raise ScannerStartError(msg)
@@ -137,7 +137,7 @@ class HaScannerMgmt(BaseHaScanner):
     async def _async_stop_discovery(self) -> None:
         """Stop the active discovery or remove the passive monitor."""
         idx = self.adapter_idx
-        mgmt = self._manager.get_bluez_mgmt_ctl() if self._manager else None
+        mgmt = get_manager().get_bluez_mgmt_ctl()
         if idx is None or mgmt is None:
             return
         if self._monitor_handle is not None:
@@ -185,7 +185,7 @@ class HaScannerMgmt(BaseHaScanner):
 
     def _slot_limit(self) -> int:
         """Configured connection-slot count for this adapter (0 if unregistered)."""
-        return self._manager.slot_manager.get_allocations(self.adapter).slots
+        return get_manager().slot_manager.get_allocations(self.adapter).slots
 
     def _register_connection(self, address: str) -> None:
         """Record a live connection (called by the client on connect)."""
