@@ -436,3 +436,15 @@ async def test_mtu_size_default_before_connect() -> None:
     """Before connect the MTU reports the ATT default."""
     client, _scanner = _make_client()
     assert client.mtu_size == 23
+
+
+async def test_address_type_falls_back_to_public_when_missing() -> None:
+    """A device without an address_type in details defaults to LE public."""
+    scanner = FakeScanner()
+    device = BLEDevice(_PEER, "test-device", {"source": _ADAPTER})  # no address_type
+    client = HaMgmtClient(
+        device,
+        client_data=MgmtClientData(adapter_address=_ADAPTER, scanner=scanner),
+        timeout=5.0,
+    )
+    assert client._address_type == 0x01  # BDADDR_LE_PUBLIC

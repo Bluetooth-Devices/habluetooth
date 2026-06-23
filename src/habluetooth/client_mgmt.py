@@ -94,7 +94,16 @@ class HaMgmtClient(BaseBleakClient):
         self._adapter_address = client_data.adapter_address
         self._scanner = client_data.scanner
         details = getattr(address_or_ble_device, "details", None) or {}
-        self._address_type: int = details.get("address_type", BDADDR_LE_PUBLIC)
+        if "address_type" in details:
+            self._address_type: int = details["address_type"]
+        else:
+            # Adverts always carry the peer address type, so the scanner should
+            # populate it; fall back to public but log so a missing field is not
+            # only visible as an opaque L2CAP connect timeout later.
+            self._address_type = BDADDR_LE_PUBLIC
+            _LOGGER.debug(
+                "%s: no address_type in details; assuming LE public", self.address
+            )
         self._att: ATTClient | None = None
         self._sock: L2CAPSocket | None = None
         self._connected = False
