@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.14.0 (2026-06-23)
+
+### Features
+
+
+- Add mgmt-based local scanner and factory ([`2d83455`](https://github.com/Bluetooth-Devices/habluetooth/commit/2d83455c2b5c5253157539a786565a3b009e208f))
+
+
 ## v6.13.0 (2026-06-23)
 
 ### Features
