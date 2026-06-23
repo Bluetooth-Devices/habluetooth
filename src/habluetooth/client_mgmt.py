@@ -76,6 +76,11 @@ class MgmtClientData:
 
     adapter_address: str  # local adapter BD_ADDR the L2CAP socket binds/sends from
     scanner: SupportsConnecting  # provides connecting() to pause scanning
+    # Optional slot bookkeeping: the mgmt scanner tracks live connections itself
+    # (BleakSlotManager is DBus-path based and cannot see L2CAP connections), so
+    # the client reports connect/disconnect by peer address here.
+    register_connection: Callable[[str], None] | None = None
+    unregister_connection: Callable[[str], None] | None = None
 
 
 class HaMgmtClient(BaseBleakClient):
@@ -93,6 +98,8 @@ class HaMgmtClient(BaseBleakClient):
         super().__init__(address_or_ble_device, *args, **kwargs)
         self._adapter_address = client_data.adapter_address
         self._scanner = client_data.scanner
+        self._register_connection = client_data.register_connection
+        self._unregister_connection = client_data.unregister_connection
         details = getattr(address_or_ble_device, "details", None) or {}
         if "address_type" in details:
             self._address_type: int = details["address_type"]
@@ -149,6 +156,15 @@ class HaMgmtClient(BaseBleakClient):
             raise
         self.services = self._build_services(services)
         self._connected = True
+        if self._register_connection is not None:
+            # Slot bookkeeping is best-effort; a failure must not undo a
+            # connection that is already established.
+            try:
+                self._register_connection(self.address)
+            except Exception:
+                _LOGGER.exception(
+                    "%s: connection slot register callback failed", self.address
+                )
 
     async def disconnect(self) -> None:
         """
@@ -183,8 +199,19 @@ class HaMgmtClient(BaseBleakClient):
             # timeout poisons the codec without closing, so close it here.
             self._sock.close()
             self._sock = None
-        if was_connected and self._disconnected_callback is not None:
-            self._disconnected_callback()
+        if was_connected:
+            if self._unregister_connection is not None:
+                # Best-effort: a bookkeeping failure must not stop the
+                # disconnected callback from firing.
+                try:
+                    self._unregister_connection(self.address)
+                except Exception:
+                    _LOGGER.exception(
+                        "%s: connection slot unregister callback failed",
+                        self.address,
+                    )
+            if self._disconnected_callback is not None:
+                self._disconnected_callback()
 
     # -- GATT model --------------------------------------------------------
     def _build_services(

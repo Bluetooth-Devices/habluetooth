@@ -391,6 +391,77 @@ async def test_disconnect_closes_transport() -> None:
     assert client.is_connected is False
 
 
+async def test_connection_register_callbacks_fire() -> None:
+    """The client reports connect/disconnect to the scanner's slot callbacks."""
+    holder: dict[str, FakeTransport] = {}
+    registered: list[str] = []
+    unregistered: list[str] = []
+    client = HaMgmtClient(
+        _ble_device(),
+        client_data=MgmtClientData(
+            adapter_address=_ADAPTER,
+            scanner=FakeScanner(),
+            register_connection=registered.append,
+            unregister_connection=unregistered.append,
+        ),
+        timeout=5.0,
+    )
+    with _patch_transport(make_responder(), holder):
+        await client.connect(False)
+    assert registered == [_PEER]
+    assert unregistered == []
+    await client.disconnect()
+    assert unregistered == [_PEER]
+
+
+async def test_register_callback_failure_does_not_break_connect() -> None:
+    """A raising slot register callback is swallowed; the connection survives."""
+    holder: dict[str, FakeTransport] = {}
+
+    def boom(_address: str) -> None:
+        msg = "bookkeeping broke"
+        raise RuntimeError(msg)
+
+    client = HaMgmtClient(
+        _ble_device(),
+        client_data=MgmtClientData(
+            adapter_address=_ADAPTER,
+            scanner=FakeScanner(),
+            register_connection=boom,
+        ),
+        timeout=5.0,
+    )
+    with _patch_transport(make_responder(), holder):
+        await client.connect(False)
+    assert client.is_connected is True
+
+
+async def test_unregister_callback_failure_still_fires_disconnect() -> None:
+    """A raising slot unregister callback does not block the disconnect callback."""
+    holder: dict[str, FakeTransport] = {}
+    fired: list[bool] = []
+
+    def boom(_address: str) -> None:
+        msg = "bookkeeping broke"
+        raise RuntimeError(msg)
+
+    client = HaMgmtClient(
+        _ble_device(),
+        client_data=MgmtClientData(
+            adapter_address=_ADAPTER,
+            scanner=FakeScanner(),
+            unregister_connection=boom,
+        ),
+        timeout=5.0,
+        disconnected_callback=lambda: fired.append(True),
+    )
+    with _patch_transport(make_responder(), holder):
+        await client.connect(False)
+    holder["transport"].drop(OSError("reset"))
+    assert fired == [True]
+    assert client.is_connected is False
+
+
 async def test_disconnect_fires_disconnected_callback() -> None:
     """A deliberate disconnect fires the callback, matching the BlueZ backend."""
     holder: dict[str, FakeTransport] = {}

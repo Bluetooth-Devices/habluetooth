@@ -30,6 +30,7 @@ from .models import (
 )
 from .scanner_bleak import BluetoothScanningMode, HaScanner, ScannerStartError
 from .scanner_device import BluetoothScannerDevice
+from .scanner_mgmt import HaScannerMgmt, create_local_scanner
 from .storage import (
     DiscoveredDeviceAdvertisementData,
     DiscoveredDeviceAdvertisementDataDict,
@@ -66,11 +67,13 @@ __all__ = [
     "HaBluetoothSlotAllocations",
     "HaScanner",
     "HaScannerDetails",
+    "HaScannerMgmt",
     "HaScannerModeChange",
     "HaScannerRegistration",
     "HaScannerRegistrationEvent",
     "HaScannerType",
     "ScannerStartError",
+    "create_local_scanner",
     "discovered_device_advertisement_data_from_dict",
     "discovered_device_advertisement_data_to_dict",
     "expire_stale_scanner_discovered_device_advertisement_data",
