@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.10.0 (2026-06-23)
+
+### Features
+
+
+- Add att/gatt protocol codec ([`040e999`](https://github.com/Bluetooth-Devices/habluetooth/commit/040e999eed8f3361ee7b742c6c7c84917b4e7c91))
+
+
+### Refactoring
+
+
+- Move raw bluez advertisement adaptation into the bluez channel ([`08dadb9`](https://github.com/Bluetooth-Devices/habluetooth/commit/08dadb9ddcb5558f9547d20e0fd58524f94dfe98))
+
+
 ## v6.9.0 (2026-06-22)
 
 ### Features
