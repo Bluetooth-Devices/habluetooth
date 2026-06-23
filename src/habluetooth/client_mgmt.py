@@ -142,7 +142,12 @@ class HaMgmtClient(BaseBleakClient):
         self._connected = True
 
     async def disconnect(self) -> None:
-        """Close the channel; idempotent."""
+        """
+        Close the channel; idempotent.
+
+        Like the BlueZ backend this replaces (and unlike CoreBluetooth/WinRT),
+        a deliberate disconnect also fires the disconnected callback.
+        """
         self._handle_disconnect(None)
 
     async def _send_pdu(self, data: bytes) -> None:
@@ -260,8 +265,15 @@ class HaMgmtClient(BaseBleakClient):
         if cccd is None:
             msg = "characteristic has no client configuration descriptor"
             raise BleakError(msg)
+        # Register before enabling so a notification racing in right after the
+        # CCCD write is not lost; unwind if the write fails so no handler is left
+        # registered for notifications that were never enabled.
         codec.set_notify_handler(characteristic.handle, callback)
-        await codec.write(cccd.handle, cccd_value)
+        try:
+            await codec.write(cccd.handle, cccd_value)
+        except BaseException:
+            codec.remove_notify_handler(characteristic.handle)
+            raise
 
     async def stop_notify(self, characteristic: BleakGATTCharacteristic) -> None:
         """Disable notifications by clearing the CCCD and dropping the handler."""

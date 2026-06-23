@@ -51,7 +51,10 @@ def _error(req_opcode: int, handle: int, code: int) -> bytes:
 
 
 def make_responder(
-    char_props: int = _CHAR_READ_NOTIFY, *, has_cccd: bool = True
+    char_props: int = _CHAR_READ_NOTIFY,
+    *,
+    has_cccd: bool = True,
+    fail_write: bool = False,
 ) -> Callable[[bytes], bytes | None]:
     """Build a minimal ATT server for one service/characteristic."""
     svc_end = 0x0004 if has_cccd else 0x0003
@@ -83,13 +86,16 @@ def make_responder(
         entry = (0x0004).to_bytes(2, "little") + (0x2902).to_bytes(2, "little")
         return bytes([_FIND_INFO_RSP, 0x01]) + entry
 
+    write_rsp = (
+        _error(0x12, 0x0004, 0x03) if fail_write else bytes([_WRITE_RSP])
+    )  # WRITE_REQ: an error (write not permitted) or success
     handlers: dict[int, Callable[[bytes], bytes | None]] = {
         0x02: lambda _req: bytes([_MTU_RSP]) + (247).to_bytes(2, "little"),
         0x10: services,
         0x08: characteristics,
         0x04: descriptors,
         0x0A: lambda _req: bytes([_READ_RSP]) + _VALUE,  # READ_REQ
-        0x12: lambda _req: bytes([_WRITE_RSP]),  # WRITE_REQ
+        0x12: lambda _req: write_rsp,
         0x52: lambda _req: None,  # WRITE_CMD (no response)
     }
 
@@ -351,6 +357,19 @@ async def test_stop_notify_clears_cccd_and_handler() -> None:
     assert received == []  # handler removed, notification dropped
 
 
+async def test_start_notify_unwinds_handler_on_cccd_write_failure() -> None:
+    """If the CCCD write fails, no notify handler is left registered."""
+    holder: dict[str, FakeTransport] = {}
+    client, _scanner = await _connect(holder, make_responder(fail_write=True))
+    char = _char(client)
+    received: list[bytearray] = []
+    with pytest.raises(BleakError):
+        await client.start_notify(char, received.append)
+    # The handler was unwound, so a stray notification is not delivered.
+    holder["transport"].inject(bytes([_NTF]) + (0x0003).to_bytes(2, "little") + b"\x09")
+    assert received == []
+
+
 async def test_stop_notify_without_cccd_only_drops_handler() -> None:
     """stop_notify on a characteristic with no CCCD just drops the handler."""
     holder: dict[str, FakeTransport] = {}
@@ -369,6 +388,17 @@ async def test_disconnect_closes_transport() -> None:
     await client.disconnect()
     assert holder["transport"].closed is True
     assert client.is_connected is False
+
+
+async def test_disconnect_fires_disconnected_callback() -> None:
+    """A deliberate disconnect fires the callback, matching the BlueZ backend."""
+    holder: dict[str, FakeTransport] = {}
+    fired: list[bool] = []
+    client, _scanner = await _connect(
+        holder, disconnected_callback=lambda: fired.append(True)
+    )
+    await client.disconnect()
+    assert fired == [True]
 
 
 async def test_unexpected_drop_fires_disconnected_callback() -> None:
