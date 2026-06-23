@@ -192,10 +192,14 @@ class L2CAPSocket:
         one fd (a second backpressured call would replace the first's writer and
         stall it). SEQPACKET keeps each write framed as one PDU.
         """
-        if self._closed:
-            msg = "L2CAP socket is closed"
-            raise BleakError(msg)
         async with self._write_lock:
+            # Re-check under the lock: close() may have run while we were parked
+            # on it (e.g. a peer disconnect tearing the socket down), and writing
+            # to the closed fd must raise the documented BleakError, not an
+            # incidental OSError from sock_sendall.
+            if self._closed:
+                msg = "L2CAP socket is closed"
+                raise BleakError(msg)
             await self._loop.sock_sendall(self._sock, data)
 
     def _read_ready(self) -> None:

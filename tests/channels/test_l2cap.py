@@ -284,6 +284,31 @@ async def test_send_serializes_concurrent_writes(
     sock.close()
 
 
+async def test_send_rechecks_closed_after_acquiring_lock(
+    pair: tuple[socket.socket, socket.socket],
+) -> None:
+    """A send parked on the write lock raises BleakError if close() intervenes."""
+    left, _right = pair
+    sock = await _connect(left, on_data=lambda _d: None, on_close=lambda _e: None)
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_sendall(_sock: socket.socket, _data: bytes) -> None:
+        in_flight.set()
+        await release.wait()
+
+    with patch.object(sock._loop, "sock_sendall", fake_sendall):
+        first = asyncio.create_task(sock.send(b"A"))
+        await in_flight.wait()
+        second = asyncio.create_task(sock.send(b"B"))
+        await asyncio.sleep(0)  # the second send parks on the held lock
+        sock.close()  # tear down while the second send is waiting
+        release.set()
+        await first  # the first send already passed the closed check
+        with pytest.raises(BleakError, match="closed"):
+            await second
+
+
 async def test_send_after_close_raises(
     pair: tuple[socket.socket, socket.socket],
 ) -> None:
