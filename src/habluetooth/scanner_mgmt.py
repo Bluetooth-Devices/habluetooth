@@ -280,7 +280,10 @@ class HaScannerMgmt(BaseHaScanner):
         """Persist a bonded key (called by the client after pairing)."""
         # Canonicalize the address so forget (which may be called with a
         # differently-cased address) always matches.
-        self._long_term_keys[(key.address.upper(), key.central, key.ediv)] = key
+        stored_key = (key.address.upper(), key.central, key.ediv)
+        if self._long_term_keys.get(stored_key) == key:
+            return  # unchanged; nothing to persist, symmetric with forget
+        self._long_term_keys[stored_key] = key
         self._notify_long_term_keys_changed()
 
     def _forget_long_term_keys(self, address: str) -> None:

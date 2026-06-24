@@ -504,13 +504,18 @@ async def test_long_term_keys_changed_callback() -> None:
     key = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(16))
     scanner._store_long_term_key(key)
     assert len(changes) == 1
-    scanner._forget_long_term_keys("00:00:00:00:00:00")  # nothing removed -> no fire
+    scanner._store_long_term_key(key)  # identical -> no fire (symmetric with forget)
     assert len(changes) == 1
-    scanner._forget_long_term_keys(_PEER)  # removes -> fires
+    updated = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(range(16)))
+    scanner._store_long_term_key(updated)  # same tuple, new value -> fires
     assert len(changes) == 2
+    scanner._forget_long_term_keys("00:00:00:00:00:00")  # nothing removed -> no fire
+    assert len(changes) == 2
+    scanner._forget_long_term_keys(_PEER)  # removes -> fires
+    assert len(changes) == 3
     scanner.set_long_term_keys_changed_callback(None)  # cleared
     scanner._store_long_term_key(key)
-    assert len(changes) == 2
+    assert len(changes) == 3
 
 
 async def test_slot_limit_zero_when_adapter_unregistered() -> None:
