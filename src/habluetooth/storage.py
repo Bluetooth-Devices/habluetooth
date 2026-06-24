@@ -10,6 +10,8 @@ from typing import Any, Final, TypedDict
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
+from .channels.bluez import LongTermKey
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -323,3 +325,44 @@ def _serialize_discovered_device_raw(
 
 
 DiscoveryStorageType = dict[str, DiscoveredDeviceAdvertisementDataDict]
+
+
+class LongTermKeyDict(TypedDict):
+    """A bonded long-term key serialized for storage."""
+
+    address: str
+    address_type: int
+    key_type: int
+    central: bool
+    encryption_size: int
+    ediv: int
+    rand: str  # hex
+    value: str  # hex
+
+
+def long_term_key_to_dict(key: LongTermKey) -> LongTermKeyDict:
+    """Serialize a long-term key for persistence (bytes as hex)."""
+    return {
+        "address": key.address,
+        "address_type": key.address_type,
+        "key_type": key.key_type,
+        "central": key.central,
+        "encryption_size": key.encryption_size,
+        "ediv": key.ediv,
+        "rand": key.rand.hex(),
+        "value": key.value.hex(),
+    }
+
+
+def long_term_key_from_dict(data: LongTermKeyDict) -> LongTermKey:
+    """Deserialize a long-term key from persistence."""
+    return LongTermKey(
+        address=data["address"],
+        address_type=data["address_type"],
+        key_type=data["key_type"],
+        central=data["central"],
+        encryption_size=data["encryption_size"],
+        ediv=data["ediv"],
+        rand=bytes.fromhex(data["rand"]),
+        value=bytes.fromhex(data["value"]),
+    )

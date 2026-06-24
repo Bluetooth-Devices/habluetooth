@@ -8,6 +8,7 @@ from .advertisement_tracker import (
 )
 from .base_scanner import BaseHaRemoteScanner, BaseHaScanner
 from .central_manager import get_manager, set_manager
+from .channels.bluez import LongTermKey
 from .const import (
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
@@ -35,9 +36,12 @@ from .storage import (
     DiscoveredDeviceAdvertisementData,
     DiscoveredDeviceAdvertisementDataDict,
     DiscoveryStorageType,
+    LongTermKeyDict,
     discovered_device_advertisement_data_from_dict,
     discovered_device_advertisement_data_to_dict,
     expire_stale_scanner_discovered_device_advertisement_data,
+    long_term_key_from_dict,
+    long_term_key_to_dict,
 )
 from .wrappers import HaBleakClientWrapper, HaBleakScannerWrapper
 
@@ -72,11 +76,15 @@ __all__ = [
     "HaScannerRegistration",
     "HaScannerRegistrationEvent",
     "HaScannerType",
+    "LongTermKey",
+    "LongTermKeyDict",
     "ScannerStartError",
     "create_local_scanner",
     "discovered_device_advertisement_data_from_dict",
     "discovered_device_advertisement_data_to_dict",
     "expire_stale_scanner_discovered_device_advertisement_data",
     "get_manager",
+    "long_term_key_from_dict",
+    "long_term_key_to_dict",
     "set_manager",
 ]

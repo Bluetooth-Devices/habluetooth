@@ -5,12 +5,15 @@ import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
+from habluetooth.channels.bluez import LongTermKey
 from habluetooth.storage import (
     DiscoveredDeviceAdvertisementData,
     DiscoveredDeviceAdvertisementDataDict,
     discovered_device_advertisement_data_from_dict,
     discovered_device_advertisement_data_to_dict,
     expire_stale_scanner_discovered_device_advertisement_data,
+    long_term_key_from_dict,
+    long_term_key_to_dict,
 )
 
 
@@ -452,3 +455,22 @@ def test_backward_compatibility_rssi_in_device_dict():
     assert ble_device.address == "AA:BB:CC:DD:EE:FF"
     assert ble_device.name == "Test Device"
     assert adv_data.rssi == -50
+
+
+def test_long_term_key_roundtrip() -> None:
+    """A long-term key serializes to JSON-able dict and back unchanged."""
+    key = LongTermKey(
+        address="AA:BB:CC:DD:EE:FF",
+        address_type=1,
+        key_type=5,
+        central=True,
+        encryption_size=16,
+        ediv=0x1234,
+        rand=bytes(range(8)),
+        value=bytes(range(16)),
+    )
+    data = long_term_key_to_dict(key)
+    assert data["rand"] == "0001020304050607"  # bytes as hex
+    assert data["value"] == "000102030405060708090a0b0c0d0e0f"
+    assert data["central"] is True
+    assert long_term_key_from_dict(data) == key

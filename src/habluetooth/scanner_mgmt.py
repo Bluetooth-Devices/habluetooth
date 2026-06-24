@@ -44,7 +44,7 @@ from .models import BluetoothScanningMode, HaBluetoothConnector
 from .scanner_bleak import IS_LINUX, HaScanner, ScannerStartError, _resolve_radio_mode
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine, Iterable
+    from collections.abc import Callable, Coroutine, Iterable
     from typing import Any
 
     from bleak.backends.client import BaseBleakClient
@@ -121,6 +121,10 @@ class HaScannerMgmt(BaseHaScanner):
         self._monitor_handle: int | None = None
         self._connections: set[str] = set()
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        # Fired when the bond store changes so the owner can persist it; the
+        # store itself is in memory (this scanner is a library object and does
+        # no disk I/O).
+        self._long_term_keys_changed: Callable[[], None] | None = None
 
     # -- lifecycle ---------------------------------------------------------
     def async_setup(self) -> CALLBACK_TYPE:
@@ -277,15 +281,39 @@ class HaScannerMgmt(BaseHaScanner):
         # Canonicalize the address so forget (which may be called with a
         # differently-cased address) always matches.
         self._long_term_keys[(key.address.upper(), key.central, key.ediv)] = key
+        self._notify_long_term_keys_changed()
 
     def _forget_long_term_keys(self, address: str) -> None:
         """Drop every bonded key for a peer (called by the client on unpair)."""
         canonical = address.upper()
-        self._long_term_keys = {
+        remaining = {
             stored_key: value
             for stored_key, value in self._long_term_keys.items()
             if value.address.upper() != canonical
         }
+        if remaining != self._long_term_keys:
+            self._long_term_keys = remaining
+            self._notify_long_term_keys_changed()
+
+    def _notify_long_term_keys_changed(self) -> None:
+        """Tell the owner the bond store changed so it can be persisted."""
+        if self._long_term_keys_changed is not None:
+            self._long_term_keys_changed()
+
+    def set_long_term_keys_changed_callback(
+        self, callback: Callable[[], None] | None
+    ) -> None:
+        """Register a callback fired whenever the bond store changes."""
+        self._long_term_keys_changed = callback
+
+    def export_long_term_keys(self) -> list[LongTermKey]:
+        """Snapshot the bonded keys so the owner can persist them."""
+        return list(self._long_term_keys.values())
+
+    def restore_long_term_keys(self, keys: Iterable[LongTermKey]) -> None:
+        """Seed the bond store from persistence (e.g. on startup)."""
+        for key in keys:
+            self._long_term_keys[(key.address.upper(), key.central, key.ediv)] = key
 
     def get_allocations(self) -> Allocations | None:
         """Report slot usage from this scanner's own connection tracking."""

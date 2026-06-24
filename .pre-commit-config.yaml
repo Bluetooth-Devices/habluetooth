@@ -41,6 +41,10 @@ repos:
     rev: v2.4.2
     hooks:
       - id: codespell
+        args:
+          # "hass" is the Home Assistant instance variable, not a typo of "hash".
+          - -L
+          - hass
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v2.1.0
     hooks:

@@ -488,6 +488,31 @@ async def test_long_term_key_store() -> None:
     scanner._forget_long_term_keys(_PEER)  # idempotent
 
 
+async def test_long_term_key_export_and_restore() -> None:
+    """Keys can be exported for persistence and seeded back on startup."""
+    scanner = _scanner()
+    key = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(16))
+    scanner.restore_long_term_keys([key])
+    assert scanner.export_long_term_keys() == [key]
+
+
+async def test_long_term_keys_changed_callback() -> None:
+    """The change callback fires on store and on an actual forget, not a no-op."""
+    scanner = _scanner()
+    changes: list[int] = []
+    scanner.set_long_term_keys_changed_callback(lambda: changes.append(1))
+    key = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(16))
+    scanner._store_long_term_key(key)
+    assert len(changes) == 1
+    scanner._forget_long_term_keys("00:00:00:00:00:00")  # nothing removed -> no fire
+    assert len(changes) == 1
+    scanner._forget_long_term_keys(_PEER)  # removes -> fires
+    assert len(changes) == 2
+    scanner.set_long_term_keys_changed_callback(None)  # cleared
+    scanner._store_long_term_key(key)
+    assert len(changes) == 2
+
+
 async def test_slot_limit_zero_when_adapter_unregistered() -> None:
     """An adapter with no registered slot count reports 0 (unlimited)."""
     scanner = _scanner()

@@ -6,6 +6,7 @@
 
 installation
 usage
+bond_persistence
 ```
 
 ```{toctree}
