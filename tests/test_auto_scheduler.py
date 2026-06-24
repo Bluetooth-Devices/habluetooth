@@ -2534,6 +2534,11 @@ async def test_worker_tick_delegates_to_fallback_when_owner_is_connecting() -> N
         # Owner can't service the flip; fallback gets the call.
         assert owner.active_window_calls == []
         assert fallback.active_window_calls == [7.0]
+        # The delegated window is recorded against the fallback that ran
+        # it, not the connecting owner.
+        entry = sched.async_diagnostics()["requests"][address][0]
+        assert entry["last_active_window_source"] == fallback.source
+        assert entry["last_active_window"] is not None
     finally:
         owner._finished_connecting(address, connected=False)
         cancel()

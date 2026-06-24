@@ -346,7 +346,10 @@ class _ScannerWorker:
         if self._sweep_last_completed < now:
             self._sweep_last_completed = now
         self._last_window_at = now
-        self._last_window_duration = window_end - now
+        # Use the post-max _window_end so the (last_window_at,
+        # last_window_duration) pair stays consistent with the window
+        # end actually in effect when a longer one was already open.
+        self._last_window_duration = self._window_end - now
 
     def _next_event_at(self, now: float) -> float:
         """
@@ -569,12 +572,12 @@ class _ScannerWorker:
                 continue
             for request in due:
                 entries[request] = now + request.scan_interval
-            self._scheduler._last_window_by_address[address] = (
-                now,
-                fallback.source if fallback is not None else None,
-            )
             had_any_progress = True
             if fallback is None:
+                # Covered by another ACTIVE scanner: no later dispatch
+                # here, so the tick time is the window start. Delegated
+                # addresses are recorded below at their dispatch time.
+                self._scheduler._last_window_by_address[address] = (now, None)
                 continue
             existing = fallback_groups.get(fallback.source)
             if existing is None:
@@ -614,19 +617,22 @@ class _ScannerWorker:
         if TYPE_CHECKING:
             assert loop is not None
         workers = self._scheduler._workers
+        last_window_by_address = self._scheduler._last_window_by_address
         fb_worker: _ScannerWorker | None
         for fb, fb_due in fallback_groups.values():
             duration = self._scheduler._coalesce_duration(fb_due)
+            # Sample loop.time() per iteration: each prior
+            # ``async_request_active_window`` await can take seconds
+            # (scanner stop/restart on Linux), so the owner's tick-start
+            # ``now`` is stale for later fallbacks. Using it would put
+            # ``_window_end`` in the past (leaving the fallback worker's
+            # tick suppression off during the delegated window) and
+            # under-report ``last_active_window`` for these addresses.
+            dispatch_now = loop.time()
+            for request in fb_due:
+                last_window_by_address[request.address] = (dispatch_now, fb.source)
             fb_worker = workers.get(fb.source)
             if fb_worker is not None:
-                # Sample loop.time() per iteration: each prior
-                # ``async_request_active_window`` await can take
-                # seconds (scanner stop/restart on Linux), so the
-                # owner's tick-start ``now`` is stale for later
-                # fallbacks and would put ``_window_end`` in the
-                # past — leaving the fallback worker's tick
-                # suppression off during the delegated window.
-                dispatch_now = loop.time()
                 fb_worker.note_window_dispatched(dispatch_now + duration, dispatch_now)
             try:
                 await fb.async_request_active_window(duration)
