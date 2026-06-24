@@ -515,8 +515,9 @@ async def test_operations_raise_after_disconnect() -> None:
 class FakeMgmt:
     """Records the pairing/bond mgmt commands the client issues."""
 
-    def __init__(self, *, pair_ok: bool = True) -> None:
+    def __init__(self, *, pair_ok: bool = True, load_ok: bool = True) -> None:
         self.pair_ok = pair_ok
+        self.load_ok = load_ok
         self.paired: list[tuple[int, str, int]] = []
         self.unpaired: list[tuple[int, str]] = []
         self.loaded: list[tuple[int, list[LongTermKey]]] = []
@@ -550,7 +551,23 @@ class FakeMgmt:
 
     async def load_long_term_keys(self, idx: int, keys: list[LongTermKey]) -> bool:
         self.loaded.append((idx, list(keys)))
-        return True
+        return self.load_ok
+
+
+class _Store:
+    """An in-memory per-adapter long-term-key store for tests."""
+
+    def __init__(self, keys: list[LongTermKey] | None = None) -> None:
+        self.keys: list[LongTermKey] = list(keys or [])
+
+    def all(self) -> list[LongTermKey]:
+        return list(self.keys)
+
+    def add(self, key: LongTermKey) -> None:
+        self.keys.append(key)
+
+    def forget(self, address: str) -> None:
+        self.keys = [key for key in self.keys if key.address != address]
 
 
 def _ltk(address: str = _PEER) -> LongTermKey:
@@ -561,14 +578,10 @@ def _ltk(address: str = _PEER) -> LongTermKey:
 
 def _make_pairing_client(
     mgmt: FakeMgmt,
-    store: dict[str, LongTermKey],
+    store: _Store | None,
     *,
     adapter_idx: int | None = 0,
-    with_store: bool = True,
 ) -> HaMgmtClient:
-    def _forget(address: str) -> None:
-        store.pop(address, None)
-
     return HaMgmtClient(
         _ble_device(),
         client_data=MgmtClientData(
@@ -576,9 +589,9 @@ def _make_pairing_client(
             scanner=FakeScanner(),
             adapter_idx=adapter_idx,
             mgmt=mgmt,  # type: ignore[arg-type]
-            get_long_term_key=store.get if with_store else None,
-            set_long_term_key=store.__setitem__ if with_store else None,
-            forget_long_term_key=_forget if with_store else None,
+            get_long_term_keys=store.all if store else None,
+            add_long_term_key=store.add if store else None,
+            forget_long_term_keys=store.forget if store else None,
         ),
         timeout=5.0,
     )
@@ -588,32 +601,54 @@ async def test_pair_captures_long_term_key() -> None:
     """pair() issues PAIR_DEVICE and persists the captured key."""
     mgmt = FakeMgmt()
     mgmt.event_to_emit = NewLongTermKey(1, _ltk())
-    store: dict[str, LongTermKey] = {}
+    store = _Store()
     client = _make_pairing_client(mgmt, store)
     await client.pair()
     assert mgmt.paired == [(0, _PEER, BDADDR_LE_RANDOM)]
-    assert store == {_PEER: _ltk()}
+    assert store.keys == [_ltk()]
+
+
+async def test_pair_ignores_zero_store_hint() -> None:
+    """A key the kernel asks not to persist (store_hint 0) is not stored."""
+    mgmt = FakeMgmt()
+    mgmt.event_to_emit = NewLongTermKey(0, _ltk())
+    store = _Store()
+    client = _make_pairing_client(mgmt, store)
+    await client.pair()
+    assert store.keys == []
 
 
 async def test_pair_ignores_non_key_event() -> None:
     """An AUTHENTICATION_FAILED event during pairing stores no key."""
     mgmt = FakeMgmt(pair_ok=False)
     mgmt.event_to_emit = AuthenticationFailed(_PEER, BDADDR_LE_RANDOM, 0x05)
-    store: dict[str, LongTermKey] = {}
+    store = _Store()
     client = _make_pairing_client(mgmt, store)
     with pytest.raises(BleakError, match="pairing failed"):
         await client.pair()
-    assert store == {}
+    assert store.keys == []
+
+
+async def test_pair_warns_when_no_store_wired(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A captured key with no store wired is logged, not silently dropped."""
+    mgmt = FakeMgmt()
+    mgmt.event_to_emit = NewLongTermKey(1, _ltk())
+    client = _make_pairing_client(mgmt, None)
+    with caplog.at_level("WARNING", logger="habluetooth.client_mgmt"):
+        await client.pair()
+    assert "no key store" in caplog.text
 
 
 async def test_pair_failure_raises() -> None:
     """A failed PAIR_DEVICE raises and captures no key."""
     mgmt = FakeMgmt(pair_ok=False)
-    store: dict[str, LongTermKey] = {}
+    store = _Store()
     client = _make_pairing_client(mgmt, store)
     with pytest.raises(BleakError, match="pairing failed"):
         await client.pair()
-    assert store == {}
+    assert store.keys == []
 
 
 async def test_pair_requires_mgmt() -> None:
@@ -628,37 +663,64 @@ async def test_pair_requires_mgmt() -> None:
 async def test_unpair_removes_bond() -> None:
     """unpair() issues UNPAIR_DEVICE and forgets the stored key."""
     mgmt = FakeMgmt()
-    store: dict[str, LongTermKey] = {_PEER: _ltk()}
+    store = _Store([_ltk()])
     client = _make_pairing_client(mgmt, store)
     await client.unpair()
     assert mgmt.unpaired == [(0, _PEER)]
-    assert store == {}
+    assert store.keys == []
 
 
 async def test_unpair_without_store() -> None:
     """unpair() works when no key store was wired."""
     mgmt = FakeMgmt()
-    client = _make_pairing_client(mgmt, {}, with_store=False)
+    client = _make_pairing_client(mgmt, None)
     await client.unpair()
     assert mgmt.unpaired == [(0, _PEER)]
 
 
-async def test_connect_restores_stored_bond() -> None:
-    """connect() reloads a stored long-term key before opening the channel."""
+async def test_connect_restores_all_adapter_bonds() -> None:
+    """connect() reloads every stored key (LOAD replaces the whole list)."""
     holder: dict[str, FakeTransport] = {}
     mgmt = FakeMgmt()
-    store: dict[str, LongTermKey] = {_PEER: _ltk()}
+    other = LongTermKey(
+        "11:22:33:44:55:66",
+        BDADDR_LE_RANDOM,
+        0x05,
+        True,
+        16,
+        0x9999,
+        bytes(8),
+        bytes(16),
+    )
+    store = _Store([_ltk(), other])
     client = _make_pairing_client(mgmt, store)
     with _patch_transport(make_responder(), holder):
         await client.connect(False)
-    assert mgmt.loaded == [(0, [_ltk()])]
+    # All keys are sent, not just the connecting peer's, so other bonds survive.
+    assert mgmt.loaded == [(0, [_ltk(), other])]
+
+
+async def test_connect_warns_when_restore_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed key restore is logged rather than silently proceeding."""
+    holder: dict[str, FakeTransport] = {}
+    mgmt = FakeMgmt(load_ok=False)
+    store = _Store([_ltk()])
+    client = _make_pairing_client(mgmt, store)
+    with (
+        _patch_transport(make_responder(), holder),
+        caplog.at_level("WARNING", logger="habluetooth.client_mgmt"),
+    ):
+        await client.connect(False)
+    assert "failed to restore" in caplog.text
 
 
 async def test_connect_without_bond_loads_nothing() -> None:
-    """connect() does not load keys when the peer is not bonded."""
+    """connect() does not load keys when nothing is bonded on the adapter."""
     holder: dict[str, FakeTransport] = {}
     mgmt = FakeMgmt()
-    client = _make_pairing_client(mgmt, {})
+    client = _make_pairing_client(mgmt, _Store())
     with _patch_transport(make_responder(), holder):
         await client.connect(False)
     assert mgmt.loaded == []

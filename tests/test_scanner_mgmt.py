@@ -470,14 +470,21 @@ async def test_registered_scanner_reports_discovered_devices(
 
 
 async def test_long_term_key_store() -> None:
-    """The scanner stores and forgets bonded keys for the client to use."""
+    """The scanner stores, lists, and forgets bonded keys per peer."""
     scanner = _scanner()
-    key = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(16))
-    scanner._store_long_term_key(_PEER, key)
-    assert scanner._long_term_keys[_PEER] is key
-    scanner._forget_long_term_key(_PEER)
-    assert _PEER not in scanner._long_term_keys
-    scanner._forget_long_term_key(_PEER)  # idempotent
+    key_a = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(16))
+    # Same peer, distinct (central, ediv) so both survive rather than clobber.
+    key_a2 = LongTermKey(_PEER, 1, 0x05, True, 16, 0x5678, bytes(8), bytes(16))
+    other = LongTermKey(
+        "11:22:33:44:55:66", 1, 0x05, False, 16, 0x1, bytes(8), bytes(16)
+    )
+    scanner._store_long_term_key(key_a)
+    scanner._store_long_term_key(key_a2)
+    scanner._store_long_term_key(other)
+    assert set(scanner._all_long_term_keys()) == {key_a, key_a2, other}
+    scanner._forget_long_term_keys(_PEER)
+    assert scanner._all_long_term_keys() == [other]
+    scanner._forget_long_term_keys(_PEER)  # idempotent
 
 
 async def test_slot_limit_zero_when_adapter_unregistered() -> None:

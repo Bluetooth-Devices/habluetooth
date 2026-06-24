@@ -84,10 +84,12 @@ class HaScannerMgmt(BaseHaScanner):
         self.mac_address = address
         source = address
         # Per-adapter bond store; survives the per-connection client instances so
-        # a reconnect can restore captured keys.
-        self._long_term_keys: dict[str, LongTermKey] = {}
+        # a reconnect can restore captured keys. Keyed by (address, central, ediv)
+        # so a peer can hold more than one LTK without later events clobbering it.
+        self._long_term_keys: dict[tuple[str, bool, int], LongTermKey] = {}
+        suffix = adapter.removeprefix("hci")
         adapter_idx = (
-            int(adapter.removeprefix("hci")) if adapter.startswith("hci") else None
+            int(suffix) if adapter.startswith("hci") and suffix.isdigit() else None
         )
         connector = HaBluetoothConnector(
             # partial-bind the per-connection data; the wrapper calls
@@ -103,9 +105,9 @@ class HaScannerMgmt(BaseHaScanner):
                         unregister_connection=self._unregister_connection,
                         adapter_idx=adapter_idx,
                         mgmt=get_manager().get_bluez_mgmt_ctl(),
-                        get_long_term_key=self._long_term_keys.get,
-                        set_long_term_key=self._store_long_term_key,
-                        forget_long_term_key=self._forget_long_term_key,
+                        get_long_term_keys=self._all_long_term_keys,
+                        add_long_term_key=self._store_long_term_key,
+                        forget_long_term_keys=self._forget_long_term_keys,
                     ),
                 ),
             ),
@@ -266,13 +268,21 @@ class HaScannerMgmt(BaseHaScanner):
         """Drop a connection (called by the client on disconnect)."""
         self._connections.discard(address)
 
-    def _store_long_term_key(self, address: str, key: LongTermKey) -> None:
-        """Persist a bonded key (called by the client after pairing)."""
-        self._long_term_keys[address] = key
+    def _all_long_term_keys(self) -> list[LongTermKey]:
+        """Return every bonded key for this adapter (for restore)."""
+        return list(self._long_term_keys.values())
 
-    def _forget_long_term_key(self, address: str) -> None:
-        """Drop a bonded key (called by the client on unpair)."""
-        self._long_term_keys.pop(address, None)
+    def _store_long_term_key(self, key: LongTermKey) -> None:
+        """Persist a bonded key (called by the client after pairing)."""
+        self._long_term_keys[(key.address, key.central, key.ediv)] = key
+
+    def _forget_long_term_keys(self, address: str) -> None:
+        """Drop every bonded key for a peer (called by the client on unpair)."""
+        self._long_term_keys = {
+            stored_key: value
+            for stored_key, value in self._long_term_keys.items()
+            if value.address != address
+        }
 
     def get_allocations(self) -> Allocations | None:
         """Report slot usage from this scanner's own connection tracking."""

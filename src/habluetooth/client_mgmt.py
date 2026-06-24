@@ -92,9 +92,13 @@ class MgmtClientData:
     # instance so reconnects can restore them).
     adapter_idx: int | None = None
     mgmt: MGMTBluetoothCtl | None = None
-    get_long_term_key: Callable[[str], LongTermKey | None] | None = None
-    set_long_term_key: Callable[[str, LongTermKey], None] | None = None
-    forget_long_term_key: Callable[[str], None] | None = None
+    # get_long_term_keys returns every bonded key for the adapter (LOAD_LONG_TERM_
+    # KEYS replaces the controller's whole list, so a restore must send them all);
+    # add_long_term_key stores one captured key; forget_long_term_keys drops all
+    # keys for a peer on unpair.
+    get_long_term_keys: Callable[[], list[LongTermKey]] | None = None
+    add_long_term_key: Callable[[LongTermKey], None] | None = None
+    forget_long_term_keys: Callable[[str], None] | None = None
 
 
 class HaMgmtClient(BaseBleakClient):
@@ -116,9 +120,9 @@ class HaMgmtClient(BaseBleakClient):
         self._unregister_connection = client_data.unregister_connection
         self._adapter_idx = client_data.adapter_idx
         self._mgmt = client_data.mgmt
-        self._get_long_term_key = client_data.get_long_term_key
-        self._set_long_term_key = client_data.set_long_term_key
-        self._forget_long_term_key = client_data.forget_long_term_key
+        self._get_long_term_keys = client_data.get_long_term_keys
+        self._add_long_term_key = client_data.add_long_term_key
+        self._forget_long_term_keys = client_data.forget_long_term_keys
         details = getattr(address_or_ble_device, "details", None) or {}
         if "address_type" in details:
             self._address_type: int = details["address_type"]
@@ -346,14 +350,23 @@ class HaMgmtClient(BaseBleakClient):
 
     # -- pairing -----------------------------------------------------------
     async def _restore_bond(self) -> None:
-        """Reload a stored long-term key so the kernel re-encrypts a known peer."""
+        """Reload all bonded keys so the kernel re-encrypts known peers."""
         if (
-            self._mgmt is not None
-            and self._adapter_idx is not None
-            and self._get_long_term_key is not None
-            and (ltk := self._get_long_term_key(self.address)) is not None
+            self._mgmt is None
+            or self._adapter_idx is None
+            or self._get_long_term_keys is None
         ):
-            await self._mgmt.load_long_term_keys(self._adapter_idx, [ltk])
+            return
+        # LOAD_LONG_TERM_KEYS replaces the controller's whole list, so send every
+        # stored key; the kernel ignores keys for peers that are not connecting,
+        # and we must not wipe other peers' bonds on this adapter.
+        keys = self._get_long_term_keys()
+        if keys and not await self._mgmt.load_long_term_keys(self._adapter_idx, keys):
+            _LOGGER.warning(
+                "%s: failed to restore %d bonded key(s); the link may not encrypt",
+                self.address,
+                len(keys),
+            )
 
     def _require_mgmt(self) -> tuple[MGMTBluetoothCtl, int]:
         """Return the mgmt controller and adapter index, or raise if unavailable."""
@@ -368,8 +381,18 @@ class HaMgmtClient(BaseBleakClient):
         address = self.address
 
         def _capture(event: NewLongTermKey | AuthenticationFailed) -> None:
-            if isinstance(event, NewLongTermKey) and self._set_long_term_key:
-                self._set_long_term_key(address, event.key)
+            if not isinstance(event, NewLongTermKey):
+                return
+            if not event.store_hint:
+                # The kernel is signalling a key it does not want persisted.
+                return
+            if self._add_long_term_key is None:
+                _LOGGER.warning(
+                    "%s: captured a long-term key but no key store is wired",
+                    address,
+                )
+                return
+            self._add_long_term_key(event.key)
 
         unregister = mgmt.register_pairing_handler(adapter_idx, address, _capture)
         try:
@@ -383,8 +406,8 @@ class HaMgmtClient(BaseBleakClient):
         """Remove the bond over mgmt and forget the stored key."""
         mgmt, adapter_idx = self._require_mgmt()
         await mgmt.unpair_device(adapter_idx, self.address, self._address_type)
-        if self._forget_long_term_key is not None:
-            self._forget_long_term_key(self.address)
+        if self._forget_long_term_keys is not None:
+            self._forget_long_term_keys(self.address)
 
     def _codec(self) -> ATTClient:
         """Return the live ATT codec or raise if the channel is down."""
