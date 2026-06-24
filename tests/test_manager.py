@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import timedelta
 from typing import Any
 from unittest.mock import ANY, AsyncMock, Mock, PropertyMock, patch
@@ -547,6 +547,135 @@ async def test_async_register_scanner_mode_change_callback(
     cancel1()
     cancel2()
     cancel3()
+
+
+_PASSIVE_WARNING = "is in passive-only mode"
+
+
+@pytest.mark.asyncio
+async def test_active_scan_warns_about_existing_passive_scanner(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Registering an active scan warns when a passive-only scanner exists."""
+    manager = get_manager()
+    passive = FakeScanner(
+        "AA:BB:CC:DD:EE:01", "hci1", requested_mode=BluetoothScanningMode.PASSIVE
+    )
+    cancel_scanner = manager.async_register_scanner(passive)
+    try:
+        with caplog.at_level(logging.WARNING):
+            cancel_scan = manager.async_register_active_scan("AA:BB:CC:DD:EE:99")
+        assert _PASSIVE_WARNING in caplog.text
+        assert passive.name in caplog.text
+    finally:
+        cancel_scan()
+        cancel_scanner()
+
+
+@pytest.mark.asyncio
+async def test_scanner_going_passive_after_active_scan_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A scanner becoming passive while active scans exist warns once."""
+    manager = get_manager()
+    cancel_scan = manager.async_register_active_scan("AA:BB:CC:DD:EE:99")
+    auto = FakeScanner(
+        "AA:BB:CC:DD:EE:02", "hci2", requested_mode=BluetoothScanningMode.AUTO
+    )
+    cancel_scanner = manager.async_register_scanner(auto)
+    try:
+        with caplog.at_level(logging.WARNING):
+            # Current-mode toggles on an AUTO scanner must not warn.
+            auto.set_current_mode(BluetoothScanningMode.ACTIVE)
+            assert _PASSIVE_WARNING not in caplog.text
+            # Flipping the requested mode to passive warns.
+            auto.set_requested_mode(BluetoothScanningMode.PASSIVE)
+        assert caplog.text.count(_PASSIVE_WARNING) == 1
+        assert auto.name in caplog.text
+    finally:
+        cancel_scanner()
+        cancel_scan()
+
+
+@pytest.mark.asyncio
+async def test_passive_scanner_warning_dedupes_per_source(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One passive scanner warns once across many active-scan registrations."""
+    manager = get_manager()
+    passive = FakeScanner(
+        "AA:BB:CC:DD:EE:03", "hci3", requested_mode=BluetoothScanningMode.PASSIVE
+    )
+    cancel_scanner = manager.async_register_scanner(passive)
+    cancels: list[Callable[[], None]] = []
+    try:
+        with caplog.at_level(logging.WARNING):
+            cancels.extend(
+                manager.async_register_active_scan(addr)
+                for addr in ("AA:BB:CC:DD:EE:91", "AA:BB:CC:DD:EE:92")
+            )
+        assert caplog.text.count(_PASSIVE_WARNING) == 1
+    finally:
+        for cancel in cancels:
+            cancel()
+        cancel_scanner()
+
+
+@pytest.mark.asyncio
+async def test_active_scan_no_warning_for_auto_or_active_scanner(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No warning when the only scanners are auto or active."""
+    manager = get_manager()
+    auto = FakeScanner(
+        "AA:BB:CC:DD:EE:04", "hci4", requested_mode=BluetoothScanningMode.AUTO
+    )
+    active = FakeScanner(
+        "AA:BB:CC:DD:EE:05", "hci5", requested_mode=BluetoothScanningMode.ACTIVE
+    )
+    cancel_auto = manager.async_register_scanner(auto)
+    cancel_active = manager.async_register_scanner(active)
+    try:
+        with caplog.at_level(logging.WARNING):
+            cancel_scan = manager.async_register_active_scan("AA:BB:CC:DD:EE:99")
+        assert _PASSIVE_WARNING not in caplog.text
+    finally:
+        cancel_scan()
+        cancel_auto()
+        cancel_active()
+
+
+@pytest.mark.asyncio
+async def test_passive_scanner_warning_resets_after_unregister(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Re-registering a passive scanner warns again after it is unregistered."""
+    manager = get_manager()
+    cancel_scan = manager.async_register_active_scan("AA:BB:CC:DD:EE:99")
+    try:
+        with caplog.at_level(logging.WARNING):
+            cancel_scanner = manager.async_register_scanner(
+                FakeScanner(
+                    "AA:BB:CC:DD:EE:06",
+                    "hci6",
+                    requested_mode=BluetoothScanningMode.PASSIVE,
+                )
+            )
+        assert caplog.text.count(_PASSIVE_WARNING) == 1
+        cancel_scanner()
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            cancel_scanner2 = manager.async_register_scanner(
+                FakeScanner(
+                    "AA:BB:CC:DD:EE:06",
+                    "hci6",
+                    requested_mode=BluetoothScanningMode.PASSIVE,
+                )
+            )
+        assert caplog.text.count(_PASSIVE_WARNING) == 1
+        cancel_scanner2()
+    finally:
+        cancel_scan()
 
 
 @pytest.mark.asyncio
