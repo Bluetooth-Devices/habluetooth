@@ -20,12 +20,18 @@ from habluetooth.channels.bluez import (
     MGMT_OP_START_DISCOVERY,
     MGMT_OP_STOP_DISCOVERY,
     MGMT_OP_UNPAIR_DEVICE,
+    MGMT_OP_USER_CONFIRM_NEG_REPLY,
+    MGMT_OP_USER_CONFIRM_REPLY,
+    MGMT_OP_USER_PASSKEY_NEG_REPLY,
+    MGMT_OP_USER_PASSKEY_REPLY,
     SCAN_TYPE_LE,
     AuthenticationFailed,
     BluetoothMGMTProtocol,
     LongTermKey,
     MGMTBluetoothCtl,
     NewLongTermKey,
+    UserConfirmationRequest,
+    UserPasskeyRequest,
     bytes_mac_to_str,
     make_bluez_details,
 )
@@ -2310,3 +2316,156 @@ async def test_register_pairing_handler_last_wins() -> None:
     assert mgmt_ctl._pairing_handlers[key] is second
     unregister_first()  # must not remove the newer handler
     assert mgmt_ctl._pairing_handlers[key] is second
+
+
+# -- interactive pairing replies + request events -------------------------
+_REV_PEER = b"\xff\xee\xdd\xcc\xbb\xaa"  # little-endian AA:BB:CC:DD:EE:FF
+_PEER_STR = "AA:BB:CC:DD:EE:FF"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("accept", "opcode"),
+    [(True, MGMT_OP_USER_CONFIRM_REPLY), (False, MGMT_OP_USER_CONFIRM_NEG_REPLY)],
+)
+async def test_user_confirmation_reply(accept: bool, opcode: int) -> None:
+    """Confirmation accept/reject send the right opcode with addr + type."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    assert (
+        await mgmt_ctl.user_confirmation_reply(
+            0, _PEER_STR, BDADDR_LE_RANDOM, accept=accept
+        )
+        is True
+    )
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[0:2] == opcode.to_bytes(2, "little")
+    assert sent[6:12] == _REV_PEER
+    assert sent[12] == BDADDR_LE_RANDOM
+
+
+@pytest.mark.asyncio
+async def test_user_passkey_reply() -> None:
+    """Passkey reply carries the addr, type, and uint32 passkey."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    assert (
+        await mgmt_ctl.user_passkey_reply(0, _PEER_STR, BDADDR_LE_RANDOM, 123456)
+        is True
+    )
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[0:2] == MGMT_OP_USER_PASSKEY_REPLY.to_bytes(2, "little")
+    assert sent[6:12] == _REV_PEER
+    assert sent[12] == BDADDR_LE_RANDOM
+    assert sent[13:17] == (123456).to_bytes(4, "little")
+
+
+@pytest.mark.asyncio
+async def test_user_passkey_negative_reply() -> None:
+    """Passkey negative reply sends addr + type with the negative opcode."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    assert (
+        await mgmt_ctl.user_passkey_negative_reply(0, _PEER_STR, BDADDR_LE_PUBLIC)
+        is True
+    )
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[0:2] == MGMT_OP_USER_PASSKEY_NEG_REPLY.to_bytes(2, "little")
+
+
+@pytest.mark.asyncio
+async def test_user_reply_failure() -> None:
+    """A non-success status returns False."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x03)
+    assert (
+        await mgmt_ctl.user_confirmation_reply(0, _PEER_STR, BDADDR_LE_PUBLIC) is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_reply_rejects_invalid_address() -> None:
+    """A malformed address is a soft failure with nothing sent."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    assert await mgmt_ctl.user_passkey_reply(0, "AA:BB", BDADDR_LE_PUBLIC, 1) is False
+    mock_protocol._write_to_socket.assert_not_called()
+
+
+def test_data_received_user_confirmation_request(
+    event_loop: asyncio.AbstractEventLoop,
+) -> None:
+    """A USER_CONFIRMATION_REQUEST event decodes the comparison value."""
+    received: list[object] = []
+    protocol = _protocol_with_handlers(event_loop, {(0, _PEER_STR): received.append})
+    param = _REV_PEER + bytes([0x01, 0x01]) + (123456).to_bytes(4, "little")
+    header = (
+        (0x000F).to_bytes(2, "little") + b"\x00\x00" + len(param).to_bytes(2, "little")
+    )
+    protocol.data_received(header + param)
+    assert received == [UserConfirmationRequest(_PEER_STR, 0x01, 0x01, 123456)]
+
+
+def test_data_received_user_passkey_request(
+    event_loop: asyncio.AbstractEventLoop,
+) -> None:
+    """A USER_PASSKEY_REQUEST event routes to the handler."""
+    received: list[object] = []
+    protocol = _protocol_with_handlers(event_loop, {(0, _PEER_STR): received.append})
+    param = _REV_PEER + bytes([0x01])
+    header = (
+        (0x0010).to_bytes(2, "little") + b"\x00\x00" + len(param).to_bytes(2, "little")
+    )
+    protocol.data_received(header + param)
+    assert received == [UserPasskeyRequest(_PEER_STR, 0x01)]
+
+
+@pytest.mark.parametrize(
+    ("event_code", "param"),
+    [(0x000F, b"\xff\xee\xdd"), (0x0010, b"\xff\xee")],
+)
+def test_truncated_user_request_is_dropped(
+    event_loop: asyncio.AbstractEventLoop, event_code: int, param: bytes
+) -> None:
+    """A user-request event too short to parse is dropped, not mis-read."""
+    received: list[object] = []
+    protocol = _protocol_with_handlers(event_loop, {(0, _PEER_STR): received.append})
+    header = (
+        event_code.to_bytes(2, "little")
+        + b"\x00\x00"
+        + len(param).to_bytes(2, "little")
+    )
+    protocol.data_received(header + param)
+    assert received == []
+
+
+@pytest.mark.parametrize(
+    ("event_code", "param"),
+    [
+        (0x000F, _REV_PEER + bytes([0x01, 0x01]) + (1).to_bytes(4, "little")),
+        (0x0010, _REV_PEER + bytes([0x01])),
+    ],
+)
+def test_user_request_without_handler_is_dropped(
+    event_loop: asyncio.AbstractEventLoop, event_code: int, param: bytes
+) -> None:
+    """A user-request event for an unregistered peer is dropped without error."""
+    protocol = _protocol_with_handlers(event_loop, {})
+    header = (
+        event_code.to_bytes(2, "little")
+        + b"\x00\x00"
+        + len(param).to_bytes(2, "little")
+    )
+    protocol.data_received(header + param)  # no handlers -> no-op
+
+
+@pytest.mark.asyncio
+async def test_user_reply_rejects_out_of_range_passkey() -> None:
+    """A passkey that does not fit a uint32 is a soft failure, not a struct.error."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    assert (
+        await mgmt_ctl.user_passkey_reply(0, _PEER_STR, BDADDR_LE_PUBLIC, 2**32)
+        is False
+    )
+    mock_protocol._write_to_socket.assert_not_called()

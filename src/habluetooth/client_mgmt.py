@@ -55,6 +55,15 @@ if TYPE_CHECKING:
         AuthenticationFailed,
         LongTermKey,
         MGMTBluetoothCtl,
+        UserConfirmationRequest,
+        UserPasskeyRequest,
+    )
+
+    PairingEvent = (
+        NewLongTermKey
+        | AuthenticationFailed
+        | UserConfirmationRequest
+        | UserPasskeyRequest
     )
 
 
@@ -380,7 +389,9 @@ class HaMgmtClient(BaseBleakClient):
         mgmt, adapter_idx = self._require_mgmt()
         address = self.address
 
-        def _capture(event: NewLongTermKey | AuthenticationFailed) -> None:
+        def _capture(event: PairingEvent) -> None:
+            # Just Works pairing (NoInputNoOutput) does not raise confirm/passkey
+            # requests; we only act on the captured key.
             if not isinstance(event, NewLongTermKey):
                 return
             if not event.store_hint:

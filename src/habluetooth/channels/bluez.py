@@ -32,8 +32,6 @@ if TYPE_CHECKING:
 
     from ..base_scanner import BaseHaScanner
 
-    PairingHandler = Callable[["NewLongTermKey | AuthenticationFailed"], None]
-
 _LOGGER = logging.getLogger(__name__)
 _int = int
 _bytes = bytes
@@ -64,7 +62,13 @@ IO_CAPABILITY_NO_INPUT_NO_OUTPUT = 0x03
 MGMT_EV_CMD_COMPLETE = 0x0001
 MGMT_EV_CMD_STATUS = 0x0002
 MGMT_EV_NEW_LONG_TERM_KEY = 0x000A
+MGMT_EV_USER_CONFIRM_REQUEST = 0x000F
+MGMT_EV_USER_PASSKEY_REQUEST = 0x0010
 MGMT_EV_AUTH_FAILED = 0x0011
+MGMT_OP_USER_CONFIRM_REPLY = 0x001C
+MGMT_OP_USER_CONFIRM_NEG_REPLY = 0x001D
+MGMT_OP_USER_PASSKEY_REPLY = 0x001E
+MGMT_OP_USER_PASSKEY_NEG_REPLY = 0x001F
 
 # Discovery address-type bitmask: BR/EDR (0x01) | LE Public (0x02) | LE Random (0x04).
 # We only scan for LE devices, so we combine the two LE bits.
@@ -98,6 +102,16 @@ PAIR_DEVICE_PACK = PAIR_DEVICE_STRUCT.pack
 # UNPAIR_DEVICE carries bdaddr (6) + address type (1) + disconnect flag (1).
 UNPAIR_DEVICE_STRUCT = Struct("<6sBB")
 UNPAIR_DEVICE_PACK = UNPAIR_DEVICE_STRUCT.pack
+# USER_*_REPLY (confirm + passkey-negative) carry bdaddr (6) + address type (1).
+USER_REPLY_STRUCT = Struct("<6sB")
+USER_REPLY_PACK = USER_REPLY_STRUCT.pack
+# USER_PASSKEY_REPLY adds a uint32 passkey.
+USER_PASSKEY_REPLY_STRUCT = Struct("<6sBI")
+USER_PASSKEY_REPLY_PACK = USER_PASSKEY_REPLY_STRUCT.pack
+# USER_CONFIRMATION_REQUEST event = bdaddr (6) + type (1) + confirm_hint (1) +
+# value (4); USER_PASSKEY_REQUEST event = bdaddr (6) + type (1).
+_USER_CONFIRM_REQ_EV_SIZE = 12
+_USER_PASSKEY_REQ_EV_SIZE = 7
 # LOAD_LONG_TERM_KEYS carries a uint16 key count followed by mgmt_ltk_info
 # records: bdaddr (6) + address type (1) + key type (1) + central flag (1) +
 # encryption size (1) + ediv (2) + rand (8) + value (16) = 36 bytes each.
@@ -164,6 +178,37 @@ class AuthenticationFailed:
     address: str
     address_type: int
     status: int
+
+
+@dataclass(slots=True, frozen=True)
+class UserConfirmationRequest:
+    """A USER_CONFIRMATION_REQUEST event: confirm a numeric comparison value."""
+
+    address: str
+    address_type: int
+    # Per the mgmt API: when set, the value is not relevant and the user should
+    # just confirm the pairing (yes/no, no number to show); when 0, ``value``
+    # holds the number to display for comparison.
+    confirm_hint: int
+    value: int  # the 6-digit numeric comparison value (when confirm_hint is 0)
+
+
+@dataclass(slots=True, frozen=True)
+class UserPasskeyRequest:
+    """A USER_PASSKEY_REQUEST event: the peer wants a passkey entered."""
+
+    address: str
+    address_type: int
+
+
+if TYPE_CHECKING:
+    PairingEvent = (
+        NewLongTermKey
+        | AuthenticationFailed
+        | UserConfirmationRequest
+        | UserPasskeyRequest
+    )
+    PairingHandler = Callable[[PairingEvent], None]
 
 
 def _mgmt_address_bytes(address: str) -> bytes | None:
@@ -381,6 +426,14 @@ class BluetoothMGMTProtocol:
                 self._handle_auth_failed(controller_idx, header[6 : self._pos])
                 self._remove_from_buffer()
                 continue
+            elif event_code == MGMT_EV_USER_CONFIRM_REQUEST:
+                self._handle_user_confirm_request(controller_idx, header[6 : self._pos])
+                self._remove_from_buffer()
+                continue
+            elif event_code == MGMT_EV_USER_PASSKEY_REQUEST:
+                self._handle_user_passkey_request(controller_idx, header[6 : self._pos])
+                self._remove_from_buffer()
+                continue
             else:
                 self._remove_from_buffer()
                 continue
@@ -449,10 +502,31 @@ class BluetoothMGMTProtocol:
             handler, AuthenticationFailed(address, param[6], param[7])
         )
 
+    def _handle_user_confirm_request(self, controller_idx: _int, param: _bytes) -> None:
+        """Decode a USER_CONFIRMATION_REQUEST event and route it to its handler."""
+        if len(param) < _USER_CONFIRM_REQ_EV_SIZE:
+            _LOGGER.debug("hci%u: truncated USER_CONFIRM_REQUEST event", controller_idx)
+            return
+        address = bytes_mac_to_str(param[0:6])
+        if (handler := self._pairing_handlers.get((controller_idx, address))) is None:
+            return
+        value = int.from_bytes(param[8:12], "little")
+        self._dispatch_pairing_event(
+            handler, UserConfirmationRequest(address, param[6], param[7], value)
+        )
+
+    def _handle_user_passkey_request(self, controller_idx: _int, param: _bytes) -> None:
+        """Decode a USER_PASSKEY_REQUEST event and route it to its handler."""
+        if len(param) < _USER_PASSKEY_REQ_EV_SIZE:
+            _LOGGER.debug("hci%u: truncated USER_PASSKEY_REQUEST event", controller_idx)
+            return
+        address = bytes_mac_to_str(param[0:6])
+        if (handler := self._pairing_handlers.get((controller_idx, address))) is None:
+            return
+        self._dispatch_pairing_event(handler, UserPasskeyRequest(address, param[6]))
+
     def _dispatch_pairing_event(
-        self,
-        handler: PairingHandler,
-        event: NewLongTermKey | AuthenticationFailed,
+        self, handler: PairingHandler, event: PairingEvent
     ) -> None:
         """Call a pairing handler, isolating it from the socket read loop."""
         # data_received runs in the read loop, so a raising handler must not tear
@@ -866,6 +940,75 @@ class MGMTBluetoothCtl:
         _LOGGER.warning(
             "hci%u: failed to disconnect %s: %s",
             adapter_idx,
+            address,
+            "no response" if result is None else f"status={result[0]:#x}",
+        )
+        return False
+
+    async def user_confirmation_reply(
+        self, adapter_idx: int, address: str, address_type: int, *, accept: bool = True
+    ) -> bool:
+        """Answer a USER_CONFIRMATION_REQUEST (numeric comparison) for a peer."""
+        opcode = (
+            MGMT_OP_USER_CONFIRM_REPLY if accept else MGMT_OP_USER_CONFIRM_NEG_REPLY
+        )
+        return await self._user_reply(
+            opcode, adapter_idx, address, USER_REPLY_PACK, (address_type,)
+        )
+
+    async def user_passkey_reply(
+        self, adapter_idx: int, address: str, address_type: int, passkey: int
+    ) -> bool:
+        """Answer a USER_PASSKEY_REQUEST with the entered passkey for a peer."""
+        return await self._user_reply(
+            MGMT_OP_USER_PASSKEY_REPLY,
+            adapter_idx,
+            address,
+            USER_PASSKEY_REPLY_PACK,
+            (address_type, passkey),
+        )
+
+    async def user_passkey_negative_reply(
+        self, adapter_idx: int, address: str, address_type: int
+    ) -> bool:
+        """Reject a USER_PASSKEY_REQUEST for a peer."""
+        return await self._user_reply(
+            MGMT_OP_USER_PASSKEY_NEG_REPLY,
+            adapter_idx,
+            address,
+            USER_REPLY_PACK,
+            (address_type,),
+        )
+
+    async def _user_reply(
+        self,
+        opcode: int,
+        adapter_idx: int,
+        address: str,
+        pack: Callable[..., bytes],
+        extra: tuple[int, ...],
+    ) -> bool:
+        """Send a USER_*_REPLY command for a peer and report success."""
+        addr = _mgmt_address_bytes(address)
+        if addr is None:
+            _LOGGER.error("hci%u: invalid address for reply: %s", adapter_idx, address)
+            return False
+        try:
+            # An out-of-range address_type or passkey raises struct.error; keep
+            # that a soft failure rather than letting it escape the command path.
+            payload = pack(addr, *extra)
+        except struct_error:
+            _LOGGER.exception(
+                "hci%u: invalid pairing reply parameters for %s", adapter_idx, address
+            )
+            return False
+        result = await self._send_command_await(opcode, adapter_idx, payload)
+        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+            return True
+        _LOGGER.warning(
+            "hci%u: pairing reply %#x for %s failed: %s",
+            adapter_idx,
+            opcode,
             address,
             "no response" if result is None else f"status={result[0]:#x}",
         )
