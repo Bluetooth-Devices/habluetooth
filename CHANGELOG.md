@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.17.0 (2026-06-24)
+
+### Features
+
+
+- Capture new long term key and auth failed mgmt events ([`70eb674`](https://github.com/Bluetooth-Devices/habluetooth/commit/70eb67406d46d2dc6e19b7a2d66eabe5982ea851))
+
+
 ## v6.16.0 (2026-06-24)
 
 ### Features
