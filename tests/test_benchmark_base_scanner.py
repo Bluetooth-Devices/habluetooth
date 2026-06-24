@@ -169,6 +169,89 @@ async def test_inject_100_cross_source_keep_previous(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_inject_100_cross_source_switch(benchmark: BenchmarkFixture) -> None:
+    """
+    Inject 100 advertisements that flip ownership between two scanners.
+
+    Two equal-strength scanners alternate advertising the device with
+    ever-later timestamps, so each advertisement is stale relative to the
+    current owner and ownership switches on every injection. This drives the
+    other half of the arbitration hot path
+    (``_prefer_previous_adv_from_different_source`` returning False, the
+    switch decision) on every iteration, complementing the keep-previous
+    benchmark above. The source changes every injection, which resets the
+    interval tracker, so the fallback stale window stays in effect.
+    """
+    manager = get_manager()
+
+    address = "44:44:33:11:23:46"
+    adv = generate_advertisement_data(
+        local_name="wohand",
+        service_uuids=["050a021a-0000-1000-8000-00805f9b34fb"],
+        service_data={"050a021a-0000-1000-8000-00805f9b34fb": b"\n\xff"},
+        manufacturer_data={1: b"\x01"},
+        rssi=-60,
+    )
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner_a = BaseHaRemoteScanner("esp32_a", "esp32_a", connector, True)
+    scanner_b = BaseHaRemoteScanner("esp32_b", "esp32_b", connector, True)
+    unsetup_a = scanner_a.async_setup()
+    unsetup_b = scanner_b.async_setup()
+    cancel_a = manager.async_register_scanner(scanner_a)
+    cancel_b = manager.async_register_scanner(scanner_b)
+    # Small known stale window so a +100s step per injection is always stale.
+    manager.async_set_fallback_availability_interval(address, 10)
+
+    _name = "wohand"
+    _service_uuids = adv.service_uuids
+    _service_data = adv.service_data
+    _manufacturer_data = adv.manufacturer_data
+    _tx_power = adv.tx_power
+    _details = {"scanner_specific_data": "x"}
+    _time = [monotonic_time_coarse()]
+
+    # Seed ownership on scanner_a; the first loop injection (scanner_b) flips it.
+    scanner_a._async_on_advertisement(
+        address,
+        -60,
+        _name,
+        _service_uuids,
+        _service_data,
+        _manufacturer_data,
+        _tx_power,
+        _details,
+        _time[0],
+    )
+
+    scanners = (scanner_b, scanner_a)
+
+    @benchmark
+    def run():
+        for i in range(100):
+            _time[0] += 100.0
+            scanners[i & 1]._async_on_advertisement(
+                address,
+                -60,
+                _name,
+                _service_uuids,
+                _service_data,
+                _manufacturer_data,
+                _tx_power,
+                _details,
+                _time[0],
+            )
+
+    cancel_a()
+    cancel_b()
+    unsetup_a()
+    unsetup_b()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_inject_100_complex_advertisements(benchmark: BenchmarkFixture) -> None:
     """Test injecting 100 complex advertisements."""
     manager = get_manager()
