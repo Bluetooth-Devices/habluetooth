@@ -33,6 +33,7 @@ from .advertisement_tracker import (
 from .auto_scheduler import ActiveScanRequest, AutoScanScheduler
 from .channels.bluez import CONNECTION_ERRORS, MGMTBluetoothCtl
 from .const import (
+    ADV_RSSI_SWITCH_DEADBAND,
     ADV_RSSI_SWITCH_THRESHOLD,
     CALLBACK_TYPE,
     DEFAULT_ACTIVE_SCAN_DURATION,
@@ -90,6 +91,7 @@ _int = int
 _DURABLY_GONE_STALE_FACTOR = DURABLY_GONE_STALE_FACTOR
 _STRONG_OWNER_STALE_RSSI = STRONG_OWNER_STALE_RSSI
 _RSSI_SMOOTHING_FACTOR = RSSI_SMOOTHING_FACTOR
+_ADV_RSSI_SWITCH_DEADBAND = ADV_RSSI_SWITCH_DEADBAND
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -145,6 +147,7 @@ class BluetoothManager:
         "_connectable_unavailable_callbacks",
         "_connection_history",
         "_debug",
+        "_demoted_source",
         "_disappeared_callbacks",
         "_fallback_intervals",
         "_intervals",
@@ -193,6 +196,18 @@ class BluetoothManager:
         # arbitration that uses it only runs cross-source); single-proxy
         # devices never allocate a bucket. Evicted with the device.
         self._smoothed_rssi: dict[str, dict[str, float]] = {}
+        # address -> the source that most recently lost ownership (the previous
+        # all-history owner before ownership moved to a different source). Used
+        # for asymmetric switch hysteresis: a challenger that is reclaiming the
+        # ownership it was just demoted from must clear an extra deadband, so a
+        # boundary-straddling stationary device stops ping-ponging between two
+        # proxies; a genuine one-way move is never the demoted source and pays
+        # nothing. This is a single slot holding only the most-recent loser, so
+        # the hysteresis is pairwise: it damps the two-proxy ping-pong it
+        # targets, but in N-way contention each switch overwrites the record, so
+        # an older owner reclaiming pays only the plain threshold. Evicted with
+        # the device and per source on unregister.
+        self._demoted_source: dict[str, str] = {}
         # Cross-scanner name cache: address -> best name seen across all
         # scanners. Passive scanners typically miss the device name because
         # it lives in SCAN_RSP (active-only); the cache lets a name learned
@@ -511,6 +526,7 @@ class BluetoothManager:
                     tracker.async_remove_address(address)
                     self._name_cache.pop(address, None)
                     self._smoothed_rssi.pop(address, None)
+                    self._demoted_source.pop(address, None)
                     for disappear_callback in self._disappeared_callbacks:
                         try:
                             disappear_callback(address)
@@ -544,6 +560,7 @@ class BluetoothManager:
         new_info: BluetoothServiceInfoBleak,
         smoothed: dict[str, float] | None,
         new_rssi: float,
+        record_demotion: bool,
     ) -> bool:
         """
         Return True when ``old_info`` should win over ``new_info``.
@@ -556,7 +573,9 @@ class BluetoothManager:
         single-proxy device exit before the source compares and narrows the
         bucket to non-None for the cross-source predicate. ``new_rssi`` is the
         already-computed smoothed value for new_info's source, threaded through
-        to avoid re-looking it up.
+        to avoid re-looking it up. ``record_demotion`` is forwarded to the
+        predicate so an RSSI-path switch can remember the demoted owner; it is
+        True only for the all-history decision, not the connectable re-check.
         """
         return (
             smoothed is not None
@@ -565,7 +584,7 @@ class BluetoothManager:
             and (scanner := self._sources.get(old_info.source)) is not None
             and scanner.scanning
             and self._prefer_previous_adv_from_different_source(
-                old_info, new_info, smoothed, new_rssi
+                old_info, new_info, smoothed, new_rssi, record_demotion
             )
         )
 
@@ -575,6 +594,7 @@ class BluetoothManager:
         new: BluetoothServiceInfoBleak,
         smoothed: dict[str, float],
         new_rssi: float,
+        record_demotion: bool,
     ) -> bool:
         """Prefer previous advertisement from a different source if it is better."""
         # Compare smoothed per-source RSSI so a momentary spike does not flip
@@ -629,9 +649,26 @@ class BluetoothManager:
                         durably_gone,
                     )
                 return False
-        if new_rssi - ADV_RSSI_SWITCH_THRESHOLD > old_rssi:
-            # If new advertisement is ADV_RSSI_SWITCH_THRESHOLD more,
-            # the new one is preferred (smoothed RSSI when available).
+        # Asymmetric hysteresis: a challenger normally only needs THRESHOLD, but
+        # one that is reclaiming the ownership it was just demoted from must also
+        # clear DEADBAND. This stops a heavily-multipathed stationary device
+        # whose smoothed RSSI straddles the threshold from ping-ponging between
+        # two proxies, while a genuine one-way move (never the demoted source)
+        # still hands off at THRESHOLD (see ADV_RSSI_SWITCH_DEADBAND).
+        switch_margin = ADV_RSSI_SWITCH_THRESHOLD
+        if self._demoted_source.get(new.address) == new.source:
+            switch_margin += _ADV_RSSI_SWITCH_DEADBAND
+        if new_rssi - switch_margin > old_rssi:
+            # The new source wins ownership on the active RSSI path. Remember the
+            # demoted owner so a quick reclaim by it faces the deadband above.
+            # Recorded only here (not the stale handoff, so a strong owner
+            # recovering from transient silence still reclaims at THRESHOLD) and
+            # only for the all-history decision (record_demotion); old.source is
+            # guaranteed registered, since _should_keep_previous_adv checked it.
+            if record_demotion:
+                self._demoted_source[new.address] = old.source
+            # If new advertisement is switch_margin more, prefer the new one
+            # (smoothed RSSI when available).
             if self._debug:
                 _LOGGER.debug(
                     "%s (%s): Switching from %s to %s (new rssi:%s - threshold:%s >"
@@ -641,7 +678,7 @@ class BluetoothManager:
                     self._async_describe_source(old),
                     self._async_describe_source(new),
                     new_rssi,
-                    ADV_RSSI_SWITCH_THRESHOLD,
+                    switch_margin,
                     old_rssi,
                 )
             return False
@@ -901,7 +938,7 @@ class BluetoothManager:
         #                       connectable scanner
         #
         if old_service_info is not None and self._should_keep_previous_adv(
-            old_service_info, service_info, smoothed_bucket, new_smoothed
+            old_service_info, service_info, smoothed_bucket, new_smoothed, True
         ):
             # If we are rejecting the new advertisement and the device is connectable
             # but not in the connectable history or the connectable source is the same
@@ -918,6 +955,7 @@ class BluetoothManager:
                         service_info,
                         smoothed_bucket,
                         new_smoothed,
+                        False,
                     )
                 ):
                     return
@@ -1038,6 +1076,7 @@ class BluetoothManager:
         self._connectable_history.pop(address, None)
         self._name_cache.pop(address, None)
         self._smoothed_rssi.pop(address, None)
+        self._demoted_source.pop(address, None)
         for scanner in self._sources.values():
             scanner._previous_service_info.pop(address, None)
 
@@ -1307,6 +1346,16 @@ class BluetoothManager:
                 emptied.append(address)
         for address in emptied:
             del self._smoothed_rssi[address]
+        # Drop any reclaim-hysteresis record pointing at this source so a
+        # re-registered scanner is not penalized for an ownership it lost before
+        # it went away.
+        demoted_here = [
+            address
+            for address, demoted in self._demoted_source.items()
+            if demoted == source
+        ]
+        for address in demoted_here:
+            del self._demoted_source[address]
         self._adapter_sources.pop(scanner.adapter, None)
         self._allocations.pop(scanner.source, None)
         if connection_slots:
