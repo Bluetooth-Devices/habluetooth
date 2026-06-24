@@ -11,10 +11,19 @@ import pytest
 from bleak import BleakError
 from bleak.backends.device import BLEDevice
 
+from habluetooth.channels.att import (
+    ATT_ERR_INSUFFICIENT_AUTHENTICATION,
+    ATT_ERR_INSUFFICIENT_ENCRYPTION,
+)
 from habluetooth.channels.bluez import (
     AuthenticationFailed,
     LongTermKey,
     NewLongTermKey,
+)
+from habluetooth.channels.l2cap import (
+    BT_SECURITY_HIGH,
+    BT_SECURITY_LOW,
+    BT_SECURITY_MEDIUM,
 )
 from habluetooth.client_mgmt import HaMgmtClient, MgmtClientData
 from habluetooth.const import BDADDR_LE_RANDOM
@@ -128,6 +137,16 @@ class FakeTransport:
         self._on_close = on_close
         self.sent: list[bytes] = []
         self.closed = False
+        self.security_level = BT_SECURITY_LOW
+        self.security_requests: list[int] = []
+
+    def set_security_level(self, level: int) -> bool:
+        """Raise the tracked security level, never lowering it."""
+        self.security_requests.append(level)
+        if level <= self.security_level:
+            return False
+        self.security_level = level
+        return True
 
     async def send(self, data: bytes) -> None:
         self.sent.append(bytes(data))
@@ -312,6 +331,51 @@ async def test_write_gatt_descriptor() -> None:
     assert cccd is not None
     await client.write_gatt_descriptor(cccd, b"\x01\x00")
     assert holder["transport"].sent[-1] == b"\x12\x04\x00\x01\x00"
+
+
+# -- security escalation --------------------------------------------------
+async def test_read_escalates_security_then_succeeds() -> None:
+    """A read rejected for encryption raises link security and retries once."""
+    holder: dict[str, FakeTransport] = {}
+    base = make_responder()
+    attempts = 0
+
+    def responder(req: bytes) -> bytes | None:
+        nonlocal attempts
+        if req[0] == 0x0A:  # READ_REQ
+            attempts += 1
+            if attempts == 1:
+                handle = int.from_bytes(req[1:3], "little")
+                return _error(0x0A, handle, ATT_ERR_INSUFFICIENT_ENCRYPTION)
+        return base(req)
+
+    client, _scanner = await _connect(holder, responder)
+    assert await client.read_gatt_char(_char(client)) == bytearray(_VALUE)
+    assert holder["transport"].security_requests == [BT_SECURITY_MEDIUM]
+    assert holder["transport"].security_level == BT_SECURITY_MEDIUM
+
+
+async def test_escalate_security_steps_up_on_authentication() -> None:
+    """Insufficient authentication steps the level up one, capped at HIGH."""
+    client, _scanner = _make_client()
+    transport = FakeTransport(make_responder(), lambda _d: None, lambda _e: None)
+    transport.security_level = BT_SECURITY_MEDIUM
+    client._sock = transport  # type: ignore[assignment]
+    assert client._escalate_security(ATT_ERR_INSUFFICIENT_AUTHENTICATION) is True
+    assert transport.security_level == BT_SECURITY_HIGH
+    # The kernel exposes nothing above HIGH, so a further step declines.
+    assert client._escalate_security(ATT_ERR_INSUFFICIENT_AUTHENTICATION) is False
+    assert transport.security_level == BT_SECURITY_HIGH
+
+
+async def test_escalate_security_declines_when_already_encrypted() -> None:
+    """An encryption error at MEDIUM cannot be satisfied by encryption again."""
+    client, _scanner = _make_client()
+    transport = FakeTransport(make_responder(), lambda _d: None, lambda _e: None)
+    transport.security_level = BT_SECURITY_MEDIUM
+    client._sock = transport  # type: ignore[assignment]
+    assert client._escalate_security(ATT_ERR_INSUFFICIENT_ENCRYPTION) is False
+    assert transport.security_level == BT_SECURITY_MEDIUM
 
 
 # -- notifications --------------------------------------------------------
