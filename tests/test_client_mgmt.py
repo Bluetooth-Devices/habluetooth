@@ -440,6 +440,31 @@ async def test_start_notify_unwinds_handler_on_cccd_write_failure() -> None:
     assert received == []
 
 
+async def test_stop_notify_drops_handler_when_cccd_write_fails() -> None:
+    """A failed CCCD-off write still drops the handler, then surfaces the error."""
+    holder: dict[str, FakeTransport] = {}
+    fail = {"on": False}
+    base = make_responder()
+
+    def responder(req: bytes) -> bytes | None:
+        if req[0] == 0x12 and fail["on"]:  # WRITE_REQ
+            return _error(0x12, int.from_bytes(req[1:3], "little"), 0x03)
+        return base(req)
+
+    client, _scanner = await _connect(holder, responder)
+    char = _char(client)
+    received: list[bytearray] = []
+    await client.start_notify(char, received.append)
+    ntf = bytes([_NTF]) + (0x0003).to_bytes(2, "little") + b"\x09"
+    holder["transport"].inject(ntf)
+    assert received == [bytearray(b"\x09")]  # handler is live
+    fail["on"] = True
+    with pytest.raises(BleakError):
+        await client.stop_notify(char)
+    holder["transport"].inject(ntf)
+    assert received == [bytearray(b"\x09")]  # handler dropped despite the failure
+
+
 async def test_stop_notify_without_cccd_only_drops_handler() -> None:
     """stop_notify on a characteristic with no CCCD just drops the handler."""
     holder: dict[str, FakeTransport] = {}
