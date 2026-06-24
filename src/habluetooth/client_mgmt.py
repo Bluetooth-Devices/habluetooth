@@ -38,6 +38,7 @@ from .channels.att import (
     ATTClient,
     properties_to_strings,
 )
+from .channels.bluez import NewLongTermKey
 from .channels.l2cap import L2CAPSocket
 from .const import BDADDR_LE_PUBLIC
 
@@ -50,6 +51,11 @@ if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
 
     from .channels.att import GattService
+    from .channels.bluez import (
+        AuthenticationFailed,
+        LongTermKey,
+        MGMTBluetoothCtl,
+    )
 
 
 class SupportsConnecting(Protocol):
@@ -81,6 +87,18 @@ class MgmtClientData:
     # the client reports connect/disconnect by peer address here.
     register_connection: Callable[[str], None] | None = None
     unregister_connection: Callable[[str], None] | None = None
+    # Pairing: the scanner supplies the mgmt controller, the adapter index, and a
+    # per-adapter long-term-key store (bonds must outlive a per-connection client
+    # instance so reconnects can restore them).
+    adapter_idx: int | None = None
+    mgmt: MGMTBluetoothCtl | None = None
+    # get_long_term_keys returns every bonded key for the adapter (LOAD_LONG_TERM_
+    # KEYS replaces the controller's whole list, so a restore must send them all);
+    # add_long_term_key stores one captured key; forget_long_term_keys drops all
+    # keys for a peer on unpair.
+    get_long_term_keys: Callable[[], list[LongTermKey]] | None = None
+    add_long_term_key: Callable[[LongTermKey], None] | None = None
+    forget_long_term_keys: Callable[[str], None] | None = None
 
 
 class HaMgmtClient(BaseBleakClient):
@@ -100,6 +118,11 @@ class HaMgmtClient(BaseBleakClient):
         self._scanner = client_data.scanner
         self._register_connection = client_data.register_connection
         self._unregister_connection = client_data.unregister_connection
+        self._adapter_idx = client_data.adapter_idx
+        self._mgmt = client_data.mgmt
+        self._get_long_term_keys = client_data.get_long_term_keys
+        self._add_long_term_key = client_data.add_long_term_key
+        self._forget_long_term_keys = client_data.forget_long_term_keys
         details = getattr(address_or_ble_device, "details", None) or {}
         if "address_type" in details:
             self._address_type: int = details["address_type"]
@@ -132,9 +155,10 @@ class HaMgmtClient(BaseBleakClient):
         if self._connected:
             msg = "already connected"
             raise BleakError(msg)
+        await self._restore_bond()
         if pair:
             _LOGGER.debug(
-                "%s: mgmt client does not pair on connect; relying on bonded keys",
+                "%s: connect(pair=True); use pair() to bond explicitly",
                 self.address,
             )
         att = ATTClient(send=self._send_pdu, on_disconnect=self._handle_disconnect)
@@ -324,16 +348,70 @@ class HaMgmtClient(BaseBleakClient):
             await codec.write(cccd.handle, _CCCD_OFF)
         codec.remove_notify_handler(characteristic.handle)
 
-    # -- pairing (not yet supported) --------------------------------------
+    # -- pairing -----------------------------------------------------------
+    async def _restore_bond(self) -> None:
+        """Reload all bonded keys so the kernel re-encrypts known peers."""
+        if (
+            self._mgmt is None
+            or self._adapter_idx is None
+            or self._get_long_term_keys is None
+        ):
+            return
+        # LOAD_LONG_TERM_KEYS replaces the controller's whole list, so send every
+        # stored key; the kernel ignores keys for peers that are not connecting,
+        # and we must not wipe other peers' bonds on this adapter.
+        keys = self._get_long_term_keys()
+        if keys and not await self._mgmt.load_long_term_keys(self._adapter_idx, keys):
+            _LOGGER.warning(
+                "%s: failed to restore %d bonded key(s); the link may not encrypt",
+                self.address,
+                len(keys),
+            )
+
+    def _require_mgmt(self) -> tuple[MGMTBluetoothCtl, int]:
+        """Return the mgmt controller and adapter index, or raise if unavailable."""
+        if self._mgmt is None or self._adapter_idx is None:
+            msg = "pairing requires the management socket"
+            raise BleakError(msg)
+        return self._mgmt, self._adapter_idx
+
     async def pair(self, *args: Any, **kwargs: Any) -> None:
-        """Pairing via mgmt is not implemented yet."""
-        msg = "pairing is not supported by the mgmt client yet"
-        raise NotImplementedError(msg)
+        """Bond with the peer over mgmt, capturing the key for reconnects."""
+        mgmt, adapter_idx = self._require_mgmt()
+        address = self.address
+
+        def _capture(event: NewLongTermKey | AuthenticationFailed) -> None:
+            if not isinstance(event, NewLongTermKey):
+                return
+            if not event.store_hint:
+                # The kernel is signalling a key it does not want persisted.
+                return
+            if self._add_long_term_key is None:
+                _LOGGER.warning(
+                    "%s: captured a long-term key but no key store is wired",
+                    address,
+                )
+                return
+            self._add_long_term_key(event.key)
+
+        unregister = mgmt.register_pairing_handler(adapter_idx, address, _capture)
+        try:
+            if not await mgmt.pair_device(adapter_idx, address, self._address_type):
+                msg = f"{address}: pairing failed"
+                raise BleakError(msg)
+        finally:
+            unregister()
 
     async def unpair(self) -> None:
-        """Unpairing via mgmt is not implemented yet."""
-        msg = "unpairing is not supported by the mgmt client yet"
-        raise NotImplementedError(msg)
+        """Remove the bond over mgmt and forget the stored key."""
+        mgmt, adapter_idx = self._require_mgmt()
+        if not await mgmt.unpair_device(adapter_idx, self.address, self._address_type):
+            # Don't drop the local key if the kernel bond is still there, or the
+            # store would silently desync from the controller.
+            msg = f"{self.address}: unpair failed"
+            raise BleakError(msg)
+        if self._forget_long_term_keys is not None:
+            self._forget_long_term_keys(self.address)
 
     def _codec(self) -> ATTClient:
         """Return the live ATT codec or raise if the channel is down."""

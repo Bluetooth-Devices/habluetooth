@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
     from bleak.backends.scanner import AdvertisementData
 
+    from .channels.bluez import LongTermKey
     from .const import CALLBACK_TYPE
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,6 +83,14 @@ class HaScannerMgmt(BaseHaScanner):
             raise ValueError(msg)
         self.mac_address = address
         source = address
+        # Per-adapter bond store; survives the per-connection client instances so
+        # a reconnect can restore captured keys. Keyed by (address, central, ediv)
+        # so a peer can hold more than one LTK without later events clobbering it.
+        self._long_term_keys: dict[tuple[str, bool, int], LongTermKey] = {}
+        suffix = adapter.removeprefix("hci")
+        adapter_idx = (
+            int(suffix) if adapter.startswith("hci") and suffix.isdigit() else None
+        )
         connector = HaBluetoothConnector(
             # partial-bind the per-connection data; the wrapper calls
             # connector.client(device, ...) like any backend class.
@@ -94,6 +103,11 @@ class HaScannerMgmt(BaseHaScanner):
                         scanner=self,
                         register_connection=self._register_connection,
                         unregister_connection=self._unregister_connection,
+                        adapter_idx=adapter_idx,
+                        mgmt=get_manager().get_bluez_mgmt_ctl(),
+                        get_long_term_keys=self._all_long_term_keys,
+                        add_long_term_key=self._store_long_term_key,
+                        forget_long_term_keys=self._forget_long_term_keys,
                     ),
                 ),
             ),
@@ -253,6 +267,25 @@ class HaScannerMgmt(BaseHaScanner):
     def _unregister_connection(self, address: str) -> None:
         """Drop a connection (called by the client on disconnect)."""
         self._connections.discard(address)
+
+    def _all_long_term_keys(self) -> list[LongTermKey]:
+        """Return every bonded key for this adapter (for restore)."""
+        return list(self._long_term_keys.values())
+
+    def _store_long_term_key(self, key: LongTermKey) -> None:
+        """Persist a bonded key (called by the client after pairing)."""
+        # Canonicalize the address so forget (which may be called with a
+        # differently-cased address) always matches.
+        self._long_term_keys[(key.address.upper(), key.central, key.ediv)] = key
+
+    def _forget_long_term_keys(self, address: str) -> None:
+        """Drop every bonded key for a peer (called by the client on unpair)."""
+        canonical = address.upper()
+        self._long_term_keys = {
+            stored_key: value
+            for stored_key, value in self._long_term_keys.items()
+            if value.address.upper() != canonical
+        }
 
     def get_allocations(self) -> Allocations | None:
         """Report slot usage from this scanner's own connection tracking."""
