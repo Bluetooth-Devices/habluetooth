@@ -105,7 +105,7 @@ class HaScannerMgmt(BaseHaScanner):
                         unregister_connection=self._unregister_connection,
                         adapter_idx=adapter_idx,
                         mgmt=get_manager().get_bluez_mgmt_ctl(),
-                        get_long_term_keys=self._all_long_term_keys,
+                        get_long_term_keys=self.export_long_term_keys,
                         add_long_term_key=self._store_long_term_key,
                         forget_long_term_keys=self._forget_long_term_keys,
                     ),
@@ -271,10 +271,6 @@ class HaScannerMgmt(BaseHaScanner):
     def _unregister_connection(self, address: str) -> None:
         """Drop a connection (called by the client on disconnect)."""
         self._connections.discard(address)
-
-    def _all_long_term_keys(self) -> list[LongTermKey]:
-        """Return every bonded key for this adapter (for restore)."""
-        return list(self._long_term_keys.values())
 
     def _store_long_term_key(self, key: LongTermKey) -> None:
         """Persist a bonded key (called by the client after pairing)."""
