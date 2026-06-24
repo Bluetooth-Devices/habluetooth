@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.20.0 (2026-06-24)
+
+### Features
+
+
+- Add bond key serialization and persistence hooks ([`f8a885d`](https://github.com/Bluetooth-Devices/habluetooth/commit/f8a885dedaac4533367d45a4614114c3a810b0db))
+
+
 ## v6.19.1 (2026-06-24)
 
 ### Bug fixes
