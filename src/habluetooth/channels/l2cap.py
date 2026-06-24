@@ -108,10 +108,15 @@ def can_use_l2cap() -> bool:
     """
     try:
         sock = socket.socket(AF_BLUETOOTH, socket.SOCK_SEQPACKET, BTPROTO_L2CAP)
-    except OSError:
+    except OSError as err:
+        # Could be a permission downgrade or a kernel without Bluetooth; log so
+        # the fallback to the bleak path is not silent.
+        _LOGGER.debug("L2CAP sockets unavailable (%s); using the bleak path", err)
         return False
-    sock.close()
-    return True
+    try:
+        return True
+    finally:
+        sock.close()
 
 
 @functools.cache
