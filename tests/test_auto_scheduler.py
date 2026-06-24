@@ -2534,6 +2534,11 @@ async def test_worker_tick_delegates_to_fallback_when_owner_is_connecting() -> N
         # Owner can't service the flip; fallback gets the call.
         assert owner.active_window_calls == []
         assert fallback.active_window_calls == [7.0]
+        # The delegated window is recorded against the fallback that ran
+        # it, not the connecting owner.
+        entry = sched.async_diagnostics()["requests"][address][0]
+        assert entry["last_active_window_source"] == fallback.source
+        assert entry["last_active_window"] is not None
     finally:
         owner._finished_connecting(address, connected=False)
         cancel()
@@ -4576,6 +4581,8 @@ async def test_async_diagnostics() -> None:
         worker_diag = workers[scanner.source]
         assert worker_diag["name"] == scanner.name
         assert worker_diag["window_end"] == 0.0
+        assert worker_diag["last_window_at"] == 0.0
+        assert worker_diag["last_window_duration"] == 0.0
         assert worker_diag["failed_window"] is False
         assert worker_diag["warned_no_fallback"] is False
         assert worker_diag["next_sweep_at"] == pytest.approx(
@@ -4594,6 +4601,8 @@ async def test_async_diagnostics() -> None:
             assert entry["owner_source"] == scanner.source
             assert entry["next_due"] is not None
             assert entry["next_due"] > loop.time()
+            assert entry["last_active_window"] is None
+            assert entry["last_active_window_source"] is None
     finally:
         cancel1()
         cancel2()
@@ -4601,6 +4610,40 @@ async def test_async_diagnostics() -> None:
     # After cancellation the address falls out of both indexes.
     post = sched.async_diagnostics()
     assert post["requests"] == {}
+
+
+@pytest.mark.asyncio
+async def test_async_diagnostics_last_active_window() -> None:
+    """A fired window populates per-worker and per-address last-window timing."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:55:66"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=5.0
+    )
+    scanner = _RecordingAutoScanner("AA:BB:CC:DD:EE:00", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject(scanner, address)
+        entries = sched._schedule._due_at[address]
+        request = next(iter(entries))
+        entries[request] = loop.time() - 1.0
+        tick_at = loop.time()
+        await _run_worker_tick(sched, scanner.source)
+        assert scanner.active_window_calls == [5.0]
+        diagnostics = sched.async_diagnostics()
+        worker_diag = diagnostics["workers"][scanner.source]
+        assert worker_diag["last_window_at"] == pytest.approx(tick_at, abs=0.5)
+        assert worker_diag["last_window_duration"] == 5.0
+        entry = diagnostics["requests"][address][0]
+        assert entry["last_active_window"] == pytest.approx(tick_at, abs=0.5)
+        assert entry["last_active_window_source"] == scanner.source
+    finally:
+        cancel()
+        register_cancel()
+    # Pruned with the request so the map cannot grow without bound.
+    assert sched._last_window_by_address == {}
 
 
 @contextlib.asynccontextmanager

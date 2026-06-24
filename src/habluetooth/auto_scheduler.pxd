@@ -32,6 +32,8 @@ cdef class _ScannerWorker:
     cdef public object _task
     cdef public double _window_end
     cdef public double _sweep_last_completed
+    cdef public double _last_window_at
+    cdef public double _last_window_duration
     cdef public bint _failed_window
     cdef public bint _warned_no_fallback
     cdef public dict _owned_due_at
@@ -93,6 +95,7 @@ cdef class AutoScanScheduler:
     cdef public dict _requests_by_address
     cdef public _ScanSchedule _schedule
     cdef public dict _workers
+    cdef public dict _last_window_by_address
     cdef public object _loop
     cdef public bint _running
     cdef public object _on_demand_sweep_future
