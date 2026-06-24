@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.19.0 (2026-06-24)
+
+### Features
+
+
+- Wire mgmt pairing and bond restore into the gatt client ([`9f81fff`](https://github.com/Bluetooth-Devices/habluetooth/commit/9f81fffdd91e2c523333802c8aacb8f11f496689))
+
+
+### Testing
+
+
+- Cover cross-source advertisement arbitration ([`b675c51`](https://github.com/Bluetooth-Devices/habluetooth/commit/b675c51e9e16f8a58057697bd2287a71d4e4e786))
+
+
 ## v6.18.0 (2026-06-24)
 
 ### Features
