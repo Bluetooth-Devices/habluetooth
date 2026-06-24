@@ -2262,6 +2262,31 @@ def test_truncated_auth_failed_is_dropped(
     assert received == []
 
 
+def test_pairing_handler_exception_is_isolated(
+    event_loop: asyncio.AbstractEventLoop,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A raising handler is logged, not allowed to break the read loop."""
+
+    def boom(_event: object) -> None:
+        msg = "handler exploded"
+        raise RuntimeError(msg)
+
+    handlers = {(0, "AA:BB:CC:DD:EE:FF"): boom}
+    protocol = _protocol_with_handlers(event_loop, handlers)
+    with caplog.at_level("ERROR", logger="habluetooth.channels.bluez"):
+        # Neither dispatch path should raise out of data_received.
+        protocol.data_received(_new_ltk_frame())
+        auth_param = b"\xff\xee\xdd\xcc\xbb\xaa" + bytes([0x01, 0x05])
+        auth_header = (
+            (0x0011).to_bytes(2, "little")
+            + b"\x00\x00"
+            + len(auth_param).to_bytes(2, "little")
+        )
+        protocol.data_received(auth_header + auth_param)
+    assert caplog.text.count("Error in") == 2  # both handlers logged
+
+
 @pytest.mark.asyncio
 async def test_register_pairing_handler_normalizes_and_unregisters() -> None:
     """register_pairing_handler normalizes the address and unregisters cleanly."""
@@ -2272,3 +2297,16 @@ async def test_register_pairing_handler_normalizes_and_unregisters() -> None:
     unregister()
     assert (0, "AA:BB:CC:DD:EE:FF") not in mgmt_ctl._pairing_handlers
     unregister()  # idempotent, does not raise
+
+
+@pytest.mark.asyncio
+async def test_register_pairing_handler_last_wins() -> None:
+    """A second registration replaces the first; the first's unregister no-ops."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+    first, second = Mock(), Mock()
+    key = (0, "AA:BB:CC:DD:EE:FF")
+    unregister_first = mgmt_ctl.register_pairing_handler(0, "AA:BB:CC:DD:EE:FF", first)
+    mgmt_ctl.register_pairing_handler(0, "AA:BB:CC:DD:EE:FF", second)
+    assert mgmt_ctl._pairing_handlers[key] is second
+    unregister_first()  # must not remove the newer handler
+    assert mgmt_ctl._pairing_handlers[key] is second

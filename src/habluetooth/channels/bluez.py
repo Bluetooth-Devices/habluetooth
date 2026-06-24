@@ -420,7 +420,8 @@ class BluetoothMGMTProtocol:
         address = bytes_mac_to_str(addr)
         if (handler := self._pairing_handlers.get((controller_idx, address))) is None:
             return
-        handler(
+        self._dispatch_pairing_event(
+            handler,
             NewLongTermKey(
                 store_hint,
                 LongTermKey(
@@ -433,7 +434,7 @@ class BluetoothMGMTProtocol:
                     rand,
                     value,
                 ),
-            )
+            ),
         )
 
     def _handle_auth_failed(self, controller_idx: _int, param: _bytes) -> None:
@@ -444,7 +445,22 @@ class BluetoothMGMTProtocol:
         address = bytes_mac_to_str(param[0:6])
         if (handler := self._pairing_handlers.get((controller_idx, address))) is None:
             return
-        handler(AuthenticationFailed(address, param[6], param[7]))
+        self._dispatch_pairing_event(
+            handler, AuthenticationFailed(address, param[6], param[7])
+        )
+
+    def _dispatch_pairing_event(
+        self,
+        handler: PairingHandler,
+        event: NewLongTermKey | AuthenticationFailed,
+    ) -> None:
+        """Call a pairing handler, isolating it from the socket read loop."""
+        # data_received runs in the read loop, so a raising handler must not tear
+        # down event demux for the whole mgmt connection.
+        try:
+            handler(event)
+        except Exception:
+            _LOGGER.exception("Error in %s handler", type(event).__name__)
 
     def _handle_load_conn_param_response(
         self, status: _int, controller_idx: _int
@@ -924,6 +940,16 @@ class MGMTBluetoothCtl:
         ``handler`` is called with a :class:`NewLongTermKey` or
         :class:`AuthenticationFailed` for events on ``adapter_idx`` from
         ``address``. Returns a callback that unregisters it.
+
+        ``address`` must be the canonical colon-separated form
+        (``AA:BB:CC:DD:EE:FF``); it is upper-cased to match the address the
+        event decoder produces, but any other shape (e.g. no colons) will simply
+        never match and the handler will not fire.
+
+        Registration is last-wins: a second call for the same
+        ``(adapter_idx, address)`` replaces the previous handler, and that
+        previous registration's unregister callback becomes a no-op. Handlers do
+        not stack.
         """
         key = (adapter_idx, address.upper())
         self._pairing_handlers[key] = handler
