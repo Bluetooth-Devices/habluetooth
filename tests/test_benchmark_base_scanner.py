@@ -943,7 +943,7 @@ async def test_inject_100_bluez_raw_end_to_end_unchanged(
     future: asyncio.Future[None] = loop.create_future()
     mock_sock = MagicMock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, lambda: None, lambda: False, mock_sock
+        future, scanners, lambda: None, lambda: False, mock_sock, {}
     )
 
     # Build a DEVICE_FOUND MGMT packet
@@ -994,7 +994,7 @@ async def test_inject_100_bluez_raw_end_to_end_changed(
     future: asyncio.Future[None] = loop.create_future()
     mock_sock = MagicMock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, lambda: None, lambda: False, mock_sock
+        future, scanners, lambda: None, lambda: False, mock_sock, {}
     )
 
     # Build 100 different DEVICE_FOUND MGMT packets with varying manufacturer data
