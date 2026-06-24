@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -19,6 +20,8 @@ from habluetooth.channels.bluez import (
     AuthenticationFailed,
     LongTermKey,
     NewLongTermKey,
+    UserConfirmationRequest,
+    UserPasskeyRequest,
 )
 from habluetooth.channels.l2cap import (
     BT_SECURITY_HIGH,
@@ -265,10 +268,10 @@ async def test_connect_rejects_when_already_connected() -> None:
         await client.connect(False)
 
 
-async def test_connect_ignores_pair_flag() -> None:
-    """connect(pair=True) still connects; mgmt pairing is deferred."""
+async def test_connect_pair_true_without_mgmt_skips_bond() -> None:
+    """connect(pair=True) with no mgmt wired still connects, skipping the bond."""
     holder: dict[str, FakeTransport] = {}
-    client, _scanner = _make_client()
+    client, _scanner = _make_client()  # no mgmt wired
     with _patch_transport(make_responder(), holder):
         await client.connect(True)
     assert client.is_connected is True
@@ -588,8 +591,19 @@ class FakeMgmt:
         self.paired: list[tuple[int, str, int]] = []
         self.unpaired: list[tuple[int, str]] = []
         self.loaded: list[tuple[int, list[LongTermKey]]] = []
+        self.confirmations: list[tuple[int, str, int, bool]] = []
+        self.confirm_raises = False
         self.event_to_emit: object | None = None  # delivered during pair_device
         self._handlers: dict[tuple[int, str], Callable[[object], None]] = {}
+
+    async def user_confirmation_reply(
+        self, idx: int, address: str, address_type: int, *, accept: bool = True
+    ) -> bool:
+        if self.confirm_raises:
+            msg = "reply failed"
+            raise OSError(msg)
+        self.confirmations.append((idx, address, address_type, accept))
+        return True
 
     def register_pairing_handler(
         self, idx: int, address: str, handler: Callable[[object], None]
@@ -725,6 +739,145 @@ async def test_pair_requires_mgmt() -> None:
         await client.pair()
     with pytest.raises(BleakError, match="requires the management socket"):
         await client.unpair()
+
+
+async def test_pair_auto_confirms_numeric_comparison() -> None:
+    """A numeric-comparison request is auto-accepted so the bond does not stall."""
+    mgmt = FakeMgmt()
+    mgmt.event_to_emit = UserConfirmationRequest(_PEER, BDADDR_LE_RANDOM, 0, 123456)
+    client = _make_pairing_client(mgmt, _Store())
+    await client.pair()
+    # Let the scheduled reply task run.
+    await asyncio.gather(*client._pairing_tasks)
+    assert mgmt.confirmations == [(0, _PEER, BDADDR_LE_RANDOM, True)]
+
+
+async def test_pair_logs_failed_confirmation_reply(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A confirmation reply that fails to send is logged, not lost."""
+    mgmt = FakeMgmt()
+    mgmt.confirm_raises = True
+    mgmt.event_to_emit = UserConfirmationRequest(_PEER, BDADDR_LE_RANDOM, 0, 123456)
+    client = _make_pairing_client(mgmt, _Store())
+    with caplog.at_level(logging.DEBUG, logger="habluetooth.client_mgmt"):
+        await client.pair()
+        await asyncio.gather(*client._pairing_tasks, return_exceptions=True)
+    assert "pairing reply task failed" in caplog.text
+
+
+async def test_pair_ignores_passkey_request() -> None:
+    """A passkey request, unsatisfiable with NoInputNoOutput, is simply ignored."""
+    mgmt = FakeMgmt()
+    mgmt.event_to_emit = UserPasskeyRequest(_PEER, BDADDR_LE_RANDOM)
+    client = _make_pairing_client(mgmt, _Store())
+    await client.pair()  # completes; the event is not acted on
+    assert mgmt.confirmations == []
+
+
+async def test_pair_fails_fast_on_auth_failed() -> None:
+    """An AUTH_FAILED event ends pairing before the mgmt command resolves."""
+
+    class _BlockingPairMgmt:
+        """A mgmt stand-in whose pair_device blocks until released."""
+
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self._release = asyncio.Event()
+            self._handlers: dict[tuple[int, str], Callable[[object], None]] = {}
+
+        def register_pairing_handler(
+            self, idx: int, address: str, handler: Callable[[object], None]
+        ) -> Callable[[], None]:
+            self._handlers[(idx, address)] = handler
+
+            def _unregister() -> None:
+                self._handlers.pop((idx, address), None)
+
+            return _unregister
+
+        async def pair_device(
+            self, idx: int, address: str, address_type: int, *_a: object
+        ) -> bool:
+            self.started.set()
+            await self._release.wait()  # never released in this test
+            return True
+
+        def deliver(self, idx: int, address: str, event: object) -> None:
+            self._handlers[(idx, address)](event)
+
+    mgmt = _BlockingPairMgmt()
+    client = _make_pairing_client(mgmt, _Store())  # type: ignore[arg-type]
+    task = asyncio.create_task(client.pair())
+    await mgmt.started.wait()
+    mgmt.deliver(0, _PEER, AuthenticationFailed(_PEER, BDADDR_LE_RANDOM, 0x05))
+    with pytest.raises(BleakError, match="auth status 0x05"):
+        await task
+
+
+async def test_connect_pair_true_bonds_when_mgmt_wired() -> None:
+    """connect(pair=True) with mgmt wired bonds as part of connecting."""
+    holder: dict[str, FakeTransport] = {}
+    mgmt = FakeMgmt()
+    mgmt.event_to_emit = NewLongTermKey(1, _ltk())
+    store = _Store()
+    client = _make_pairing_client(mgmt, store)
+    with _patch_transport(make_responder(), holder):
+        await client.connect(True)
+    assert client.is_connected is True
+    assert mgmt.paired == [(0, _PEER, BDADDR_LE_RANDOM)]
+    assert store.keys == [_ltk()]
+
+
+async def test_connect_encrypts_proactively_for_bonded_peer() -> None:
+    """A reconnect with a stored key opens the socket at MEDIUM up front."""
+    captured: dict[str, int] = {}
+    mgmt = FakeMgmt()
+    store = _Store([_ltk()])  # a bond already exists for this peer
+    client = _make_pairing_client(mgmt, store)
+    base = make_responder()
+
+    async def fake_create_connection(
+        *,
+        on_data: Callable[[bytes], None],
+        on_close: Callable[[Exception | None], None],
+        security_level: int,
+        **_kwargs: object,
+    ) -> FakeTransport:
+        captured["security_level"] = security_level
+        transport = FakeTransport(base, on_data, on_close)
+        transport.security_level = security_level
+        return transport
+
+    with patch(
+        "habluetooth.client_mgmt.L2CAPSocket.create_connection", fake_create_connection
+    ):
+        await client.connect(False)
+    assert captured["security_level"] == BT_SECURITY_MEDIUM
+
+
+async def test_connect_unbonded_opens_low_security() -> None:
+    """With no stored key, the socket opens at LOW and escalates on demand."""
+    captured: dict[str, int] = {}
+    mgmt = FakeMgmt()
+    client = _make_pairing_client(mgmt, _Store())  # empty store
+    base = make_responder()
+
+    async def fake_create_connection(
+        *,
+        on_data: Callable[[bytes], None],
+        on_close: Callable[[Exception | None], None],
+        security_level: int,
+        **_kwargs: object,
+    ) -> FakeTransport:
+        captured["security_level"] = security_level
+        return FakeTransport(base, on_data, on_close)
+
+    with patch(
+        "habluetooth.client_mgmt.L2CAPSocket.create_connection", fake_create_connection
+    ):
+        await client.connect(False)
+    assert captured["security_level"] == BT_SECURITY_LOW
 
 
 async def test_unpair_removes_bond() -> None:
