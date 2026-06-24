@@ -1,5 +1,25 @@
 # Changelog
 
+## v6.23.0 (2026-06-24)
+
+### Bug fixes
+
+
+- Stop the mgmt scanner watchdog from resurrecting a stopped scanner ([`8f9e038`](https://github.com/Bluetooth-Devices/habluetooth/commit/8f9e038c6b6c56f69d32eba5355ba7949f84f8d9))
+
+
+### Features
+
+
+- Escalate l2cap security on demand to match bluetoothd ([`bd8cd6b`](https://github.com/Bluetooth-Devices/habluetooth/commit/bd8cd6b1a7eed432610086c998164bc173e2849c))
+
+
+### Refactoring
+
+
+- Dedupe mgmt command result checks in the bluez channel ([`24e6513`](https://github.com/Bluetooth-Devices/habluetooth/commit/24e6513585999badedefe534d14417cf401290ab))
+
+
 ## v6.22.0 (2026-06-24)
 
 ### Features
