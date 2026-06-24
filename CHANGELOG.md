@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.24.0 (2026-06-24)
+
+### Features
+
+
+- Smooth per-source rssi for advertisement owner selection ([`82d53cc`](https://github.com/Bluetooth-Devices/habluetooth/commit/82d53ccfd87a4aefca3070b07f07acd81ebede2c))
+
+
 ## v6.23.1 (2026-06-24)
 
 ### Bug fixes
