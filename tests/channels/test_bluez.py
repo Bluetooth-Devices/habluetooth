@@ -14,6 +14,7 @@ from habluetooth.channels.bluez import (
     IO_CAPABILITY_NO_INPUT_NO_OUTPUT,
     MGMT_OP_ADD_ADV_PATTERNS_MONITOR,
     MGMT_OP_DISCONNECT,
+    MGMT_OP_LOAD_LONG_TERM_KEYS,
     MGMT_OP_PAIR_DEVICE,
     MGMT_OP_REMOVE_ADV_MONITOR,
     MGMT_OP_START_DISCOVERY,
@@ -21,6 +22,7 @@ from habluetooth.channels.bluez import (
     MGMT_OP_UNPAIR_DEVICE,
     SCAN_TYPE_LE,
     BluetoothMGMTProtocol,
+    LongTermKey,
     MGMTBluetoothCtl,
     bytes_mac_to_str,
     make_bluez_details,
@@ -2035,4 +2037,98 @@ async def test_pairing_commands_reject_invalid_address(
     mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
     mock_protocol.command_response = _stub_command_response(0x00)
     assert await getattr(mgmt_ctl, command)(0, bad_address, BDADDR_LE_PUBLIC) is False
+    mock_protocol._write_to_socket.assert_not_called()
+
+
+# -- load long-term keys --------------------------------------------------
+def _ltk(address: str = "AA:BB:CC:DD:EE:FF") -> LongTermKey:
+    return LongTermKey(
+        address=address,
+        address_type=BDADDR_LE_RANDOM,
+        key_type=1,
+        central=False,
+        encryption_size=16,
+        ediv=0x1234,
+        rand=bytes(range(8)),
+        value=bytes(range(16)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_long_term_keys_success() -> None:
+    """load_long_term_keys packs the count and a 36 byte record per key."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+
+    assert await mgmt_ctl.load_long_term_keys(0, [_ltk()]) is True
+
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[0:2] == MGMT_OP_LOAD_LONG_TERM_KEYS.to_bytes(2, "little")
+    assert sent[6:8] == (1).to_bytes(2, "little")  # key_count
+    record = sent[8:]
+    assert len(record) == 36
+    assert record[0:6] == bytes([0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA])  # reversed
+    assert record[6] == BDADDR_LE_RANDOM
+    assert record[7] == 1  # key_type
+    assert record[8] == 0  # central flag (False)
+    assert record[9] == 16  # encryption_size
+    assert record[10:12] == (0x1234).to_bytes(2, "little")  # ediv
+    assert record[12:20] == bytes(range(8))  # rand
+    assert record[20:36] == bytes(range(16))  # value
+
+
+@pytest.mark.asyncio
+async def test_load_long_term_keys_empty_clears() -> None:
+    """An empty key list sends a zero count (clears the controller's keys)."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+
+    assert await mgmt_ctl.load_long_term_keys(0, []) is True
+    sent = mock_protocol._write_to_socket.call_args[0][0]
+    assert sent[6:8] == (0).to_bytes(2, "little")
+    assert len(sent[8:]) == 0
+
+
+@pytest.mark.asyncio
+async def test_load_long_term_keys_failure() -> None:
+    """A non-success status returns False."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x03)
+    assert await mgmt_ctl.load_long_term_keys(0, [_ltk()]) is False
+
+
+@pytest.mark.asyncio
+async def test_load_long_term_keys_rejects_invalid_address() -> None:
+    """A malformed address in a key is a soft failure with nothing sent."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    assert await mgmt_ctl.load_long_term_keys(0, [_ltk("AA:BB")]) is False
+    mock_protocol._write_to_socket.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key",
+    [
+        LongTermKey("AA:BB:CC:DD:EE:FF", 1, 1, False, 16, 0, b"\x00" * 7, b"\x00" * 16),
+        LongTermKey("AA:BB:CC:DD:EE:FF", 1, 1, False, 16, 0, b"\x00" * 8, b"\x00" * 15),
+    ],
+)
+async def test_load_long_term_keys_rejects_malformed_key(key: LongTermKey) -> None:
+    """A key with the wrong rand/value length is rejected without sending."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    assert await mgmt_ctl.load_long_term_keys(0, [key]) is False
+    mock_protocol._write_to_socket.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_load_long_term_keys_rejects_out_of_range_field() -> None:
+    """An out-of-range integer field is a soft failure, not a struct.error."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    bad = LongTermKey(
+        "AA:BB:CC:DD:EE:FF", 1, 300, False, 16, 0, b"\x00" * 8, b"\x00" * 16
+    )  # key_type 300 does not fit in a byte
+    assert await mgmt_ctl.load_long_term_keys(0, [bad]) is False
     mock_protocol._write_to_socket.assert_not_called()
