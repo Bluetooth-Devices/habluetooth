@@ -1327,6 +1327,214 @@ async def test_stale_strong_owner_yields_to_stronger_scanner(
     assert get_manager().async_ble_device_from_address(address, True) is stronger
 
 
+def _rssi_adv(rssi: int) -> AdvertisementData:
+    return generate_advertisement_data(
+        local_name="smoothing", service_uuids=[], rssi=rssi
+    )
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rssi_smoothing_ignores_single_spike(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A one-off RSSI spike from a challenger does not flip a stationary owner.
+
+    Instantaneously the spike clears the 16 dB threshold, but the smoothed
+    per-source RSSI does not, so ownership stays put.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:50"
+    t = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    challenger = generate_ble_device(address, "challenger_hci1")
+
+    inject_advertisement_with_time_and_source(
+        owner, _rssi_adv(-50), t, HCI0_SOURCE_ADDRESS
+    )
+    # Challenger first seen weaker (-60), so it enters the smoothing bucket.
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-60), t + 1, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is owner
+
+    # Single spike to -30 (instantaneously 20 dB stronger than the owner):
+    # smoothed hci1 = 0.3*-30 + 0.7*-60 = -51, still below -50 + threshold,
+    # so it must NOT switch.
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-30), t + 2, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is owner
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rssi_smoothing_switches_on_sustained_stronger(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A sustained stronger challenger wins once its smoothed RSSI crosses."""
+    manager = get_manager()
+    address = "44:44:33:11:23:51"
+    t = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    challenger = generate_ble_device(address, "challenger_hci1")
+
+    inject_advertisement_with_time_and_source(
+        owner, _rssi_adv(-50), t, HCI0_SOURCE_ADDRESS
+    )
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-55), t + 1, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is owner
+
+    # Sustained -20 (30 dB stronger): the smoothed value climbs past the
+    # threshold after a few samples and ownership flips.
+    for i in range(8):
+        inject_advertisement_with_time_and_source(
+            challenger, _rssi_adv(-20), t + 2 + i, HCI1_SOURCE_ADDRESS
+        )
+    assert manager.async_ble_device_from_address(address, True) is challenger
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rssi_smoothing_first_sighting_switches_immediately(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A first-seen challenger with a real margin switches at once (instantaneous)."""
+    manager = get_manager()
+    address = "44:44:33:11:23:52"
+    t = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    challenger = generate_ble_device(address, "challenger_hci1")
+
+    inject_advertisement_with_time_and_source(
+        owner, _rssi_adv(-50), t, HCI0_SOURCE_ADDRESS
+    )
+    # No prior smoothed history for the challenger: it seeds at its
+    # instantaneous -20, which is a genuine 30 dB margin, so it wins now.
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-20), t + 1, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is challenger
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rssi_smoothing_bucket_evicted_with_history(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """The smoothed-RSSI bucket is allocated cross-source and cleared with history."""
+    manager = get_manager()
+    address = "44:44:33:11:23:53"
+    t = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    challenger = generate_ble_device(address, "challenger_hci1")
+
+    inject_advertisement_with_time_and_source(
+        owner, _rssi_adv(-50), t, HCI0_SOURCE_ADDRESS
+    )
+    # Single source so far: no bucket allocated.
+    assert address not in manager._smoothed_rssi
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-60), t + 1, HCI1_SOURCE_ADDRESS
+    )
+    # Cross-source seen: bucket now holds both sources.
+    assert set(manager._smoothed_rssi[address]) == {
+        HCI0_SOURCE_ADDRESS,
+        HCI1_SOURCE_ADDRESS,
+    }
+
+    manager.async_clear_advertisement_history(address)
+    assert address not in manager._smoothed_rssi
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rssi_smoothing_source_evicted_on_unregister(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Unregistering a scanner drops its source from every smoothed bucket."""
+    manager = get_manager()
+    address = "44:44:33:11:23:54"
+    t = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    challenger = generate_ble_device(address, "challenger_hci1")
+
+    inject_advertisement_with_time_and_source(
+        owner, _rssi_adv(-50), t, HCI0_SOURCE_ADDRESS
+    )
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-60), t + 1, HCI1_SOURCE_ADDRESS
+    )
+    assert HCI1_SOURCE_ADDRESS in manager._smoothed_rssi[address]
+
+    def _unregister(source: str) -> None:
+        for scanner in list(manager._sources.values()):
+            if scanner.source == source:
+                manager._async_unregister_scanner_internal(
+                    manager._connectable_scanners, scanner, None
+                )
+
+    _unregister(HCI1_SOURCE_ADDRESS)
+    # One source remains, so the bucket survives without the dropped source.
+    assert HCI1_SOURCE_ADDRESS not in manager._smoothed_rssi[address]
+    assert HCI0_SOURCE_ADDRESS in manager._smoothed_rssi[address]
+
+    # Dropping the last source empties the bucket; the address is removed so
+    # the map can return to truly empty and re-enable the proxy-free fast path.
+    _unregister(HCI0_SOURCE_ADDRESS)
+    assert address not in manager._smoothed_rssi
+    assert not manager._smoothed_rssi
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rssi_smoothing_skips_unregistered_old_source(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A new bucket is not seeded against a source that has unregistered.
+
+    An old source lingers in _all_history after it unregisters (the
+    unavailable sweep clears it later); seeding its stale RSSI would
+    reintroduce the source the unregister cleanup just dropped.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:55"
+    t = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    challenger = generate_ble_device(address, "challenger_hci1")
+
+    # Seen from hci0 only, so no bucket exists yet.
+    inject_advertisement_with_time_and_source(
+        owner, _rssi_adv(-50), t, HCI0_SOURCE_ADDRESS
+    )
+    assert address not in manager._smoothed_rssi
+
+    # hci0 unregisters, but its advertisement lingers in _all_history.
+    for scanner in list(manager._sources.values()):
+        if scanner.source == HCI0_SOURCE_ADDRESS:
+            manager._async_unregister_scanner_internal(
+                manager._connectable_scanners, scanner, None
+            )
+    assert manager._all_history[address].source == HCI0_SOURCE_ADDRESS
+
+    # hci1 now advertises; the dead hci0 source must not be seeded, so no
+    # bucket is created for what is now effectively a single-source device.
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-60), t + 1, HCI1_SOURCE_ADDRESS
+    )
+    assert address not in manager._smoothed_rssi
+
+
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
 async def test_switching_adapters_based_on_rssi_connectable_to_non_connectable(
