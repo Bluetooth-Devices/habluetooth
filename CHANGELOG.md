@@ -1,5 +1,16 @@
 # Changelog
 
+## v6.23.1 (2026-06-24)
+
+### Bug fixes
+
+
+- Drop the notify handler when the stop_notify cccd write fails ([`a71b47a`](https://github.com/Bluetooth-Devices/habluetooth/commit/a71b47aba72a39520af33d890d306028d8510b20))
+
+
+- Keep a strong owner against a comparable scanner on stale ([`26be118`](https://github.com/Bluetooth-Devices/habluetooth/commit/26be1189bdbc0bf2c7f0c6b152ab80388df1d90f))
+
+
 ## v6.23.0 (2026-06-24)
 
 ### Bug fixes
