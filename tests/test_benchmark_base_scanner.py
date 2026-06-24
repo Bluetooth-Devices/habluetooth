@@ -86,6 +86,89 @@ async def test_inject_100_simple_advertisements(benchmark: BenchmarkFixture) -> 
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_inject_100_cross_source_keep_previous(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """
+    Inject 100 advertisements from a second, weaker scanner for an owned device.
+
+    The single-source ``test_inject_100_*`` benchmarks never reach the
+    cross-scanner arbitration path, because every advertisement shares the
+    owner's source and ``_should_keep_previous_adv`` short-circuits on the
+    source check. Here a strong scanner owns the device and a weaker second
+    scanner advertises it repeatedly, so each injection runs
+    ``_should_keep_previous_adv`` -> ``_prefer_previous_adv_from_different_source``
+    and keeps the owner (no ownership flip), exercising the hot path that a
+    multi-proxy setup hits on every cross-source advertisement.
+    """
+    manager = get_manager()
+
+    address = "44:44:33:11:23:45"
+    owner_adv = generate_advertisement_data(
+        local_name="wohand",
+        service_uuids=["050a021a-0000-1000-8000-00805f9b34fb"],
+        service_data={"050a021a-0000-1000-8000-00805f9b34fb": b"\n\xff"},
+        manufacturer_data={1: b"\x01"},
+        rssi=-60,
+    )
+
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner_a = BaseHaRemoteScanner("esp32_a", "esp32_a", connector, True)
+    scanner_b = BaseHaRemoteScanner("esp32_b", "esp32_b", connector, True)
+    unsetup_a = scanner_a.async_setup()
+    unsetup_b = scanner_b.async_setup()
+    cancel_a = manager.async_register_scanner(scanner_a)
+    cancel_b = manager.async_register_scanner(scanner_b)
+
+    _name = "wohand"
+    _service_uuids = owner_adv.service_uuids
+    _service_data = owner_adv.service_data
+    _manufacturer_data = owner_adv.manufacturer_data
+    _tx_power = owner_adv.tx_power
+    _now = monotonic_time_coarse()
+
+    # Seed ownership on scanner_a with a strong, fresh advertisement.
+    scanner_a._async_on_advertisement(
+        address,
+        -60,
+        _name,
+        _service_uuids,
+        _service_data,
+        _manufacturer_data,
+        _tx_power,
+        {"scanner_specific_data": "a"},
+        _now,
+    )
+
+    _details_b = {"scanner_specific_data": "b"}
+
+    @benchmark
+    def run():
+        for _ in range(100):
+            # Weaker and fresh from a different source: the owner is kept,
+            # so arbitration runs without flipping ownership.
+            scanner_b._async_on_advertisement(
+                address,
+                -90,
+                _name,
+                _service_uuids,
+                _service_data,
+                _manufacturer_data,
+                _tx_power,
+                _details_b,
+                _now,
+            )
+
+    cancel_a()
+    cancel_b()
+    unsetup_a()
+    unsetup_b()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_inject_100_complex_advertisements(benchmark: BenchmarkFixture) -> None:
     """Test injecting 100 complex advertisements."""
     manager = get_manager()
