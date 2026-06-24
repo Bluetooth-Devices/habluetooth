@@ -58,6 +58,40 @@ flag or an environment check) so it is off by default and a user can enable it
 per install. Fall back to the plain `HaScanner` constructor when the flag is
 off.
 
+### Controller ownership (required before enabling the connect path)
+
+The LE long-term-key table belongs to the **controller and its kernel**, not to
+a process or container. `AF_BLUETOOTH`/HCI control sockets are not
+network-namespaced, so a `habluetooth` running in the Home Assistant container
+and a `bluetoothd` running on the host share the **same** `hciN` and the **same**
+kernel bond table. The typical deployment (HA in a container, host `bluetoothd`)
+is therefore a single shared controller, not two isolated ones.
+
+The mgmt **discovery** side already coexists with host `bluetoothd` (it only
+reads advertisement events; that is the existing side channel). The mgmt
+**connect/pair** path does not: `LOAD_LONG_TERM_KEYS`, mgmt pairing, and the
+L2CAP ACL/GATT are stateful on the shared controller and collide with a
+`bluetoothd` that is still managing the same `hciN`. In particular
+`LOAD_LONG_TERM_KEYS` replaces the controller's whole key list, clearing the
+bonds `bluetoothd` loaded; those keys cannot be recovered (DBus never exposes
+key material, and `bluetoothd`'s `/var/lib/bluetooth` store is not reachable from
+the HA container).
+
+So the model is **per-adapter partitioning**, never co-management of one `hciN`:
+
+- Controllers `bluetoothd` manages stay on the bleak/DBus path (today's
+  behavior); their bonds remain `bluetoothd`'s and are untouched.
+- The mgmt connect path may own a controller only if `bluetoothd` is **not**
+  managing it (for example a dedicated adapter the host bluetooth service is
+  configured to ignore). It then creates its own bonds from the first pairing,
+  so `LOAD_LONG_TERM_KEYS` only ever replaces its own list.
+
+> **Factory gap.** `create_local_scanner` currently gates only on mgmt discovery
+> capability and L2CAP availability; it has **no** signal for "this controller is
+> not also managed by `bluetoothd`." Until that exclusivity gate exists, treat
+> the connect path as safe only on a controller you know `bluetoothd` does not
+> manage, and keep the opt-in above scoped to such adapters.
+
 ## 2. Persist bonds across restarts
 
 Pairing over mgmt yields long-term keys that `habluetooth` keeps **in memory**

@@ -1033,11 +1033,15 @@ class MGMTBluetoothCtl:
         Replaces the controller's LTK list (an empty list clears it) so the
         kernel can re-encrypt links to already-bonded peers without re-pairing.
 
-        The mgmt API has no add-one primitive, so this is the controller's whole
-        list: if another mgmt agent (e.g. bluetoothd) manages the same adapter,
-        loading our keys clears the bonds it loaded. The DBus-free path assumes
-        it owns the adapter, so this is a documented coexistence limitation, not
-        something the caller can avoid here.
+        The mgmt API has no add-one primitive, so this writes the controller's
+        whole list. That list belongs to the controller and its kernel, not to
+        this process or container, so it is shared with every other mgmt client
+        on the same kernel: if host bluetoothd is still managing this controller,
+        loading our keys clears the bonds it loaded, and there is no way to import
+        those back (DBus never exposes key material, and bluetoothd's on-disk
+        store is not reachable from another container). The mgmt connect path
+        therefore requires a controller bluetoothd is not managing; see the Home
+        Assistant integration guide on per-adapter controller ownership.
         """
         records: list[bytes] = []
         for key in keys:
