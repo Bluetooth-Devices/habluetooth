@@ -342,16 +342,16 @@ class LongTermKeyDict(TypedDict):
 
 def long_term_key_to_dict(key: LongTermKey) -> LongTermKeyDict:
     """Serialize a long-term key for persistence (bytes as hex)."""
-    return {
-        "address": key.address,
-        "address_type": key.address_type,
-        "key_type": key.key_type,
-        "central": key.central,
-        "encryption_size": key.encryption_size,
-        "ediv": key.ediv,
-        "rand": key.rand.hex(),
-        "value": key.value.hex(),
-    }
+    return LongTermKeyDict(
+        address=key.address,
+        address_type=key.address_type,
+        key_type=key.key_type,
+        central=key.central,
+        encryption_size=key.encryption_size,
+        ediv=key.ediv,
+        rand=key.rand.hex(),
+        value=key.value.hex(),
+    )
 
 
 def long_term_key_from_dict(data: LongTermKeyDict) -> LongTermKey:

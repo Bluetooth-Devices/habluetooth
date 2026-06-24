@@ -518,6 +518,23 @@ async def test_long_term_keys_changed_callback() -> None:
     assert len(changes) == 3
 
 
+async def test_long_term_keys_changed_callback_failure_is_isolated(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A raising persistence callback is logged, not propagated into pairing."""
+    scanner = _scanner()
+
+    def boom() -> None:
+        msg = "persistence broke"
+        raise RuntimeError(msg)
+
+    scanner.set_long_term_keys_changed_callback(boom)
+    key = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(16))
+    with caplog.at_level("ERROR", logger="habluetooth.scanner_mgmt"):
+        scanner._store_long_term_key(key)  # must not raise
+    assert "change callback failed" in caplog.text
+
+
 async def test_slot_limit_zero_when_adapter_unregistered() -> None:
     """An adapter with no registered slot count reports 0 (unlimited)."""
     scanner = _scanner()

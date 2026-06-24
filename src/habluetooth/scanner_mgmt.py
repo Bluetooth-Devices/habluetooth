@@ -300,8 +300,13 @@ class HaScannerMgmt(BaseHaScanner):
 
     def _notify_long_term_keys_changed(self) -> None:
         """Tell the owner the bond store changed so it can be persisted."""
-        if self._long_term_keys_changed is not None:
+        if self._long_term_keys_changed is None:
+            return
+        try:
             self._long_term_keys_changed()
+        except Exception:
+            # A faulty persistence hook must not break a pair/unpair flow.
+            _LOGGER.exception("%s: long-term key change callback failed", self.name)
 
     def set_long_term_keys_changed_callback(
         self, callback: Callable[[], None] | None
