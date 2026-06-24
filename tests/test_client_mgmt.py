@@ -741,15 +741,25 @@ async def test_pair_requires_mgmt() -> None:
         await client.unpair()
 
 
-async def test_pair_auto_confirms_numeric_comparison() -> None:
-    """A numeric-comparison request is auto-accepted so the bond does not stall."""
+async def test_pair_auto_confirms_just_works() -> None:
+    """A just-works confirm (confirm_hint set) is accepted so the bond proceeds."""
     mgmt = FakeMgmt()
-    mgmt.event_to_emit = UserConfirmationRequest(_PEER, BDADDR_LE_RANDOM, 0, 123456)
+    mgmt.event_to_emit = UserConfirmationRequest(_PEER, BDADDR_LE_RANDOM, 1, 0)
     client = _make_pairing_client(mgmt, _Store())
     await client.pair()
     # Let the scheduled reply task run.
     await asyncio.gather(*client._pairing_tasks)
     assert mgmt.confirmations == [(0, _PEER, BDADDR_LE_RANDOM, True)]
+
+
+async def test_pair_rejects_numeric_comparison() -> None:
+    """A real numeric comparison (confirm_hint 0) is rejected, not blindly confirmed."""
+    mgmt = FakeMgmt()
+    mgmt.event_to_emit = UserConfirmationRequest(_PEER, BDADDR_LE_RANDOM, 0, 123456)
+    client = _make_pairing_client(mgmt, _Store())
+    await client.pair()
+    await asyncio.gather(*client._pairing_tasks)
+    assert mgmt.confirmations == [(0, _PEER, BDADDR_LE_RANDOM, False)]
 
 
 async def test_pair_logs_failed_confirmation_reply(
@@ -827,6 +837,18 @@ async def test_connect_pair_true_bonds_when_mgmt_wired() -> None:
     assert client.is_connected is True
     assert mgmt.paired == [(0, _PEER, BDADDR_LE_RANDOM)]
     assert store.keys == [_ltk()]
+
+
+async def test_connect_pair_true_skips_rebond_when_already_bonded() -> None:
+    """connect(pair=True) on an already-bonded peer does not re-pair."""
+    holder: dict[str, FakeTransport] = {}
+    mgmt = FakeMgmt()
+    store = _Store([_ltk()])  # already bonded
+    client = _make_pairing_client(mgmt, store)
+    with _patch_transport(make_responder(), holder):
+        await client.connect(True)
+    assert client.is_connected is True
+    assert mgmt.paired == []  # no redundant PAIR_DEVICE that would fail the connect
 
 
 async def test_connect_encrypts_proactively_for_bonded_peer() -> None:

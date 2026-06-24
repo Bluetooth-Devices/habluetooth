@@ -444,7 +444,12 @@ class HaMgmtClient(BaseBleakClient):
         return self._mgmt, self._adapter_idx
 
     async def _pair_if_possible(self) -> None:
-        """Bond as part of connect when mgmt is wired; skip otherwise."""
+        """Bond as part of connect when needed and mgmt is wired."""
+        if self._has_stored_bond():
+            # Already bonded: the proactive MEDIUM handles re-encryption, and
+            # re-pairing a bonded peer is rejected (ALREADY_PAIRED), which would
+            # otherwise fail the connect.
+            return
         if self._mgmt is None or self._adapter_idx is None:
             _LOGGER.debug(
                 "%s: connect(pair=True) but the management socket is not wired; "
@@ -458,11 +463,11 @@ class HaMgmtClient(BaseBleakClient):
         """
         Bond with the peer over the management socket (Just Works).
 
-        Auto-accepts a numeric-comparison confirmation, the only interaction a
-        NoInputNoOutput controller can satisfy, so a peer that requests it does
-        not stall the bond; and fails fast on an authentication failure instead
-        of waiting out the mgmt command timeout. The captured key is stored for
-        reconnects.
+        Auto-accepts a Just Works confirmation (the only interaction a
+        NoInputNoOutput controller can satisfy) so such a peer does not stall the
+        bond, but rejects a real numeric comparison it cannot verify; and fails
+        fast on an authentication failure instead of waiting out the mgmt command
+        timeout. The captured key is stored for reconnects.
         """
         mgmt, adapter_idx = self._require_mgmt()
         address = self.address
@@ -473,11 +478,16 @@ class HaMgmtClient(BaseBleakClient):
             if isinstance(event, NewLongTermKey):
                 self._store_captured_key(event)
             elif isinstance(event, UserConfirmationRequest):
-                # Runs in the socket read loop, so the async reply is scheduled;
-                # a strong reference keeps it alive until it sends.
+                # confirm_hint != 0 means "just confirm, no number to compare"
+                # (the Just Works case a NoInputNoOutput controller can satisfy),
+                # so accept it; confirm_hint == 0 carries a real numeric value we
+                # cannot verify with no IO, so reject rather than blindly confirm
+                # and defeat the comparison's MITM protection. Runs in the read
+                # loop, so the async reply is scheduled with a strong reference.
+                accept = bool(event.confirm_hint)
                 task = loop.create_task(
                     mgmt.user_confirmation_reply(
-                        adapter_idx, address, self._address_type, accept=True
+                        adapter_idx, address, self._address_type, accept=accept
                     )
                 )
                 self._pairing_tasks.add(task)
