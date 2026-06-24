@@ -102,6 +102,9 @@ async def test_inject_100_cross_source_keep_previous(
     multi-proxy setup hits on every cross-source advertisement.
     """
     manager = get_manager()
+    # Match production: debug logging is off, so the switch path does not
+    # pay for _async_describe_source formatting.
+    manager._debug = False
 
     address = "44:44:33:11:23:45"
     owner_adv = generate_advertisement_data(
@@ -183,6 +186,10 @@ async def test_inject_100_cross_source_switch(benchmark: BenchmarkFixture) -> No
     interval tracker, so the fallback stale window stays in effect.
     """
     manager = get_manager()
+    # Match production: debug logging is off, so the switch path does not
+    # pay for the _LOGGER.debug + _async_describe_source formatting that
+    # otherwise dominates this benchmark.
+    manager._debug = False
 
     address = "44:44:33:11:23:46"
     adv = generate_advertisement_data(
