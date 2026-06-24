@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.18.0 (2026-06-24)
+
+### Features
+
+
+- Warn when active scan is requested with a passive-only scanner ([`557d5c9`](https://github.com/Bluetooth-Devices/habluetooth/commit/557d5c9ae2388adc745151c354241d5ed694df16))
+
+
 ## v6.17.0 (2026-06-24)
 
 ### Features
