@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
     from bleak.backends.scanner import AdvertisementData
 
+    from .channels.bluez import LongTermKey
     from .const import CALLBACK_TYPE
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,6 +83,12 @@ class HaScannerMgmt(BaseHaScanner):
             raise ValueError(msg)
         self.mac_address = address
         source = address
+        # Per-adapter bond store; survives the per-connection client instances so
+        # a reconnect can restore captured keys.
+        self._long_term_keys: dict[str, LongTermKey] = {}
+        adapter_idx = (
+            int(adapter.removeprefix("hci")) if adapter.startswith("hci") else None
+        )
         connector = HaBluetoothConnector(
             # partial-bind the per-connection data; the wrapper calls
             # connector.client(device, ...) like any backend class.
@@ -94,6 +101,11 @@ class HaScannerMgmt(BaseHaScanner):
                         scanner=self,
                         register_connection=self._register_connection,
                         unregister_connection=self._unregister_connection,
+                        adapter_idx=adapter_idx,
+                        mgmt=get_manager().get_bluez_mgmt_ctl(),
+                        get_long_term_key=self._long_term_keys.get,
+                        set_long_term_key=self._store_long_term_key,
+                        forget_long_term_key=self._forget_long_term_key,
                     ),
                 ),
             ),
@@ -253,6 +265,14 @@ class HaScannerMgmt(BaseHaScanner):
     def _unregister_connection(self, address: str) -> None:
         """Drop a connection (called by the client on disconnect)."""
         self._connections.discard(address)
+
+    def _store_long_term_key(self, address: str, key: LongTermKey) -> None:
+        """Persist a bonded key (called by the client after pairing)."""
+        self._long_term_keys[address] = key
+
+    def _forget_long_term_key(self, address: str) -> None:
+        """Drop a bonded key (called by the client on unpair)."""
+        self._long_term_keys.pop(address, None)
 
     def get_allocations(self) -> Allocations | None:
         """Report slot usage from this scanner's own connection tracking."""

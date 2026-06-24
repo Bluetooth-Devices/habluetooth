@@ -11,6 +11,11 @@ import pytest
 from bleak import BleakError
 from bleak.backends.device import BLEDevice
 
+from habluetooth.channels.bluez import (
+    AuthenticationFailed,
+    LongTermKey,
+    NewLongTermKey,
+)
 from habluetooth.client_mgmt import HaMgmtClient, MgmtClientData
 from habluetooth.const import BDADDR_LE_RANDOM
 
@@ -507,13 +512,156 @@ async def test_operations_raise_after_disconnect() -> None:
         await client.read_gatt_char(char)
 
 
-async def test_pair_and_unpair_not_supported() -> None:
-    """Pairing is not implemented in this client yet."""
-    client, _scanner = _make_client()
-    with pytest.raises(NotImplementedError, match="pairing"):
+class FakeMgmt:
+    """Records the pairing/bond mgmt commands the client issues."""
+
+    def __init__(self, *, pair_ok: bool = True) -> None:
+        self.pair_ok = pair_ok
+        self.paired: list[tuple[int, str, int]] = []
+        self.unpaired: list[tuple[int, str]] = []
+        self.loaded: list[tuple[int, list[LongTermKey]]] = []
+        self.event_to_emit: object | None = None  # delivered during pair_device
+        self._handlers: dict[tuple[int, str], Callable[[object], None]] = {}
+
+    def register_pairing_handler(
+        self, idx: int, address: str, handler: Callable[[object], None]
+    ) -> Callable[[], None]:
+        self._handlers[(idx, address)] = handler
+
+        def _unregister() -> None:
+            self._handlers.pop((idx, address), None)
+
+        return _unregister
+
+    async def pair_device(
+        self, idx: int, address: str, address_type: int, *_a: object
+    ) -> bool:
+        self.paired.append((idx, address, address_type))
+        if self.event_to_emit is not None:
+            # Simulate the kernel pushing a pairing event during pairing.
+            self._handlers[(idx, address)](self.event_to_emit)
+        return self.pair_ok
+
+    async def unpair_device(
+        self, idx: int, address: str, address_type: int, **_k: object
+    ) -> bool:
+        self.unpaired.append((idx, address))
+        return True
+
+    async def load_long_term_keys(self, idx: int, keys: list[LongTermKey]) -> bool:
+        self.loaded.append((idx, list(keys)))
+        return True
+
+
+def _ltk(address: str = _PEER) -> LongTermKey:
+    return LongTermKey(
+        address, BDADDR_LE_RANDOM, 0x05, False, 16, 0x1234, bytes(8), bytes(16)
+    )
+
+
+def _make_pairing_client(
+    mgmt: FakeMgmt,
+    store: dict[str, LongTermKey],
+    *,
+    adapter_idx: int | None = 0,
+    with_store: bool = True,
+) -> HaMgmtClient:
+    def _forget(address: str) -> None:
+        store.pop(address, None)
+
+    return HaMgmtClient(
+        _ble_device(),
+        client_data=MgmtClientData(
+            adapter_address=_ADAPTER,
+            scanner=FakeScanner(),
+            adapter_idx=adapter_idx,
+            mgmt=mgmt,  # type: ignore[arg-type]
+            get_long_term_key=store.get if with_store else None,
+            set_long_term_key=store.__setitem__ if with_store else None,
+            forget_long_term_key=_forget if with_store else None,
+        ),
+        timeout=5.0,
+    )
+
+
+async def test_pair_captures_long_term_key() -> None:
+    """pair() issues PAIR_DEVICE and persists the captured key."""
+    mgmt = FakeMgmt()
+    mgmt.event_to_emit = NewLongTermKey(1, _ltk())
+    store: dict[str, LongTermKey] = {}
+    client = _make_pairing_client(mgmt, store)
+    await client.pair()
+    assert mgmt.paired == [(0, _PEER, BDADDR_LE_RANDOM)]
+    assert store == {_PEER: _ltk()}
+
+
+async def test_pair_ignores_non_key_event() -> None:
+    """An AUTHENTICATION_FAILED event during pairing stores no key."""
+    mgmt = FakeMgmt(pair_ok=False)
+    mgmt.event_to_emit = AuthenticationFailed(_PEER, BDADDR_LE_RANDOM, 0x05)
+    store: dict[str, LongTermKey] = {}
+    client = _make_pairing_client(mgmt, store)
+    with pytest.raises(BleakError, match="pairing failed"):
         await client.pair()
-    with pytest.raises(NotImplementedError, match="unpairing"):
+    assert store == {}
+
+
+async def test_pair_failure_raises() -> None:
+    """A failed PAIR_DEVICE raises and captures no key."""
+    mgmt = FakeMgmt(pair_ok=False)
+    store: dict[str, LongTermKey] = {}
+    client = _make_pairing_client(mgmt, store)
+    with pytest.raises(BleakError, match="pairing failed"):
+        await client.pair()
+    assert store == {}
+
+
+async def test_pair_requires_mgmt() -> None:
+    """Without the mgmt socket, pairing raises a clear error."""
+    client, _scanner = _make_client()  # no mgmt/adapter_idx wired
+    with pytest.raises(BleakError, match="requires the management socket"):
+        await client.pair()
+    with pytest.raises(BleakError, match="requires the management socket"):
         await client.unpair()
+
+
+async def test_unpair_removes_bond() -> None:
+    """unpair() issues UNPAIR_DEVICE and forgets the stored key."""
+    mgmt = FakeMgmt()
+    store: dict[str, LongTermKey] = {_PEER: _ltk()}
+    client = _make_pairing_client(mgmt, store)
+    await client.unpair()
+    assert mgmt.unpaired == [(0, _PEER)]
+    assert store == {}
+
+
+async def test_unpair_without_store() -> None:
+    """unpair() works when no key store was wired."""
+    mgmt = FakeMgmt()
+    client = _make_pairing_client(mgmt, {}, with_store=False)
+    await client.unpair()
+    assert mgmt.unpaired == [(0, _PEER)]
+
+
+async def test_connect_restores_stored_bond() -> None:
+    """connect() reloads a stored long-term key before opening the channel."""
+    holder: dict[str, FakeTransport] = {}
+    mgmt = FakeMgmt()
+    store: dict[str, LongTermKey] = {_PEER: _ltk()}
+    client = _make_pairing_client(mgmt, store)
+    with _patch_transport(make_responder(), holder):
+        await client.connect(False)
+    assert mgmt.loaded == [(0, [_ltk()])]
+
+
+async def test_connect_without_bond_loads_nothing() -> None:
+    """connect() does not load keys when the peer is not bonded."""
+    holder: dict[str, FakeTransport] = {}
+    mgmt = FakeMgmt()
+    client = _make_pairing_client(mgmt, {})
+    with _patch_transport(make_responder(), holder):
+        await client.connect(False)
+    assert mgmt.loaded == []
 
 
 async def test_mtu_size_default_before_connect() -> None:

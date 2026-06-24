@@ -38,6 +38,7 @@ from .channels.att import (
     ATTClient,
     properties_to_strings,
 )
+from .channels.bluez import NewLongTermKey
 from .channels.l2cap import L2CAPSocket
 from .const import BDADDR_LE_PUBLIC
 
@@ -50,6 +51,11 @@ if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
 
     from .channels.att import GattService
+    from .channels.bluez import (
+        AuthenticationFailed,
+        LongTermKey,
+        MGMTBluetoothCtl,
+    )
 
 
 class SupportsConnecting(Protocol):
@@ -81,6 +87,14 @@ class MgmtClientData:
     # the client reports connect/disconnect by peer address here.
     register_connection: Callable[[str], None] | None = None
     unregister_connection: Callable[[str], None] | None = None
+    # Pairing: the scanner supplies the mgmt controller, the adapter index, and a
+    # per-adapter long-term-key store (bonds must outlive a per-connection client
+    # instance so reconnects can restore them).
+    adapter_idx: int | None = None
+    mgmt: MGMTBluetoothCtl | None = None
+    get_long_term_key: Callable[[str], LongTermKey | None] | None = None
+    set_long_term_key: Callable[[str, LongTermKey], None] | None = None
+    forget_long_term_key: Callable[[str], None] | None = None
 
 
 class HaMgmtClient(BaseBleakClient):
@@ -100,6 +114,11 @@ class HaMgmtClient(BaseBleakClient):
         self._scanner = client_data.scanner
         self._register_connection = client_data.register_connection
         self._unregister_connection = client_data.unregister_connection
+        self._adapter_idx = client_data.adapter_idx
+        self._mgmt = client_data.mgmt
+        self._get_long_term_key = client_data.get_long_term_key
+        self._set_long_term_key = client_data.set_long_term_key
+        self._forget_long_term_key = client_data.forget_long_term_key
         details = getattr(address_or_ble_device, "details", None) or {}
         if "address_type" in details:
             self._address_type: int = details["address_type"]
@@ -132,9 +151,10 @@ class HaMgmtClient(BaseBleakClient):
         if self._connected:
             msg = "already connected"
             raise BleakError(msg)
+        await self._restore_bond()
         if pair:
             _LOGGER.debug(
-                "%s: mgmt client does not pair on connect; relying on bonded keys",
+                "%s: connect(pair=True); use pair() to bond explicitly",
                 self.address,
             )
         att = ATTClient(send=self._send_pdu, on_disconnect=self._handle_disconnect)
@@ -324,16 +344,47 @@ class HaMgmtClient(BaseBleakClient):
             await codec.write(cccd.handle, _CCCD_OFF)
         codec.remove_notify_handler(characteristic.handle)
 
-    # -- pairing (not yet supported) --------------------------------------
+    # -- pairing -----------------------------------------------------------
+    async def _restore_bond(self) -> None:
+        """Reload a stored long-term key so the kernel re-encrypts a known peer."""
+        if (
+            self._mgmt is not None
+            and self._adapter_idx is not None
+            and self._get_long_term_key is not None
+            and (ltk := self._get_long_term_key(self.address)) is not None
+        ):
+            await self._mgmt.load_long_term_keys(self._adapter_idx, [ltk])
+
+    def _require_mgmt(self) -> tuple[MGMTBluetoothCtl, int]:
+        """Return the mgmt controller and adapter index, or raise if unavailable."""
+        if self._mgmt is None or self._adapter_idx is None:
+            msg = "pairing requires the management socket"
+            raise BleakError(msg)
+        return self._mgmt, self._adapter_idx
+
     async def pair(self, *args: Any, **kwargs: Any) -> None:
-        """Pairing via mgmt is not implemented yet."""
-        msg = "pairing is not supported by the mgmt client yet"
-        raise NotImplementedError(msg)
+        """Bond with the peer over mgmt, capturing the key for reconnects."""
+        mgmt, adapter_idx = self._require_mgmt()
+        address = self.address
+
+        def _capture(event: NewLongTermKey | AuthenticationFailed) -> None:
+            if isinstance(event, NewLongTermKey) and self._set_long_term_key:
+                self._set_long_term_key(address, event.key)
+
+        unregister = mgmt.register_pairing_handler(adapter_idx, address, _capture)
+        try:
+            if not await mgmt.pair_device(adapter_idx, address, self._address_type):
+                msg = f"{address}: pairing failed"
+                raise BleakError(msg)
+        finally:
+            unregister()
 
     async def unpair(self) -> None:
-        """Unpairing via mgmt is not implemented yet."""
-        msg = "unpairing is not supported by the mgmt client yet"
-        raise NotImplementedError(msg)
+        """Remove the bond over mgmt and forget the stored key."""
+        mgmt, adapter_idx = self._require_mgmt()
+        await mgmt.unpair_device(adapter_idx, self.address, self._address_type)
+        if self._forget_long_term_key is not None:
+            self._forget_long_term_key(self.address)
 
     def _codec(self) -> ATTClient:
         """Return the live ATT codec or raise if the channel is down."""

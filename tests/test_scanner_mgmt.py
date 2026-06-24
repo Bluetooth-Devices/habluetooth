@@ -17,6 +17,7 @@ from habluetooth import (
     create_local_scanner,
     get_manager,
 )
+from habluetooth.channels.bluez import LongTermKey
 from habluetooth.scanner_bleak import ScannerStartError
 
 if TYPE_CHECKING:
@@ -466,6 +467,17 @@ async def test_registered_scanner_reports_discovered_devices(
         assert scanner.discovered_devices[0].address == _PEER
     finally:
         unregister()
+
+
+async def test_long_term_key_store() -> None:
+    """The scanner stores and forgets bonded keys for the client to use."""
+    scanner = _scanner()
+    key = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(16))
+    scanner._store_long_term_key(_PEER, key)
+    assert scanner._long_term_keys[_PEER] is key
+    scanner._forget_long_term_key(_PEER)
+    assert _PEER not in scanner._long_term_keys
+    scanner._forget_long_term_key(_PEER)  # idempotent
 
 
 async def test_slot_limit_zero_when_adapter_unregistered() -> None:
