@@ -38,6 +38,7 @@ from .const import (
     DEFAULT_ACTIVE_SCAN_DURATION,
     DEFAULT_ACTIVE_SCAN_INTERVAL,
     DEFAULT_ON_DEMAND_SWEEP_DURATION,
+    DURABLY_GONE_STALE_FACTOR,
     FAILED_ADAPTER_MAC,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     MIN_ACTIVE_SCAN_DURATION,
@@ -81,6 +82,10 @@ APPLE_FINDMY_START_BYTE: Final = 0x12  # FindMy network advertisements
 
 _str = str
 _int = int
+
+# Hot-path C double copy of the public constant (declared cdef in the
+# .pxd); the public name stays a patchable Python constant.
+_DURABLY_GONE_STALE_FACTOR = DURABLY_GONE_STALE_FACTOR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -554,20 +559,36 @@ class BluetoothManager:
             stale_seconds += TRACKER_BUFFERING_WOBBLE_SECONDS
         else:
             stale_seconds = FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
-        if new.time - old.time > stale_seconds:
-            # If the old advertisement is stale, any new advertisement is preferred
-            if self._debug:
-                _LOGGER.debug(
-                    "%s (%s): Switching from %s to %s (time elapsed:%s > stale"
-                    " seconds:%s)",
-                    new.name,
-                    new.address,
-                    self._async_describe_source(old),
-                    self._async_describe_source(new),
-                    new.time - old.time,
-                    stale_seconds,
-                )
-            return False
+        elapsed = new.time - old.time
+        if elapsed > stale_seconds:
+            # The owner has not been heard within its expected interval.
+            # Hand off immediately to a comparable-or-stronger scanner
+            # (ordinary roaming), but make a materially weaker scanner wait
+            # until the owner is durably silent. Otherwise, for a
+            # scan-response-only sensor seen by many active proxies, a far
+            # weaker proxy steals ownership on a single missed interval and
+            # surfaces a stale capture (issue #568). Receive time is all we
+            # have (adverts carry no timestamp), so the durably-gone wait is
+            # what lets a device that truly moved into weak-only coverage
+            # still hand off.
+            durably_gone = stale_seconds * _DURABLY_GONE_STALE_FACTOR
+            if durably_gone > FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS:
+                durably_gone = FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
+            if (new.rssi or NO_RSSI_VALUE) >= (
+                old.rssi or NO_RSSI_VALUE
+            ) - ADV_RSSI_SWITCH_THRESHOLD or elapsed > durably_gone:
+                if self._debug:
+                    _LOGGER.debug(
+                        "%s (%s): Switching from %s to %s (time elapsed:%s > stale"
+                        " seconds:%s)",
+                        new.name,
+                        new.address,
+                        self._async_describe_source(old),
+                        self._async_describe_source(new),
+                        elapsed,
+                        stale_seconds,
+                    )
+                return False
         if (new.rssi or NO_RSSI_VALUE) - ADV_RSSI_SWITCH_THRESHOLD > (
             old.rssi or NO_RSSI_VALUE
         ):
