@@ -274,14 +274,17 @@ class HaScannerMgmt(BaseHaScanner):
 
     def _store_long_term_key(self, key: LongTermKey) -> None:
         """Persist a bonded key (called by the client after pairing)."""
-        self._long_term_keys[(key.address, key.central, key.ediv)] = key
+        # Canonicalize the address so forget (which may be called with a
+        # differently-cased address) always matches.
+        self._long_term_keys[(key.address.upper(), key.central, key.ediv)] = key
 
     def _forget_long_term_keys(self, address: str) -> None:
         """Drop every bonded key for a peer (called by the client on unpair)."""
+        canonical = address.upper()
         self._long_term_keys = {
             stored_key: value
             for stored_key, value in self._long_term_keys.items()
-            if value.address != address
+            if value.address.upper() != canonical
         }
 
     def get_allocations(self) -> Allocations | None:

@@ -515,9 +515,12 @@ async def test_operations_raise_after_disconnect() -> None:
 class FakeMgmt:
     """Records the pairing/bond mgmt commands the client issues."""
 
-    def __init__(self, *, pair_ok: bool = True, load_ok: bool = True) -> None:
+    def __init__(
+        self, *, pair_ok: bool = True, load_ok: bool = True, unpair_ok: bool = True
+    ) -> None:
         self.pair_ok = pair_ok
         self.load_ok = load_ok
+        self.unpair_ok = unpair_ok
         self.paired: list[tuple[int, str, int]] = []
         self.unpaired: list[tuple[int, str]] = []
         self.loaded: list[tuple[int, list[LongTermKey]]] = []
@@ -547,7 +550,7 @@ class FakeMgmt:
         self, idx: int, address: str, address_type: int, **_k: object
     ) -> bool:
         self.unpaired.append((idx, address))
-        return True
+        return self.unpair_ok
 
     async def load_long_term_keys(self, idx: int, keys: list[LongTermKey]) -> bool:
         self.loaded.append((idx, list(keys)))
@@ -676,6 +679,16 @@ async def test_unpair_without_store() -> None:
     client = _make_pairing_client(mgmt, None)
     await client.unpair()
     assert mgmt.unpaired == [(0, _PEER)]
+
+
+async def test_unpair_failure_keeps_stored_key() -> None:
+    """A failed UNPAIR_DEVICE raises and leaves the stored key in place."""
+    mgmt = FakeMgmt(unpair_ok=False)
+    store = _Store([_ltk()])
+    client = _make_pairing_client(mgmt, store)
+    with pytest.raises(BleakError, match="unpair failed"):
+        await client.unpair()
+    assert store.keys == [_ltk()]  # not desynced from the controller
 
 
 async def test_connect_restores_all_adapter_bonds() -> None:

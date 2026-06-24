@@ -405,7 +405,11 @@ class HaMgmtClient(BaseBleakClient):
     async def unpair(self) -> None:
         """Remove the bond over mgmt and forget the stored key."""
         mgmt, adapter_idx = self._require_mgmt()
-        await mgmt.unpair_device(adapter_idx, self.address, self._address_type)
+        if not await mgmt.unpair_device(adapter_idx, self.address, self._address_type):
+            # Don't drop the local key if the kernel bond is still there, or the
+            # store would silently desync from the controller.
+            msg = f"{self.address}: unpair failed"
+            raise BleakError(msg)
         if self._forget_long_term_keys is not None:
             self._forget_long_term_keys(self.address)
 

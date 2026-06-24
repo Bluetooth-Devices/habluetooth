@@ -482,7 +482,8 @@ async def test_long_term_key_store() -> None:
     scanner._store_long_term_key(key_a2)
     scanner._store_long_term_key(other)
     assert set(scanner._all_long_term_keys()) == {key_a, key_a2, other}
-    scanner._forget_long_term_keys(_PEER)
+    # Forget is case-insensitive: stored addresses are canonical upper-case.
+    scanner._forget_long_term_keys(_PEER.lower())
     assert scanner._all_long_term_keys() == [other]
     scanner._forget_long_term_keys(_PEER)  # idempotent
 
