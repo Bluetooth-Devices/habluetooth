@@ -389,9 +389,14 @@ class HaMgmtClient(BaseBleakClient):
         """Disable notifications by clearing the CCCD and dropping the handler."""
         codec = self._codec()
         cccd = characteristic.get_descriptor(CCCD_UUID)
-        if cccd is not None:
-            await codec.write(cccd.handle, _CCCD_OFF)
-        codec.remove_notify_handler(characteristic.handle)
+        try:
+            if cccd is not None:
+                await codec.write(cccd.handle, _CCCD_OFF)
+        finally:
+            # Drop the handler even if disabling the CCCD failed, mirroring
+            # start_notify's unwind, so a failed write leaves no stale handler
+            # routing notifications for a subscription the caller stopped.
+            codec.remove_notify_handler(characteristic.handle)
 
     # -- pairing -----------------------------------------------------------
     async def _restore_bond(self) -> None:
