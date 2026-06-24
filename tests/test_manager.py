@@ -1105,6 +1105,116 @@ async def test_switching_adapters_based_on_stale_with_discovered_interval(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_stale_does_not_switch_to_much_weaker_scanner(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A far weaker scanner must not steal a strong owner on a single stale interval.
+
+    Regression for #568: scan-response-only sensors behind many active proxies
+    oscillated because a weaker proxy holding a stale capture won the receive-time
+    staleness check on a single missed interval.
+    """
+    address = "44:44:33:11:23:42"
+    start = 50.0
+    strong = generate_ble_device(address, "strong_hci0")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci0", service_uuids=[], rssi=-46
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    get_manager().async_set_fallback_availability_interval(address, 10)  # stale=15
+
+    weak = generate_ble_device(address, "weak_hci1")
+    weak_adv = generate_advertisement_data(
+        local_name="weak_hci1", service_uuids=[], rssi=-90
+    )
+    # Just past the normal stale window: a 44 dB weaker scanner must NOT win.
+    inject_advertisement_with_time_and_source(
+        weak,
+        weak_adv,
+        start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is strong
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_switches_to_weaker_scanner_once_durably_gone(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A device that moved into weak-only coverage still hands off after a longer wait.
+
+    The weaker scanner is held off on a single stale interval but takes over once
+    the owner has been silent for stale_seconds * DURABLY_GONE_STALE_FACTOR.
+    """
+    address = "44:44:33:11:23:43"
+    start = 50.0
+    strong = generate_ble_device(address, "strong_hci0")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci0", service_uuids=[], rssi=-46
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    # stale_seconds = 15, durably-gone = 15 * 2.5 = 37.5
+    get_manager().async_set_fallback_availability_interval(address, 10)
+
+    weak = generate_ble_device(address, "weak_hci1")
+    weak_adv = generate_advertisement_data(
+        local_name="weak_hci1", service_uuids=[], rssi=-90
+    )
+    # Within the durably-gone window: still the strong owner.
+    inject_advertisement_with_time_and_source(
+        weak, weak_adv, start + 30, HCI1_SOURCE_ADDRESS
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is strong
+    # Past the durably-gone window: the weak scanner finally takes over.
+    inject_advertisement_with_time_and_source(
+        weak, weak_adv, start + 40, HCI1_SOURCE_ADDRESS
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is weak
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_switches_to_comparable_scanner_at_normal_window(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A comparable-strength scanner still takes over at the normal stale window."""
+    address = "44:44:33:11:23:44"
+    start = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    owner_adv = generate_advertisement_data(
+        local_name="owner_hci0", service_uuids=[], rssi=-60
+    )
+    inject_advertisement_with_time_and_source(
+        owner, owner_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    get_manager().async_set_fallback_availability_interval(address, 10)
+
+    # Within 16 dB of the owner: ordinary roaming handoff at the normal window.
+    comparable = generate_ble_device(address, "comparable_hci1")
+    comparable_adv = generate_advertisement_data(
+        local_name="comparable_hci1", service_uuids=[], rssi=-70
+    )
+    inject_advertisement_with_time_and_source(
+        comparable,
+        comparable_adv,
+        start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is comparable
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_switching_adapters_based_on_rssi_connectable_to_non_connectable(
     register_hci0_scanner: None,
     register_hci1_scanner: None,

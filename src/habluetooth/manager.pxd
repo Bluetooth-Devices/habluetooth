@@ -9,6 +9,7 @@ cdef int NO_RSSI_VALUE
 cdef int ADV_RSSI_SWITCH_THRESHOLD
 cdef double TRACKER_BUFFERING_WOBBLE_SECONDS
 cdef double FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
+cdef double _DURABLY_GONE_STALE_FACTOR
 cdef object FILTER_UUIDS
 cdef object AdvertisementData
 cdef object BLEDevice
@@ -78,7 +79,12 @@ cdef class BluetoothManager:
     # a direct vtable dispatch.
     cdef public object _auto_scheduler
 
-    @cython.locals(stale_seconds=double)
+    @cython.locals(
+        stale_seconds=double,
+        elapsed=double,
+        durably_gone=double,
+        comparable_or_stronger=bint,
+    )
     cdef bint _prefer_previous_adv_from_different_source(
         self,
         BluetoothServiceInfoBleak old,
