@@ -20,6 +20,7 @@ from habluetooth.channels.l2cap import (
     L2CAPSocket,
     _set_result_if_pending,
     _wait_connected,
+    can_use_l2cap,
     make_sockaddr_l2,
     str_to_bdaddr,
 )
@@ -411,3 +412,18 @@ async def test_set_result_if_pending_is_idempotent() -> None:
     _set_result_if_pending(fut)
     _set_result_if_pending(fut)
     assert fut.result() is None
+
+
+async def test_can_use_l2cap_true_when_socket_opens() -> None:
+    """can_use_l2cap returns True when an L2CAP socket can be created."""
+    sock = Mock()
+    with patch("socket.socket", return_value=sock) as make_socket:
+        assert can_use_l2cap() is True
+    make_socket.assert_called_once()
+    sock.close.assert_called_once()
+
+
+async def test_can_use_l2cap_false_without_permission() -> None:
+    """can_use_l2cap returns False when the socket cannot be opened."""
+    with patch("socket.socket", side_effect=PermissionError):
+        assert can_use_l2cap() is False
