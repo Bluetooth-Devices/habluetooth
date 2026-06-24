@@ -142,6 +142,16 @@ def _set_future_if_not_done(future: asyncio.Future[None] | None) -> None:
         future.set_result(None)
 
 
+def _command_succeeded(result: tuple[int, bytes] | None) -> bool:
+    """Whether a mgmt command returned the SUCCESS status."""
+    return result is not None and result[0] == MGMT_STATUS_SUCCESS
+
+
+def _result_status_text(result: tuple[int, bytes] | None) -> str:
+    """Describe a mgmt command result for logging: no response, or its status."""
+    return "no response" if result is None else f"status={result[0]:#x}"
+
+
 @dataclass(slots=True, frozen=True)
 class LongTermKey:
     """
@@ -787,7 +797,7 @@ class MGMTBluetoothCtl:
         _LOGGER.warning(
             "hci%u: failed to start discovery: %s",
             adapter_idx,
-            "no response" if result is None else f"status={result[0]:#x}",
+            _result_status_text(result),
         )
         return False
 
@@ -802,14 +812,14 @@ class MGMTBluetoothCtl:
         result = await self._send_command_await(
             MGMT_OP_STOP_DISCOVERY, adapter_idx, DISCOVERY_PACK(SCAN_TYPE_LE)
         )
-        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+        if _command_succeeded(result):
             return True
         # Best-effort cleanup on a shared socket, so this stays at debug, but
         # log the no-response case too for parity with the other wrappers.
         _LOGGER.debug(
             "hci%u: stop discovery did not stop: %s",
             adapter_idx,
-            "no response" if result is None else f"status={result[0]:#x}",
+            _result_status_text(result),
         )
         return False
 
@@ -849,7 +859,7 @@ class MGMTBluetoothCtl:
         result = await self._send_command_await(
             MGMT_OP_REMOVE_ADV_MONITOR, adapter_idx, MONITOR_HANDLE_PACK(handle)
         )
-        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+        if _command_succeeded(result):
             return True
         # A failed removal leaves the monitor registered controller-side, so
         # surface it at warning level to make a leaked handle diagnosable.
@@ -857,7 +867,7 @@ class MGMTBluetoothCtl:
             "hci%u: failed to remove advertisement monitor %u: %s",
             adapter_idx,
             handle,
-            "no response" if result is None else f"status={result[0]:#x}",
+            _result_status_text(result),
         )
         return False
 
@@ -884,13 +894,13 @@ class MGMTBluetoothCtl:
             adapter_idx,
             PAIR_DEVICE_PACK(addr, address_type, io_capability),
         )
-        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+        if _command_succeeded(result):
             return True
         _LOGGER.warning(
             "hci%u: failed to pair with %s: %s",
             adapter_idx,
             address,
-            "no response" if result is None else f"status={result[0]:#x}",
+            _result_status_text(result),
         )
         return False
 
@@ -912,13 +922,13 @@ class MGMTBluetoothCtl:
             adapter_idx,
             UNPAIR_DEVICE_PACK(addr, address_type, 1 if disconnect else 0),
         )
-        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+        if _command_succeeded(result):
             return True
         _LOGGER.warning(
             "hci%u: failed to unpair %s: %s",
             adapter_idx,
             address,
-            "no response" if result is None else f"status={result[0]:#x}",
+            _result_status_text(result),
         )
         return False
 
@@ -935,13 +945,13 @@ class MGMTBluetoothCtl:
         result = await self._send_command_await(
             MGMT_OP_DISCONNECT, adapter_idx, DISCONNECT_PACK(addr, address_type)
         )
-        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+        if _command_succeeded(result):
             return True
         _LOGGER.warning(
             "hci%u: failed to disconnect %s: %s",
             adapter_idx,
             address,
-            "no response" if result is None else f"status={result[0]:#x}",
+            _result_status_text(result),
         )
         return False
 
@@ -1003,14 +1013,14 @@ class MGMTBluetoothCtl:
             )
             return False
         result = await self._send_command_await(opcode, adapter_idx, payload)
-        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+        if _command_succeeded(result):
             return True
         _LOGGER.warning(
             "hci%u: pairing reply %#x for %s failed: %s",
             adapter_idx,
             opcode,
             address,
-            "no response" if result is None else f"status={result[0]:#x}",
+            _result_status_text(result),
         )
         return False
 
@@ -1064,13 +1074,13 @@ class MGMTBluetoothCtl:
         result = await self._send_command_await(
             MGMT_OP_LOAD_LONG_TERM_KEYS, adapter_idx, cmd_data
         )
-        if result is not None and result[0] == MGMT_STATUS_SUCCESS:
+        if _command_succeeded(result):
             return True
         _LOGGER.warning(
             "hci%u: failed to load %d long-term key(s): %s",
             adapter_idx,
             len(keys),
-            "no response" if result is None else f"status={result[0]:#x}",
+            _result_status_text(result),
         )
         return False
 
