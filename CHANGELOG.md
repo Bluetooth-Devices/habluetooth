@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.21.0 (2026-06-24)
+
+### Features
+
+
+- Add mgmt passkey and confirmation pairing replies ([`84531ac`](https://github.com/Bluetooth-Devices/habluetooth/commit/84531acebac9378ec4447f559c9dd4d6676ab6f3))
+
+
 ## v6.20.0 (2026-06-24)
 
 ### Features
