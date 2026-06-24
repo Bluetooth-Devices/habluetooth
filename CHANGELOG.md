@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.22.0 (2026-06-24)
+
+### Features
+
+
+- Fall back to bleak when l2cap sockets are not permitted ([`58dcd60`](https://github.com/Bluetooth-Devices/habluetooth/commit/58dcd608a53551a6a3039a039a808a912d2303ea))
+
+
+### Documentation
+
+
+- Add home assistant integration guide for the mgmt scanner ([`a90a8d0`](https://github.com/Bluetooth-Devices/habluetooth/commit/a90a8d0f4164a220e98733c44ef15d21e5d5d13f))
+
+
 ## v6.21.0 (2026-06-24)
 
 ### Features
