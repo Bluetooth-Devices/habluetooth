@@ -120,11 +120,24 @@ async def test_factory_falls_back_for_auto_mode(use_mgmt: FakeMgmt) -> None:
     assert type(scanner) is HaScanner
 
 
+async def test_factory_falls_back_without_l2cap(use_mgmt: FakeMgmt) -> None:
+    """Without permission to open L2CAP sockets, connections need the bleak path."""
+    with (
+        patch("habluetooth.scanner_mgmt.IS_LINUX", True),
+        patch("habluetooth.scanner_mgmt.can_use_l2cap", return_value=False),
+    ):
+        scanner = create_local_scanner(BluetoothScanningMode.ACTIVE, _ADAPTER, _ADDRESS)
+    assert type(scanner) is HaScanner
+
+
 async def test_factory_returns_mgmt_scanner_when_available(
     use_mgmt: FakeMgmt,
 ) -> None:
     """On Linux with a discovering mgmt socket and an hci adapter, use mgmt."""
-    with patch("habluetooth.scanner_mgmt.IS_LINUX", True):
+    with (
+        patch("habluetooth.scanner_mgmt.IS_LINUX", True),
+        patch("habluetooth.scanner_mgmt.can_use_l2cap", return_value=True),
+    ):
         scanner = create_local_scanner(BluetoothScanningMode.ACTIVE, _ADAPTER, _ADDRESS)
     assert type(scanner) is HaScannerMgmt
 

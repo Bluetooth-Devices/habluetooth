@@ -39,6 +39,7 @@ from bluetooth_adapters import DEFAULT_ADDRESS
 
 from .base_scanner import BaseHaScanner
 from .central_manager import get_manager
+from .channels.l2cap import can_use_l2cap
 from .client_mgmt import HaMgmtClient, MgmtClientData
 from .models import BluetoothScanningMode, HaBluetoothConnector
 from .scanner_bleak import IS_LINUX, HaScanner, ScannerStartError, _resolve_radio_mode
@@ -386,6 +387,11 @@ def create_local_scanner(
     AUTO mode falls back to :class:`HaScanner`: the mgmt scanner does not yet
     implement active-window promotion (``async_request_active_window``), so it
     cannot satisfy AUTO's on-demand switch to active scanning.
+
+    It also falls back when raw L2CAP sockets cannot be opened
+    (``can_use_l2cap``): mgmt discovery and L2CAP connect need different
+    permissions, so a process that can discover but not open an L2CAP socket
+    must use the bleak/DBus path to stay connectable.
     """
     manager = get_manager()
     mgmt = manager.get_bluez_mgmt_ctl()
@@ -396,6 +402,7 @@ def create_local_scanner(
         and adapter.startswith("hci")
         and address != DEFAULT_ADDRESS
         and mode is not BluetoothScanningMode.AUTO
+        and can_use_l2cap()
     ):
         return HaScannerMgmt(mode, adapter, address)
     return HaScanner(mode, adapter, address)

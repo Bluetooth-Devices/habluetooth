@@ -96,6 +96,29 @@ def make_sockaddr_l2(address: str, cid: int, bdaddr_type: int) -> _SockaddrL2:
     return addr
 
 
+def can_use_l2cap() -> bool:
+    """
+    Whether a raw L2CAP socket can be opened on this host.
+
+    Connections go over an ``AF_BLUETOOTH`` socket, whose creation needs
+    ``CAP_NET_RAW`` (and a Linux kernel with Bluetooth). A process can have mgmt
+    discovery permission yet lack this, so the scanner factory probes it and
+    falls back to the bleak/DBus path rather than pick a scanner that can
+    discover but never connect. The probe only opens and closes a socket.
+    """
+    try:
+        sock = socket.socket(AF_BLUETOOTH, socket.SOCK_SEQPACKET, BTPROTO_L2CAP)
+    except OSError as err:
+        # Could be a permission downgrade or a kernel without Bluetooth; log so
+        # the fallback to the bleak path is not silent.
+        _LOGGER.debug("L2CAP sockets unavailable (%s); using the bleak path", err)
+        return False
+    try:
+        return True
+    finally:
+        sock.close()
+
+
 @functools.cache
 def _get_libc() -> ctypes.CDLL:  # pragma: no cover - libc load is platform glue
     """Return a cached errno-aware libc handle for the raw bind/connect calls."""
