@@ -4646,6 +4646,21 @@ async def test_async_diagnostics_last_active_window() -> None:
     assert sched._last_window_by_address == {}
 
 
+@pytest.mark.asyncio
+async def test_has_active_requests() -> None:
+    """has_active_requests reflects whether any active-scan request exists."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    before = sched.has_active_requests
+    cancel = manager.async_register_active_scan("11:22:33:44:55:66")
+    during = sched.has_active_requests
+    cancel()
+    after = sched.has_active_requests
+    assert before is False
+    assert during is True
+    assert after is False
+
+
 @contextlib.asynccontextmanager
 async def _no_real_sleep():
     """

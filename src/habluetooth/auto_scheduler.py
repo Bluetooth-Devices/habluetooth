@@ -768,6 +768,11 @@ class AutoScanScheduler:
         self._on_demand_sweep_future: asyncio.Future[None] | None = None
         self._on_demand_sweep_end: float = 0.0
 
+    @property
+    def has_active_requests(self) -> bool:
+        """Return True if any address has a registered active-scan request."""
+        return bool(self._requests_by_address)
+
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """
         Bind to the event loop and spawn one worker per AUTO scanner.

@@ -1482,7 +1482,11 @@ class BluetoothManager:
         its scan response (and an integration has asked for active
         scans on that device) the device's data may be missing. Deduped
         per source; the entry is dropped on unregister or when the
-        scanner leaves passive mode so a later relapse warns again.
+        scanner leaves passive mode so a later relapse warns again. It is
+        intentionally not reset when active-scan requests drop to zero:
+        the warning is per-source config advice ("this scanner is
+        passive, fix its mode"), so one warning per source is enough and
+        a later request for a different device need not re-warn.
         """
         source = scanner.source
         if scanner.requested_mode is not BluetoothScanningMode.PASSIVE:
@@ -1490,7 +1494,7 @@ class BluetoothManager:
             return
         if (
             source in self._warned_passive_active_scan
-            or not self._auto_scheduler._requests_by_address
+            or not self._auto_scheduler.has_active_requests
         ):
             return
         self._warned_passive_active_scan.add(source)
