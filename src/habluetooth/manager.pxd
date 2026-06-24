@@ -10,6 +10,7 @@ cdef int ADV_RSSI_SWITCH_THRESHOLD
 cdef double TRACKER_BUFFERING_WOBBLE_SECONDS
 cdef double FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
 cdef double _DURABLY_GONE_STALE_FACTOR
+cdef int _STRONG_OWNER_STALE_RSSI
 cdef object FILTER_UUIDS
 cdef object AdvertisementData
 cdef object BLEDevice
@@ -84,6 +85,7 @@ cdef class BluetoothManager:
         elapsed=double,
         durably_gone=double,
         comparable_or_stronger=bint,
+        owner_strong=bint,
     )
     cdef bint _prefer_previous_adv_from_different_source(
         self,
