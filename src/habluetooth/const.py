@@ -47,6 +47,16 @@ CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS: Final = 195
 # device that genuinely moved into weak-only coverage hand off.
 DURABLY_GONE_STALE_FACTOR: Final = 2.5
 
+# An owner whose last advertisement was at least this strong is treated as
+# close/stationary: a brief reception gap is almost certainly RF/scan-response
+# jitter rather than the device leaving, so a merely-comparable challenger
+# (not ADV_RSSI_SWITCH_THRESHOLD stronger) must wait for durable absence
+# before stealing ownership, instead of flapping the device on a single
+# missed interval. A weaker owner keeps the normal comparable-on-stale
+# handoff. Above the -100 owners used in the stale tests so they are
+# unaffected, and below typical close-proxy readings.
+STRONG_OWNER_STALE_RSSI: Final = -70
+
 
 # We must recover before we hit the 180s mark
 # where the device is removed from the stack

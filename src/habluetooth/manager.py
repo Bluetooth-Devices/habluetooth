@@ -43,6 +43,7 @@ from .const import (
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     MIN_ACTIVE_SCAN_DURATION,
     MIN_ACTIVE_SCAN_INTERVAL,
+    STRONG_OWNER_STALE_RSSI,
     UNAVAILABLE_TRACK_SECONDS,
 )
 from .models import (
@@ -83,9 +84,10 @@ APPLE_FINDMY_START_BYTE: Final = 0x12  # FindMy network advertisements
 _str = str
 _int = int
 
-# Hot-path C double copy of the public constant (declared cdef in the
-# .pxd); the public name stays a patchable Python constant.
+# Hot-path C copies of the public constants (declared cdef in the .pxd);
+# the public names stay patchable Python constants.
 _DURABLY_GONE_STALE_FACTOR = DURABLY_GONE_STALE_FACTOR
+_STRONG_OWNER_STALE_RSSI = STRONG_OWNER_STALE_RSSI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -577,12 +579,19 @@ class BluetoothManager:
             comparable_or_stronger = (new.rssi or NO_RSSI_VALUE) >= (
                 old.rssi or NO_RSSI_VALUE
             ) - ADV_RSSI_SWITCH_THRESHOLD
-            if comparable_or_stronger or elapsed > durably_gone:
+            # A strong/close owner that briefly goes quiet is almost
+            # certainly still there (RF / scan-response reception jitter),
+            # so a merely-comparable challenger must wait for durable
+            # absence rather than steal on one missed interval and flap a
+            # stationary device. A weaker owner keeps the normal
+            # comparable-on-stale handoff.
+            owner_strong = (old.rssi or NO_RSSI_VALUE) >= _STRONG_OWNER_STALE_RSSI
+            if (comparable_or_stronger and not owner_strong) or elapsed > durably_gone:
                 if self._debug:
                     _LOGGER.debug(
                         "%s (%s): Switching from %s to %s (time elapsed:%s > stale"
-                        " seconds:%s; comparable_or_stronger:%s, durably-gone"
-                        " threshold:%s)",
+                        " seconds:%s; comparable_or_stronger:%s, owner_strong:%s,"
+                        " durably-gone threshold:%s)",
                         new.name,
                         new.address,
                         self._async_describe_source(old),
@@ -590,6 +599,7 @@ class BluetoothManager:
                         elapsed,
                         stale_seconds,
                         comparable_or_stronger,
+                        owner_strong,
                         durably_gone,
                     )
                 return False

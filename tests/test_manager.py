@@ -1187,22 +1187,29 @@ async def test_stale_switches_to_comparable_scanner_at_normal_window(
     register_hci0_scanner: None,
     register_hci1_scanner: None,
 ) -> None:
-    """A comparable-strength scanner still takes over at the normal stale window."""
+    """
+    A comparable scanner takes over a weak owner at the normal stale window.
+
+    The owner is weak (below STRONG_OWNER_STALE_RSSI), so its silence is
+    treated as the device possibly being gone and a comparable scanner is
+    allowed to take over at the normal window. A strong owner is protected
+    (see test_stale_keeps_strong_owner_against_comparable_scanner).
+    """
     address = "44:44:33:11:23:44"
     start = 50.0
     owner = generate_ble_device(address, "owner_hci0")
     owner_adv = generate_advertisement_data(
-        local_name="owner_hci0", service_uuids=[], rssi=-60
+        local_name="owner_hci0", service_uuids=[], rssi=-90
     )
     inject_advertisement_with_time_and_source(
         owner, owner_adv, start, HCI0_SOURCE_ADDRESS
     )
     get_manager().async_set_fallback_availability_interval(address, 10)
 
-    # Within 16 dB of the owner: ordinary roaming handoff at the normal window.
+    # Weak owner, comparable challenger: ordinary handoff at the normal window.
     comparable = generate_ble_device(address, "comparable_hci1")
     comparable_adv = generate_advertisement_data(
-        local_name="comparable_hci1", service_uuids=[], rssi=-70
+        local_name="comparable_hci1", service_uuids=[], rssi=-95
     )
     inject_advertisement_with_time_and_source(
         comparable,
@@ -1211,6 +1218,113 @@ async def test_stale_switches_to_comparable_scanner_at_normal_window(
         HCI1_SOURCE_ADDRESS,
     )
     assert get_manager().async_ble_device_from_address(address, True) is comparable
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_keeps_strong_owner_against_comparable_scanner(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A strong/close owner is not stolen by a comparable scanner on a stale interval.
+
+    Regression for the stationary-device flap: a strong owner (>=
+    STRONG_OWNER_STALE_RSSI) that briefly goes quiet is almost certainly
+    still there, so a merely-comparable scanner must wait for durable
+    absence rather than steal on one missed interval.
+    """
+    address = "44:44:33:11:23:47"
+    start = 50.0
+    strong = generate_ble_device(address, "strong_hci0")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci0", service_uuids=[], rssi=-50
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    get_manager().async_set_fallback_availability_interval(address, 10)  # stale=15
+
+    comparable = generate_ble_device(address, "comparable_hci1")
+    comparable_adv = generate_advertisement_data(
+        local_name="comparable_hci1", service_uuids=[], rssi=-60
+    )
+    # Just past the normal stale window: a comparable scanner must NOT steal
+    # the strong owner.
+    inject_advertisement_with_time_and_source(
+        comparable,
+        comparable_adv,
+        start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is strong
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_strong_owner_yields_to_comparable_when_durably_gone(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A strong owner that is durably silent still hands off to a comparable scanner."""
+    address = "44:44:33:11:23:48"
+    start = 50.0
+    strong = generate_ble_device(address, "strong_hci0")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci0", service_uuids=[], rssi=-50
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    # stale_seconds = 15, durably-gone = 15 * 2.5 = 37.5
+    get_manager().async_set_fallback_availability_interval(address, 10)
+
+    comparable = generate_ble_device(address, "comparable_hci1")
+    comparable_adv = generate_advertisement_data(
+        local_name="comparable_hci1", service_uuids=[], rssi=-60
+    )
+    # Within the durably-gone window: strong owner kept.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 30, HCI1_SOURCE_ADDRESS
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is strong
+    # Past durably-gone: the comparable scanner finally takes over.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 40, HCI1_SOURCE_ADDRESS
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is comparable
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_strong_owner_yields_to_stronger_scanner(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A strong owner still yields immediately to a materially stronger scanner."""
+    address = "44:44:33:11:23:49"
+    start = 50.0
+    strong = generate_ble_device(address, "strong_hci0")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci0", service_uuids=[], rssi=-50
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    get_manager().async_set_fallback_availability_interval(address, 10)
+
+    # >16 dB stronger: the RSSI path takes over immediately, strong owner or not.
+    stronger = generate_ble_device(address, "stronger_hci1")
+    stronger_adv = generate_advertisement_data(
+        local_name="stronger_hci1", service_uuids=[], rssi=-20
+    )
+    inject_advertisement_with_time_and_source(
+        stronger,
+        stronger_adv,
+        start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is stronger
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
