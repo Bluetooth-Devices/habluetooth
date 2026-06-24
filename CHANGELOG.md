@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.19.1 (2026-06-24)
+
+### Bug fixes
+
+
+- Require durable staleness before a weaker scanner takes ownership ([`e35842e`](https://github.com/Bluetooth-Devices/habluetooth/commit/e35842e10560aa046ad7933ea0dfd7b469164499))
+
+
 ## v6.19.0 (2026-06-24)
 
 ### Features
