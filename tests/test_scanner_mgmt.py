@@ -481,11 +481,58 @@ async def test_long_term_key_store() -> None:
     scanner._store_long_term_key(key_a)
     scanner._store_long_term_key(key_a2)
     scanner._store_long_term_key(other)
-    assert set(scanner._all_long_term_keys()) == {key_a, key_a2, other}
+    assert set(scanner.export_long_term_keys()) == {key_a, key_a2, other}
     # Forget is case-insensitive: stored addresses are canonical upper-case.
     scanner._forget_long_term_keys(_PEER.lower())
-    assert scanner._all_long_term_keys() == [other]
+    assert scanner.export_long_term_keys() == [other]
     scanner._forget_long_term_keys(_PEER)  # idempotent
+
+
+async def test_long_term_key_export_and_restore() -> None:
+    """Keys can be exported for persistence and seeded back on startup."""
+    scanner = _scanner()
+    key = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(16))
+    scanner.restore_long_term_keys([key])
+    assert scanner.export_long_term_keys() == [key]
+
+
+async def test_long_term_keys_changed_callback() -> None:
+    """The change callback fires on store and on an actual forget, not a no-op."""
+    scanner = _scanner()
+    changes: list[int] = []
+    scanner.set_long_term_keys_changed_callback(lambda: changes.append(1))
+    key = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(16))
+    scanner._store_long_term_key(key)
+    assert len(changes) == 1
+    scanner._store_long_term_key(key)  # identical -> no fire (symmetric with forget)
+    assert len(changes) == 1
+    updated = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(range(16)))
+    scanner._store_long_term_key(updated)  # same tuple, new value -> fires
+    assert len(changes) == 2
+    scanner._forget_long_term_keys("00:00:00:00:00:00")  # nothing removed -> no fire
+    assert len(changes) == 2
+    scanner._forget_long_term_keys(_PEER)  # removes -> fires
+    assert len(changes) == 3
+    scanner.set_long_term_keys_changed_callback(None)  # cleared
+    scanner._store_long_term_key(key)
+    assert len(changes) == 3
+
+
+async def test_long_term_keys_changed_callback_failure_is_isolated(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A raising persistence callback is logged, not propagated into pairing."""
+    scanner = _scanner()
+
+    def boom() -> None:
+        msg = "persistence broke"
+        raise RuntimeError(msg)
+
+    scanner.set_long_term_keys_changed_callback(boom)
+    key = LongTermKey(_PEER, 1, 0x05, False, 16, 0x1234, bytes(8), bytes(16))
+    with caplog.at_level("ERROR", logger="habluetooth.scanner_mgmt"):
+        scanner._store_long_term_key(key)  # must not raise
+    assert "change callback failed" in caplog.text
 
 
 async def test_slot_limit_zero_when_adapter_unregistered() -> None:
