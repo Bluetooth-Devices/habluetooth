@@ -32,6 +32,7 @@ from bleak.backends.descriptor import BleakGATTDescriptor
 from bleak.backends.service import BleakGATTService, BleakGATTServiceCollection
 
 from .channels.att import (
+    ATT_ERR_INSUFFICIENT_ENCRYPTION,
     CCCD_UUID,
     DEFAULT_MTU,
     PREFERRED_MTU,
@@ -39,7 +40,11 @@ from .channels.att import (
     properties_to_strings,
 )
 from .channels.bluez import NewLongTermKey
-from .channels.l2cap import L2CAPSocket
+from .channels.l2cap import (
+    BT_SECURITY_HIGH,
+    BT_SECURITY_MEDIUM,
+    L2CAPSocket,
+)
 from .const import BDADDR_LE_PUBLIC
 
 if TYPE_CHECKING:
@@ -170,7 +175,11 @@ class HaMgmtClient(BaseBleakClient):
                 "%s: connect(pair=True); use pair() to bond explicitly",
                 self.address,
             )
-        att = ATTClient(send=self._send_pdu, on_disconnect=self._handle_disconnect)
+        att = ATTClient(
+            send=self._send_pdu,
+            on_disconnect=self._handle_disconnect,
+            escalate_security=self._escalate_security,
+        )
         self._att = att
         try:
             with self._scanner.connecting():
@@ -216,6 +225,33 @@ class HaMgmtClient(BaseBleakClient):
             msg = "transport not connected"
             raise BleakError(msg)
         await self._sock.send(data)
+
+    def _escalate_security(self, att_error: int) -> bool:
+        """
+        Raise the link security to satisfy an ATT auth/encryption rejection.
+
+        Mirrors bluetoothd: insufficient encryption (0x0F) requests MEDIUM,
+        insufficient authentication (0x05) steps up one level. The kernel only
+        exposes LOW/MEDIUM/HIGH, so nothing above HIGH can be tried. Returns
+        whether the level was raised, so the codec knows to re-issue once.
+        """
+        if self._sock is None:  # pragma: no cover - only called once connected
+            return False
+        if att_error == ATT_ERR_INSUFFICIENT_ENCRYPTION:
+            target = BT_SECURITY_MEDIUM
+        else:  # ATT_ERR_INSUFFICIENT_AUTHENTICATION
+            target = self._sock.security_level + 1
+        if target > BT_SECURITY_HIGH:
+            return False
+        raised = self._sock.set_security_level(target)
+        if raised:
+            _LOGGER.debug(
+                "%s: raised link security to level %d after ATT error 0x%02x",
+                self.address,
+                target,
+                att_error,
+            )
+        return raised
 
     def _handle_disconnect(self, exc: Exception | None) -> None:
         """Tear the channel down once and notify on an unexpected drop."""

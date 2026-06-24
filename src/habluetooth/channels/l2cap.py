@@ -160,6 +160,7 @@ class L2CAPSocket:
         loop: asyncio.AbstractEventLoop,
         on_data: Callable[[bytes], None],
         on_close: Callable[[Exception | None], None],
+        security_level: int = BT_SECURITY_LOW,
     ) -> None:
         """Wrap an already-connected socket and start reading from it."""
         self._sock = sock
@@ -168,7 +169,34 @@ class L2CAPSocket:
         self._on_close = on_close
         self._closed = False
         self._write_lock = asyncio.Lock()
+        # The BT_SECURITY level currently requested on the socket; escalation
+        # raises it (never lowers it) when the peer rejects an ATT operation.
+        self._security_level = security_level
         loop.add_reader(sock.fileno(), self._read_ready)
+
+    @property
+    def security_level(self) -> int:
+        """The BT_SECURITY level currently requested on the socket."""
+        return self._security_level
+
+    def set_security_level(self, level: int) -> bool:
+        """
+        Raise the socket's BT_SECURITY level, never lowering it.
+
+        Returns True if the level was raised (so the caller can re-issue the
+        rejected operation), False if it was already at least ``level`` or the
+        kernel refused the change. Mirrors bluetoothd, which only escalates and
+        never downgrades a live ATT channel.
+        """
+        if level <= self._security_level:
+            return False
+        try:
+            _set_bt_security(self._sock, level)
+        except OSError as err:
+            _LOGGER.debug("Failed to raise L2CAP security to level %d: %s", level, err)
+            return False
+        self._security_level = level
+        return True
 
     @classmethod
     async def create_connection(
@@ -180,7 +208,7 @@ class L2CAPSocket:
         on_data: Callable[[bytes], None],
         on_close: Callable[[Exception | None], None],
         timeout: float,
-        security_level: int = BT_SECURITY_MEDIUM,
+        security_level: int = BT_SECURITY_LOW,
         sock: socket.socket | None = None,
     ) -> L2CAPSocket:
         """
@@ -188,8 +216,11 @@ class L2CAPSocket:
 
         ``source`` is the local adapter's public BD_ADDR (it selects which
         adapter the connection goes out of); ``address``/``address_type`` are the
-        peer. ``security_level`` requests kernel-driven LE encryption when bonded
-        keys exist; pass 0 to leave it unset. ``sock`` is injectable for testing.
+        peer. ``security_level`` is the initial BT_SECURITY level; it defaults to
+        ``BT_SECURITY_LOW`` (no encryption requested up front) to match
+        bluetoothd, which then escalates on demand via :meth:`set_security_level`
+        when the peer rejects an ATT operation. Pass 0 to leave it unset.
+        ``sock`` is injectable for testing.
         """
         loop = asyncio.get_running_loop()
         if sock is None:  # pragma: no cover - real socket needs a Linux adapter
@@ -203,7 +234,7 @@ class L2CAPSocket:
         except BaseException:
             sock.close()
             raise
-        return cls(sock, loop, on_data, on_close)
+        return cls(sock, loop, on_data, on_close, security_level=security_level)
 
     async def send(self, data: bytes) -> None:
         """

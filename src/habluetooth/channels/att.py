@@ -187,10 +187,16 @@ class ATTClient:
         self,
         send: Callable[[bytes], Awaitable[None]],
         on_disconnect: Callable[[Exception | None], None] | None = None,
+        escalate_security: Callable[[int], bool] | None = None,
     ) -> None:
         """Bind the client to a transport ``send`` coroutine."""
         self._send = send
         self._on_disconnect = on_disconnect
+        # Called with the ATT error code when a request is rejected for
+        # insufficient encryption/authentication; returns True if it raised the
+        # link security so the request can be re-issued once. Transport-agnostic:
+        # the codec knows nothing about how security is applied.
+        self._escalate_security = escalate_security
         self._txn_lock = asyncio.Lock()
         self._pending: asyncio.Future[bytes] | None = None
         self._mtu = DEFAULT_MTU
@@ -295,33 +301,53 @@ class ATTClient:
     async def _request(self, payload: bytes, expected_opcode: int) -> bytes:
         self._raise_if_closed()
         async with self._txn_lock:
-            fut: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
-            self._pending = fut
-            try:
-                await self._send(payload)
-                data = await asyncio.wait_for(fut, ATT_TIMEOUT)
-            except TimeoutError as exc:
-                # The timed-out request may still be in flight; ATT has no
-                # transaction id, so a late response could be matched to the
-                # next request. Poison the channel so nothing else is sent.
-                self._poison(exc)
-                msg = "ATT request timed out"
-                raise BleakError(msg) from exc
-            finally:
-                self._pending = None
-        opcode = data[0]
-        if opcode == ATT_ERROR_RSP:
-            if len(data) < 5:
-                msg = "truncated ATT error response"
-                raise BleakError(msg)
-            req_op, handle, err = _ERROR_RSP.unpack_from(data, 1)
-            raise ATTError(req_op, handle, err)
-        if opcode != expected_opcode:
-            msg = (
-                f"unexpected ATT opcode 0x{opcode:02x} (wanted 0x{expected_opcode:02x})"
-            )
-            raise BleakError(msg)
-        return data
+            # The lock is held across an escalation retry so no other request
+            # interleaves while the link security is being raised.
+            escalated = False
+            while True:
+                fut: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
+                self._pending = fut
+                try:
+                    await self._send(payload)
+                    data = await asyncio.wait_for(fut, ATT_TIMEOUT)
+                except TimeoutError as exc:
+                    # The timed-out request may still be in flight; ATT has no
+                    # transaction id, so a late response could be matched to the
+                    # next request. Poison the channel so nothing else is sent.
+                    self._poison(exc)
+                    msg = "ATT request timed out"
+                    raise BleakError(msg) from exc
+                finally:
+                    self._pending = None
+                opcode = data[0]
+                if opcode == ATT_ERROR_RSP:
+                    if len(data) < 5:
+                        msg = "truncated ATT error response"
+                        raise BleakError(msg)
+                    req_op, handle, err = _ERROR_RSP.unpack_from(data, 1)
+                    if (
+                        not escalated
+                        and err
+                        in (
+                            ATT_ERR_INSUFFICIENT_AUTHENTICATION,
+                            ATT_ERR_INSUFFICIENT_ENCRYPTION,
+                        )
+                        and self._escalate_security is not None
+                        and self._escalate_security(err)
+                    ):
+                        # The peer demanded stronger security; the transport
+                        # raised it, so re-issue the same request once. Matches
+                        # bluetoothd's one-shot retry on 0x05/0x0F.
+                        escalated = True
+                        continue
+                    raise ATTError(req_op, handle, err)
+                if opcode != expected_opcode:
+                    msg = (
+                        f"unexpected ATT opcode 0x{opcode:02x} "
+                        f"(wanted 0x{expected_opcode:02x})"
+                    )
+                    raise BleakError(msg)
+                return data
 
     async def exchange_mtu(self, mtu: int = PREFERRED_MTU) -> int:
         """Negotiate the ATT MTU and return the agreed value."""

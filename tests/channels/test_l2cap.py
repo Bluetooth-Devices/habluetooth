@@ -17,6 +17,9 @@ from bleak import BleakError
 from habluetooth.channels.l2cap import (
     AF_BLUETOOTH,
     ATT_CID,
+    BT_SECURITY_HIGH,
+    BT_SECURITY_LOW,
+    BT_SECURITY_MEDIUM,
     L2CAPSocket,
     _set_result_if_pending,
     _wait_connected,
@@ -140,6 +143,60 @@ async def test_create_connection_security_level(
         )
     sock.close()
     assert set_security.call_count == expected_calls
+
+
+async def test_default_security_level_is_low(
+    pair: tuple[socket.socket, socket.socket],
+) -> None:
+    """The connection starts at BT_SECURITY_LOW to match bluetoothd."""
+    left, _right = pair
+    sock = await _connect(left, on_data=lambda _d: None, on_close=lambda _e: None)
+    assert sock.security_level == BT_SECURITY_LOW
+    sock.close()
+
+
+async def test_set_security_level_raises_and_tracks(
+    pair: tuple[socket.socket, socket.socket],
+) -> None:
+    """Raising the level applies the socket option and records the new level."""
+    left, _right = pair
+    sock = await _connect(left, on_data=lambda _d: None, on_close=lambda _e: None)
+    with patch("habluetooth.channels.l2cap._set_bt_security") as set_security:
+        assert sock.set_security_level(BT_SECURITY_MEDIUM) is True
+    assert sock.security_level == BT_SECURITY_MEDIUM
+    set_security.assert_called_once_with(sock._sock, BT_SECURITY_MEDIUM)
+    sock.close()
+
+
+async def test_set_security_level_never_downgrades(
+    pair: tuple[socket.socket, socket.socket],
+) -> None:
+    """A level at or below the current one is a no-op and is not applied."""
+    left, _right = pair
+    sock = await _connect(left, on_data=lambda _d: None, on_close=lambda _e: None)
+    with patch("habluetooth.channels.l2cap._set_bt_security"):
+        sock.set_security_level(BT_SECURITY_HIGH)
+    with patch("habluetooth.channels.l2cap._set_bt_security") as set_security:
+        assert sock.set_security_level(BT_SECURITY_MEDIUM) is False  # lower
+        assert sock.set_security_level(BT_SECURITY_HIGH) is False  # equal
+        set_security.assert_not_called()
+    assert sock.security_level == BT_SECURITY_HIGH
+    sock.close()
+
+
+async def test_set_security_level_handles_oserror(
+    pair: tuple[socket.socket, socket.socket],
+) -> None:
+    """A kernel refusal leaves the tracked level unchanged and returns False."""
+    left, _right = pair
+    sock = await _connect(left, on_data=lambda _d: None, on_close=lambda _e: None)
+    with patch(
+        "habluetooth.channels.l2cap._set_bt_security",
+        side_effect=OSError(errno.EPERM, "denied"),
+    ):
+        assert sock.set_security_level(BT_SECURITY_MEDIUM) is False
+    assert sock.security_level == BT_SECURITY_LOW
+    sock.close()
 
 
 async def test_create_connection_immediate_success(

@@ -12,6 +12,7 @@ from bleak import BleakError
 from habluetooth.channels.att import (
     ATT_ERR_ATTRIBUTE_NOT_FOUND,
     ATT_ERR_INSUFFICIENT_AUTHENTICATION,
+    ATT_ERR_INSUFFICIENT_ENCRYPTION,
     ATT_ERR_INVALID_OFFSET,
     ATT_ERR_READ_NOT_PERMITTED,
     ATT_ERR_REQUEST_NOT_SUPPORTED,
@@ -48,12 +49,15 @@ class FakePeer:
     """A fake ATT peer that captures sent PDUs and auto-replies."""
 
     def __init__(
-        self, responder: Callable[[bytes], bytes | None] | None = None
+        self,
+        responder: Callable[[bytes], bytes | None] | None = None,
+        *,
+        escalate_security: Callable[[int], bool] | None = None,
     ) -> None:
         """Create the bound ATTClient and optionally script replies."""
         self.sent: list[bytes] = []
         self.responder = responder
-        self.client = ATTClient(self.send)
+        self.client = ATTClient(self.send, escalate_security=escalate_security)
 
     async def send(self, data: bytes) -> None:
         """Capture an outbound PDU and feed back the scripted response."""
@@ -90,6 +94,71 @@ async def test_properties_to_strings() -> None:
     # 0x12 sets the read and notify bits
     assert properties_to_strings(0x12) == ["read", "notify"]
     assert properties_to_strings(0x00) == []
+
+
+# -- security escalation --------------------------------------------------
+async def test_request_escalates_and_retries_on_encryption_error() -> None:
+    """An insufficient-encryption error raises security and re-sends once."""
+    attempts = 0
+
+    def responder(req: bytes) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return _att_error(req[0], 0x0005, ATT_ERR_INSUFFICIENT_ENCRYPTION)
+        return bytes([ATT_READ_RSP]) + b"\x01\x02"
+
+    seen: list[int] = []
+
+    def escalate(err: int) -> bool:
+        seen.append(err)
+        return True
+
+    peer = FakePeer(responder, escalate_security=escalate)
+    assert await peer.client.read(0x0005) == b"\x01\x02"
+    assert seen == [ATT_ERR_INSUFFICIENT_ENCRYPTION]
+    assert len(peer.sent) == 2  # original request plus one retry
+
+
+async def test_request_does_not_retry_when_escalation_declines() -> None:
+    """If security cannot be raised, the error is surfaced without a retry."""
+    peer = FakePeer(
+        lambda req: _att_error(req[0], 0x0001, ATT_ERR_INSUFFICIENT_AUTHENTICATION),
+        escalate_security=lambda _err: False,
+    )
+    with pytest.raises(ATTError) as exc_info:
+        await peer.client.read(0x0001)
+    assert exc_info.value.error_code == ATT_ERR_INSUFFICIENT_AUTHENTICATION
+    assert len(peer.sent) == 1  # not retried
+
+
+async def test_request_escalates_at_most_once() -> None:
+    """A persistent security error is surfaced after a single retry."""
+    seen: list[int] = []
+
+    def escalate(err: int) -> bool:
+        seen.append(err)
+        return True
+
+    peer = FakePeer(
+        lambda req: _att_error(req[0], 0x0001, ATT_ERR_INSUFFICIENT_ENCRYPTION),
+        escalate_security=escalate,
+    )
+    with pytest.raises(ATTError):
+        await peer.client.read(0x0001)
+    assert len(seen) == 1  # escalated once
+    assert len(peer.sent) == 2  # original request plus one retry
+
+
+async def test_request_without_escalation_surfaces_security_error() -> None:
+    """With no escalation hook, a security error propagates immediately."""
+    peer = FakePeer(
+        lambda req: _att_error(req[0], 0x0001, ATT_ERR_INSUFFICIENT_ENCRYPTION)
+    )
+    with pytest.raises(ATTError) as exc_info:
+        await peer.client.read(0x0001)
+    assert exc_info.value.error_code == ATT_ERR_INSUFFICIENT_ENCRYPTION
+    assert len(peer.sent) == 1
 
 
 # -- MTU ------------------------------------------------------------------
