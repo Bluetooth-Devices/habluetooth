@@ -574,19 +574,23 @@ class BluetoothManager:
             durably_gone = stale_seconds * _DURABLY_GONE_STALE_FACTOR
             if durably_gone > FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS:
                 durably_gone = FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
-            if (new.rssi or NO_RSSI_VALUE) >= (
+            comparable_or_stronger = (new.rssi or NO_RSSI_VALUE) >= (
                 old.rssi or NO_RSSI_VALUE
-            ) - ADV_RSSI_SWITCH_THRESHOLD or elapsed > durably_gone:
+            ) - ADV_RSSI_SWITCH_THRESHOLD
+            if comparable_or_stronger or elapsed > durably_gone:
                 if self._debug:
                     _LOGGER.debug(
                         "%s (%s): Switching from %s to %s (time elapsed:%s > stale"
-                        " seconds:%s)",
+                        " seconds:%s; comparable_or_stronger:%s, durably-gone"
+                        " threshold:%s)",
                         new.name,
                         new.address,
                         self._async_describe_source(old),
                         self._async_describe_source(new),
                         elapsed,
                         stale_seconds,
+                        comparable_or_stronger,
+                        durably_gone,
                     )
                 return False
         if (new.rssi or NO_RSSI_VALUE) - ADV_RSSI_SWITCH_THRESHOLD > (

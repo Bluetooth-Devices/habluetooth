@@ -79,7 +79,12 @@ cdef class BluetoothManager:
     # a direct vtable dispatch.
     cdef public object _auto_scheduler
 
-    @cython.locals(stale_seconds=double, elapsed=double, durably_gone=double)
+    @cython.locals(
+        stale_seconds=double,
+        elapsed=double,
+        durably_gone=double,
+        comparable_or_stronger=bint,
+    )
     cdef bint _prefer_previous_adv_from_different_source(
         self,
         BluetoothServiceInfoBleak old,

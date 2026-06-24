@@ -41,7 +41,7 @@ CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS: Final = 195
 # the owner). A materially weaker scanner must wait until the owner has been
 # silent for stale_seconds * this factor (capped at
 # FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS) before it can take over. This
-# stops a far, weaker proxy from stealing ownership on a single missed
+# stops a far weaker proxy from stealing ownership on a single missed
 # interval and surfacing a stale capture for scan-response-only sensors
 # (e.g. Govee H5074) seen by many active proxies, while still letting a
 # device that genuinely moved into weak-only coverage hand off.
