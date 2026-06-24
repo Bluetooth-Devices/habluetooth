@@ -32,14 +32,6 @@ if TYPE_CHECKING:
 
     from ..base_scanner import BaseHaScanner
 
-    PairingHandler = Callable[
-        [
-            "NewLongTermKey | AuthenticationFailed"
-            " | UserConfirmationRequest | UserPasskeyRequest"
-        ],
-        None,
-    ]
-
 _LOGGER = logging.getLogger(__name__)
 _int = int
 _bytes = bytes
@@ -194,8 +186,11 @@ class UserConfirmationRequest:
 
     address: str
     address_type: int
-    confirm_hint: int  # non-zero: the value should be shown to the user
-    value: int  # the 6-digit numeric comparison value
+    # Per the mgmt API: when set, the value is not relevant and the user should
+    # just confirm the pairing (yes/no, no number to show); when 0, ``value``
+    # holds the number to display for comparison.
+    confirm_hint: int
+    value: int  # the 6-digit numeric comparison value (when confirm_hint is 0)
 
 
 @dataclass(slots=True, frozen=True)
@@ -204,6 +199,16 @@ class UserPasskeyRequest:
 
     address: str
     address_type: int
+
+
+if TYPE_CHECKING:
+    PairingEvent = (
+        NewLongTermKey
+        | AuthenticationFailed
+        | UserConfirmationRequest
+        | UserPasskeyRequest
+    )
+    PairingHandler = Callable[[PairingEvent], None]
 
 
 def _mgmt_address_bytes(address: str) -> bytes | None:
@@ -521,12 +526,7 @@ class BluetoothMGMTProtocol:
         self._dispatch_pairing_event(handler, UserPasskeyRequest(address, param[6]))
 
     def _dispatch_pairing_event(
-        self,
-        handler: PairingHandler,
-        event: NewLongTermKey
-        | AuthenticationFailed
-        | UserConfirmationRequest
-        | UserPasskeyRequest,
+        self, handler: PairingHandler, event: PairingEvent
     ) -> None:
         """Call a pairing handler, isolating it from the socket read loop."""
         # data_received runs in the read loop, so a raising handler must not tear
@@ -993,7 +993,16 @@ class MGMTBluetoothCtl:
         if addr is None:
             _LOGGER.error("hci%u: invalid address for reply: %s", adapter_idx, address)
             return False
-        result = await self._send_command_await(opcode, adapter_idx, pack(addr, *extra))
+        try:
+            # An out-of-range address_type or passkey raises struct.error; keep
+            # that a soft failure rather than letting it escape the command path.
+            payload = pack(addr, *extra)
+        except struct_error:
+            _LOGGER.exception(
+                "hci%u: invalid pairing reply parameters for %s", adapter_idx, address
+            )
+            return False
+        result = await self._send_command_await(opcode, adapter_idx, payload)
         if result is not None and result[0] == MGMT_STATUS_SUCCESS:
             return True
         _LOGGER.warning(

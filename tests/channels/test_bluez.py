@@ -2457,3 +2457,15 @@ def test_user_request_without_handler_is_dropped(
         + len(param).to_bytes(2, "little")
     )
     protocol.data_received(header + param)  # no handlers -> no-op
+
+
+@pytest.mark.asyncio
+async def test_user_reply_rejects_out_of_range_passkey() -> None:
+    """A passkey that does not fit a uint32 is a soft failure, not a struct.error."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    assert (
+        await mgmt_ctl.user_passkey_reply(0, _PEER_STR, BDADDR_LE_PUBLIC, 2**32)
+        is False
+    )
+    mock_protocol._write_to_socket.assert_not_called()
