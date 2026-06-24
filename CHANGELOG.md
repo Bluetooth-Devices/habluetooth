@@ -1,5 +1,16 @@
 # Changelog
 
+## v6.16.0 (2026-06-24)
+
+### Features
+
+
+- Add mgmt load long term keys for bond restore ([`b108fb9`](https://github.com/Bluetooth-Devices/habluetooth/commit/b108fb914e6b1d00a312d2b9f9b43820af4e3383))
+
+
+- Add last active window timing to diagnostics ([`b4c4769`](https://github.com/Bluetooth-Devices/habluetooth/commit/b4c47696d2b59b85edc443a5280c80e707b507b6))
+
+
 ## v6.15.0 (2026-06-23)
 
 ### Features
