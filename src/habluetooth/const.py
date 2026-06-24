@@ -57,6 +57,16 @@ DURABLY_GONE_STALE_FACTOR: Final = 2.5
 # unaffected, and below typical close-proxy readings.
 STRONG_OWNER_STALE_RSSI: Final = -70
 
+# Smoothing factor (EWMA alpha) for the per-(address, source) advertisement
+# RSSI used to choose a device's owning scanner. Ownership switches on the
+# smoothed value rather than a single sample, so a stationary device whose
+# RSSI to a fixed proxy fades by multipath does not flap between proxies on
+# momentary spikes; a genuine move still crosses once the average shifts.
+# Smaller = steadier but slower to follow a real move. At 0.3 a single spike
+# moves the smoothed value ~30% of the gap, so even a 30 dB spike shifts it
+# under the 16 dB switch threshold.
+RSSI_SMOOTHING_FACTOR: Final = 0.3
+
 
 # We must recover before we hit the 180s mark
 # where the device is removed from the stack

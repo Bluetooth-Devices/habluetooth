@@ -11,6 +11,7 @@ cdef double TRACKER_BUFFERING_WOBBLE_SECONDS
 cdef double FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
 cdef double _DURABLY_GONE_STALE_FACTOR
 cdef int _STRONG_OWNER_STALE_RSSI
+cdef double _RSSI_SMOOTHING_FACTOR
 cdef object FILTER_UUIDS
 cdef object AdvertisementData
 cdef object BLEDevice
@@ -49,6 +50,7 @@ cdef class BluetoothManager:
     cdef public set _bleak_callbacks
     cdef public dict _all_history
     cdef public dict _connectable_history
+    cdef public dict _smoothed_rssi
     cdef public dict _name_cache
     cdef public set _non_connectable_scanners
     cdef public set _connectable_scanners
@@ -86,18 +88,23 @@ cdef class BluetoothManager:
         durably_gone=double,
         comparable_or_stronger=bint,
         owner_strong=bint,
+        old_rssi=double,
     )
     cdef bint _prefer_previous_adv_from_different_source(
         self,
         BluetoothServiceInfoBleak old,
-        BluetoothServiceInfoBleak new
+        BluetoothServiceInfoBleak new,
+        dict smoothed,
+        double new_rssi
     )
 
     @cython.locals(scanner=BaseHaScanner)
     cdef bint _should_keep_previous_adv(
         self,
         BluetoothServiceInfoBleak old_info,
-        BluetoothServiceInfoBleak new_info
+        BluetoothServiceInfoBleak new_info,
+        dict smoothed,
+        double new_rssi
     )
 
     @cython.locals(
@@ -126,6 +133,11 @@ cdef class BluetoothManager:
         bleak_callback=BleakCallback,
         cached_name=str,
         auto_scheduler=AutoScanScheduler,
+        smoothed_bucket=dict,
+        prev_smoothed=object,
+        prev_double=double,
+        new_smoothed=double,
+        rssi=int,
     )
     cdef void _scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
 
