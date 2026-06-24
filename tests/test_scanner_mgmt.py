@@ -391,6 +391,42 @@ async def test_restart_does_not_stack_monitor_on_failed_removal(
     await scanner.async_stop()
 
 
+async def test_restart_does_not_resurrect_a_stopped_scanner(
+    use_mgmt: FakeMgmt,
+) -> None:
+    """A restart queued before a stop must not re-issue discovery afterwards."""
+    scanner = _scanner(BluetoothScanningMode.ACTIVE)
+    scanner.async_setup()
+    await scanner.async_start()
+    await scanner.async_stop()
+    use_mgmt.started.clear()
+    use_mgmt.stopped.clear()
+    # Simulates the queued restart task running after the stop released the lock.
+    await scanner._async_restart()
+    assert use_mgmt.started == []  # discovery was not restarted
+    assert scanner.scanning is False
+
+
+async def test_unsetup_cancels_pending_background_task(use_mgmt: FakeMgmt) -> None:
+    """Teardown cancels an in-flight restart so it cannot restart discovery."""
+    scanner = _scanner(BluetoothScanningMode.ACTIVE)
+    unsetup = scanner.async_setup()
+    await scanner.async_start()
+    started = asyncio.Event()
+
+    async def _blocker() -> None:
+        started.set()
+        await asyncio.sleep(3600)
+
+    scanner._create_background_task(_blocker())
+    await started.wait()
+    task = next(iter(scanner._background_tasks))
+    unsetup()
+    await asyncio.gather(task, return_exceptions=True)
+    assert task.cancelled()
+    await scanner.async_stop()
+
+
 async def test_background_task_failure_is_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

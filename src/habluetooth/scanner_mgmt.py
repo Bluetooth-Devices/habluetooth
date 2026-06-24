@@ -119,6 +119,11 @@ class HaScannerMgmt(BaseHaScanner):
         self.connectable = True
         self.scanning = False
         self._start_stop_lock = asyncio.Lock()
+        # Whether discovery is meant to be running. A watchdog restart can be
+        # queued on the start/stop lock just before a stop takes it; without this
+        # the restart would run after the stop and resurrect discovery, so the
+        # restart consults it before re-issuing the command.
+        self._started = False
         self._monitor_handle: int | None = None
         self._connections: set[str] = set()
         self._background_tasks: set[asyncio.Task[Any]] = set()
@@ -136,7 +141,12 @@ class HaScannerMgmt(BaseHaScanner):
     def _unsetup(self) -> None:
         """Tear down the expiry timer and the watchdog."""
         super()._unsetup()
+        self._started = False
         self._async_stop_scanner_watchdog()
+        # Cancel any in-flight restart so it cannot re-issue discovery after
+        # teardown; the done callback drops each task from the set.
+        for task in self._background_tasks:
+            task.cancel()
 
     async def async_start(self) -> None:
         """Start mgmt discovery for this adapter."""
@@ -165,12 +175,14 @@ class HaScannerMgmt(BaseHaScanner):
         # HaScanner.
         self.set_current_mode(mode)
         self.scanning = True
+        self._started = True
         self._async_setup_scanner_watchdog()
         self._on_start_success()
 
     async def async_stop(self) -> None:
         """Stop mgmt discovery and the watchdog."""
         async with self._start_stop_lock:
+            self._started = False
             self._async_stop_scanner_watchdog()
             await self._async_stop_discovery()
             self.scanning = False
@@ -216,6 +228,13 @@ class HaScannerMgmt(BaseHaScanner):
     async def _async_restart(self) -> None:
         """Stop and start discovery again under the start/stop lock."""
         async with self._start_stop_lock:
+            if not self._started:
+                # A stop ran while this restart was queued on the lock; do not
+                # resurrect discovery that was deliberately stopped.
+                _LOGGER.debug(
+                    "%s: stopped while restart was pending, skipping", self.name
+                )
+                return
             await self._async_stop_discovery()
             if self._monitor_handle is not None:
                 # The passive monitor could not be removed; do not re-add one or
