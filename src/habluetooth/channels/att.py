@@ -11,7 +11,7 @@ It is deliberately transport-agnostic. Outbound PDUs are written through the
 ``send`` coroutine supplied at construction, and inbound PDUs are delivered by
 the transport via :meth:`ATTClient.data_received`. Nothing here opens a socket,
 so the whole module is unit-testable without Bluetooth hardware. The L2CAP
-socket that feeds it lands in a later change.
+transport that feeds it is :class:`habluetooth.channels.l2cap.L2CAPSocket`.
 
 ATT is strictly sequential: at most one request is outstanding at a time, so a
 single transaction lock plus one pending future is sufficient. Notifications

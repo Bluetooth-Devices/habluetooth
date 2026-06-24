@@ -1032,6 +1032,12 @@ class MGMTBluetoothCtl:
 
         Replaces the controller's LTK list (an empty list clears it) so the
         kernel can re-encrypt links to already-bonded peers without re-pairing.
+
+        The mgmt API has no add-one primitive, so this is the controller's whole
+        list: if another mgmt agent (e.g. bluetoothd) manages the same adapter,
+        loading our keys clears the bonds it loaded. The DBus-free path assumes
+        it owns the adapter, so this is a documented coexistence limitation, not
+        something the caller can avoid here.
         """
         records: list[bytes] = []
         for key in keys:
