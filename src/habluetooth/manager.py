@@ -46,6 +46,7 @@ from .const import (
 )
 from .models import (
     BluetoothReachabilityIntent,
+    BluetoothScanningMode,
     BluetoothServiceInfoBleak,
     HaBluetoothSlotAllocations,
     HaScannerModeChange,
@@ -149,6 +150,7 @@ class BluetoothManager:
         "_sources",
         "_subclass_discover_info",
         "_unavailable_callbacks",
+        "_warned_passive_active_scan",
         "has_advertising_side_channel",
         "shutdown",
         "slot_manager",
@@ -215,6 +217,10 @@ class BluetoothManager:
         self._scanner_mode_change_callbacks: dict[
             str | None, set[Callable[[HaScannerModeChange], None]]
         ] = {}
+        # Sources of passive-only scanners we've already warned about
+        # while active scans are requested; deduped so one passive proxy
+        # behind many devices warns once.
+        self._warned_passive_active_scan: set[str] = set()
         self._subclass_discover_info = self._discover_service_info
         self._mgmt_ctl: MGMTBluetoothCtl | None = None
         self._auto_scheduler = AutoScanScheduler(self)
@@ -1175,6 +1181,7 @@ class BluetoothManager:
         scanners.discard(scanner)
         scanner._clear_connection_history()
         self._sources.pop(scanner.source, None)
+        self._warned_passive_active_scan.discard(scanner.source)
         self._adapter_sources.pop(scanner.adapter, None)
         self._allocations.pop(scanner.source, None)
         if connection_slots:
@@ -1210,6 +1217,9 @@ class BluetoothManager:
                 self.slot_manager.get_allocations(scanner.adapter)
             )
         self._auto_scheduler.add_scanner(scanner)
+        # Covers a scanner registered already in passive mode (no later
+        # set_requested_mode to trigger scanner_mode_changed).
+        self._async_warn_if_passive_with_active_scan(scanner)
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.ADDED)
         return partial(
             self._async_unregister_scanner_internal, scanners, scanner, connection_slots
@@ -1286,6 +1296,10 @@ class BluetoothManager:
         normalized = address.upper() if ":" in address else address
         request = ActiveScanRequest(normalized, scan_interval, scan_duration)
         self._auto_scheduler.add_request(request)
+        # An active scan now exists: warn about any passive-only scanner
+        # that could own such a device and silently starve it.
+        for scanner in self._sources.values():
+            self._async_warn_if_passive_with_active_scan(scanner)
         return partial(self._auto_scheduler.remove_request, request)
 
     async def async_request_active_scan(self, duration: float | None = None) -> None:
@@ -1447,6 +1461,7 @@ class BluetoothManager:
 
     def scanner_mode_changed(self, scanner: BaseHaScanner) -> None:
         """Notify callbacks that a scanner's mode has changed."""
+        self._async_warn_if_passive_with_active_scan(scanner)
         self._dispatch_source_callbacks(
             self._scanner_mode_change_callbacks,
             scanner.source,
@@ -1456,4 +1471,34 @@ class BluetoothManager:
                 current_mode=scanner.current_mode,
             ),
             "scanner mode change callback",
+        )
+
+    def _async_warn_if_passive_with_active_scan(self, scanner: BaseHaScanner) -> None:
+        """
+        Warn once if ``scanner`` is passive-only while active scans are wanted.
+
+        A passive-only scanner never runs an active window, so if it
+        becomes the closest scanner for a device that only answers on
+        its scan response (and an integration has asked for active
+        scans on that device) the device's data may be missing. Deduped
+        per source; the entry is dropped on unregister or when the
+        scanner leaves passive mode so a later relapse warns again.
+        """
+        source = scanner.source
+        if scanner.requested_mode is not BluetoothScanningMode.PASSIVE:
+            self._warned_passive_active_scan.discard(source)
+            return
+        if (
+            source in self._warned_passive_active_scan
+            or not self._auto_scheduler._requests_by_address
+        ):
+            return
+        self._warned_passive_active_scan.add(source)
+        _LOGGER.warning(
+            "Scanner %s is in passive-only mode but active scans have been "
+            "requested for one or more devices; if it becomes the closest "
+            "scanner for such a device the device will not be actively "
+            "scanned and its data may be incomplete or missing. Set this "
+            "scanner to active or auto",
+            scanner.name,
         )
