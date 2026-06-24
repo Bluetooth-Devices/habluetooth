@@ -6,6 +6,7 @@
 
 installation
 usage
+home_assistant_integration
 bond_persistence
 ```
 
