@@ -21,9 +21,11 @@ from habluetooth.channels.bluez import (
     MGMT_OP_STOP_DISCOVERY,
     MGMT_OP_UNPAIR_DEVICE,
     SCAN_TYPE_LE,
+    AuthenticationFailed,
     BluetoothMGMTProtocol,
     LongTermKey,
     MGMTBluetoothCtl,
+    NewLongTermKey,
     bytes_mac_to_str,
     make_bluez_details,
 )
@@ -97,7 +99,7 @@ def test_connection_made(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
     protocol.connection_made(mock_transport)
 
@@ -117,7 +119,7 @@ def test_connection_lost(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
     protocol.connection_made(mock_transport)
 
@@ -140,7 +142,7 @@ def test_connection_lost_no_exception(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
     protocol.connection_made(mock_transport)
 
@@ -160,7 +162,7 @@ def test_data_received_device_found(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a DEVICE_FOUND event (event_code 0x0012). Header layout is
@@ -204,7 +206,7 @@ def test_data_received_adv_monitor_device_found(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create an ADV_MONITOR_DEVICE_FOUND event (event_code 0x002F)
@@ -248,7 +250,7 @@ def test_data_received_cmd_complete_success(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a CMD_COMPLETE event for LOAD_CONN_PARAM
@@ -276,7 +278,7 @@ def test_data_received_cmd_complete_failure(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a CMD_COMPLETE event with failure
@@ -303,7 +305,7 @@ def test_data_received_cmd_status(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a CMD_STATUS event
@@ -330,7 +332,7 @@ def test_data_received_partial_data(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a DEVICE_FOUND event but send it in chunks
@@ -361,7 +363,7 @@ def test_data_received_partial_data_split_in_params(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a DEVICE_FOUND event
@@ -399,7 +401,7 @@ def test_data_received_multiple_small_chunks(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a DEVICE_FOUND event
@@ -433,7 +435,7 @@ def test_data_received_multiple_events_in_one_chunk(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create two events: a DEVICE_FOUND and a CMD_COMPLETE
@@ -466,7 +468,7 @@ def test_data_received_partial_then_multiple_events(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # First event (DEVICE_FOUND)
@@ -527,7 +529,7 @@ def test_data_received_cmd_complete_different_opcode(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a CMD_COMPLETE event for a different opcode (e.g., 0x0004 - Add UUID)
@@ -555,7 +557,7 @@ def test_data_received_cmd_status_different_opcode(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a CMD_STATUS event for a different opcode
@@ -583,7 +585,7 @@ def test_data_received_cmd_complete_short_params(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a CMD_COMPLETE event with param_len < 3
@@ -610,7 +612,7 @@ def test_data_received_cmd_status_param_len_1(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a CMD_STATUS event with param_len = 1
@@ -637,7 +639,7 @@ def test_data_received_cmd_complete_param_len_0(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a CMD_COMPLETE event with param_len = 0
@@ -660,7 +662,7 @@ def test_data_received_unknown_event(event_loop: asyncio.AbstractEventLoop) -> N
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create an unknown event
@@ -684,7 +686,7 @@ def test_data_received_no_scanner_for_controller(
     is_shutting_down = Mock(return_value=False)
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Create a DEVICE_FOUND event for controller 0
@@ -1027,7 +1029,7 @@ def test_kernel_bug_workaround_send_returns_zero(
     mock_socket = Mock()
     mock_socket.send = Mock(return_value=0)
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_socket
+        future, scanners, on_connection_lost, is_shutting_down, mock_socket, {}
     )
 
     # Send some data
@@ -1053,7 +1055,7 @@ def test_kernel_bug_workaround_send_raises_exception(
     mock_socket = Mock()
     mock_socket.send = Mock(side_effect=OSError("Socket error"))
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_socket
+        future, scanners, on_connection_lost, is_shutting_down, mock_socket, {}
     )
 
     # Send some data and expect the exception to be re-raised
@@ -1253,7 +1255,7 @@ async def test_command_response_context_manager() -> None:
 
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     # Test successful command response
@@ -1292,7 +1294,7 @@ async def test_command_response_cleanup_on_exception() -> None:
 
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
@@ -1321,7 +1323,7 @@ async def test_get_connections_response_handling() -> None:
 
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
@@ -1355,7 +1357,7 @@ async def test_get_connections_response_with_data() -> None:
 
     mock_sock = Mock()
     protocol = BluetoothMGMTProtocol(
-        future, scanners, on_connection_lost, is_shutting_down, mock_sock
+        future, scanners, on_connection_lost, is_shutting_down, mock_sock, {}
     )
 
     opcode = 0x0015  # MGMT_OP_GET_CONNECTIONS
@@ -1787,7 +1789,7 @@ async def test_command_response_skips_already_resolved_future() -> None:
     future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     future.set_result(None)
     protocol = BluetoothMGMTProtocol(
-        future, {}, Mock(), Mock(return_value=False), Mock()
+        future, {}, Mock(), Mock(return_value=False), Mock(), {}
     )
     async with protocol.command_response(MGMT_OP_START_DISCOVERY, 0) as fut:
         # Resolve early, then deliver a late response for the same command.
@@ -1808,7 +1810,7 @@ async def test_command_response_for_unregistered_command_is_ignored() -> None:
     future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     future.set_result(None)
     protocol = BluetoothMGMTProtocol(
-        future, {}, Mock(), Mock(return_value=False), Mock()
+        future, {}, Mock(), Mock(return_value=False), Mock(), {}
     )
     # No command_response registered for this opcode/controller: must not raise.
     protocol.data_received(
@@ -1891,7 +1893,7 @@ async def test_per_controller_command_response_isolation() -> None:
     future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     future.set_result(None)
     protocol = BluetoothMGMTProtocol(
-        future, {}, Mock(), Mock(return_value=False), Mock()
+        future, {}, Mock(), Mock(return_value=False), Mock(), {}
     )
 
     async with (
@@ -2132,3 +2134,141 @@ async def test_load_long_term_keys_rejects_out_of_range_field() -> None:
     )  # key_type 300 does not fit in a byte
     assert await mgmt_ctl.load_long_term_keys(0, [bad]) is False
     mock_protocol._write_to_socket.assert_not_called()
+
+
+# -- pairing event capture ------------------------------------------------
+def _new_ltk_frame(
+    *,
+    store_hint: int = 1,
+    address: bytes = b"\xff\xee\xdd\xcc\xbb\xaa",  # little-endian AA:BB:..:FF
+    controller_idx: int = 0,
+) -> bytes:
+    ltk_info = (
+        address
+        + bytes([0x01, 0x05, 0x00, 0x10])  # type, key_type, central, enc_size
+        + (0x1234).to_bytes(2, "little")  # ediv
+        + bytes(range(8))  # rand
+        + bytes(range(16))  # value
+    )
+    param = bytes([store_hint]) + ltk_info
+    header = (
+        (0x000A).to_bytes(2, "little")
+        + controller_idx.to_bytes(2, "little")
+        + len(param).to_bytes(2, "little")
+    )
+    return header + param
+
+
+def _protocol_with_handlers(
+    event_loop: asyncio.AbstractEventLoop,
+    handlers: dict[tuple[int, str], Callable[..., None]],
+) -> BluetoothMGMTProtocol:
+    return BluetoothMGMTProtocol(
+        event_loop.create_future(),
+        {},
+        Mock(),
+        Mock(return_value=False),
+        Mock(),
+        handlers,
+    )
+
+
+def test_data_received_new_long_term_key(
+    event_loop: asyncio.AbstractEventLoop,
+) -> None:
+    """A NEW_LONG_TERM_KEY event is decoded and routed to its handler."""
+    received: list[object] = []
+    handlers = {(0, "AA:BB:CC:DD:EE:FF"): received.append}
+    protocol = _protocol_with_handlers(event_loop, handlers)
+
+    protocol.data_received(_new_ltk_frame())
+
+    assert len(received) == 1
+    event = received[0]
+    assert isinstance(event, NewLongTermKey)
+    assert event.store_hint == 1
+    key = event.key
+    assert key == LongTermKey(
+        address="AA:BB:CC:DD:EE:FF",
+        address_type=0x01,
+        key_type=0x05,
+        central=False,
+        encryption_size=0x10,
+        ediv=0x1234,
+        rand=bytes(range(8)),
+        value=bytes(range(16)),
+    )
+
+
+def test_data_received_auth_failed(event_loop: asyncio.AbstractEventLoop) -> None:
+    """An AUTHENTICATION_FAILED event is decoded and routed to its handler."""
+    received: list[object] = []
+    handlers = {(0, "AA:BB:CC:DD:EE:FF"): received.append}
+    protocol = _protocol_with_handlers(event_loop, handlers)
+
+    param = b"\xff\xee\xdd\xcc\xbb\xaa" + bytes([0x01, 0x05])  # type, status
+    header = (
+        (0x0011).to_bytes(2, "little") + b"\x00\x00" + len(param).to_bytes(2, "little")
+    )
+    protocol.data_received(header + param)
+
+    assert received == [AuthenticationFailed("AA:BB:CC:DD:EE:FF", 0x01, 0x05)]
+
+
+def test_pairing_event_without_handler_is_dropped(
+    event_loop: asyncio.AbstractEventLoop,
+) -> None:
+    """An event for an unregistered peer is dropped without error."""
+    protocol = _protocol_with_handlers(event_loop, {})
+    protocol.data_received(_new_ltk_frame())  # no handlers -> no-op
+    auth_param = b"\xff\xee\xdd\xcc\xbb\xaa" + bytes([0x01, 0x05])
+    auth_header = (
+        (0x0011).to_bytes(2, "little")
+        + b"\x00\x00"
+        + len(auth_param).to_bytes(2, "little")
+    )
+    protocol.data_received(auth_header + auth_param)  # no handlers -> no-op
+
+
+def test_truncated_new_long_term_key_is_dropped(
+    event_loop: asyncio.AbstractEventLoop,
+) -> None:
+    """A NEW_LONG_TERM_KEY event too short to hold a key is dropped."""
+    received: list[object] = []
+    handlers = {(0, "AA:BB:CC:DD:EE:FF"): received.append}
+    protocol = _protocol_with_handlers(event_loop, handlers)
+
+    param = b"\x01\xff\xee"  # store_hint + 2 bytes (well short of 1 + 36)
+    header = (
+        (0x000A).to_bytes(2, "little") + b"\x00\x00" + len(param).to_bytes(2, "little")
+    )
+    protocol.data_received(header + param)
+    assert received == []
+
+
+def test_truncated_auth_failed_is_dropped(
+    event_loop: asyncio.AbstractEventLoop,
+) -> None:
+    """An AUTHENTICATION_FAILED event shorter than 8 bytes is dropped."""
+    received: list[object] = []
+    handlers = {(0, "AA:BB:CC:DD:EE:FF"): received.append}
+    protocol = _protocol_with_handlers(event_loop, handlers)
+
+    param = b"\xff\xee\xdd"  # 3 bytes, short of 8
+    header = (
+        (0x0011).to_bytes(2, "little") + b"\x00\x00" + len(param).to_bytes(2, "little")
+    )
+    protocol.data_received(header + param)
+    assert received == []
+
+
+@pytest.mark.asyncio
+async def test_register_pairing_handler_normalizes_and_unregisters() -> None:
+    """register_pairing_handler normalizes the address and unregisters cleanly."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+    handler = Mock()
+    unregister = mgmt_ctl.register_pairing_handler(0, "aa:bb:cc:dd:ee:ff", handler)
+    assert mgmt_ctl._pairing_handlers[(0, "AA:BB:CC:DD:EE:FF")] is handler
+    unregister()
+    assert (0, "AA:BB:CC:DD:EE:FF") not in mgmt_ctl._pairing_handlers
+    unregister()  # idempotent, does not raise

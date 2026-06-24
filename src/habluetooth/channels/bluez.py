@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
     from ..base_scanner import BaseHaScanner
 
+    PairingHandler = Callable[["NewLongTermKey | AuthenticationFailed"], None]
+
 _LOGGER = logging.getLogger(__name__)
 _int = int
 _bytes = bytes
@@ -61,6 +63,8 @@ IO_CAPABILITY_NO_INPUT_NO_OUTPUT = 0x03
 # Management events
 MGMT_EV_CMD_COMPLETE = 0x0001
 MGMT_EV_CMD_STATUS = 0x0002
+MGMT_EV_NEW_LONG_TERM_KEY = 0x000A
+MGMT_EV_AUTH_FAILED = 0x0011
 
 # Discovery address-type bitmask: BR/EDR (0x01) | LE Public (0x02) | LE Random (0x04).
 # We only scan for LE devices, so we combine the two LE bits.
@@ -101,8 +105,14 @@ LTK_COUNT_STRUCT = Struct("<H")
 LTK_COUNT_PACK = LTK_COUNT_STRUCT.pack
 LTK_INFO_STRUCT = Struct("<6sBBBBH8s16s")
 LTK_INFO_PACK = LTK_INFO_STRUCT.pack
+LTK_INFO_UNPACK = LTK_INFO_STRUCT.unpack
+LTK_INFO_SIZE = LTK_INFO_STRUCT.size  # 36
 _LTK_RAND_LEN = 8
 _LTK_VALUE_LEN = 16
+# NEW_LONG_TERM_KEY event = store_hint (1) + an mgmt_ltk_info record.
+_NEW_LTK_EV_SIZE = 1 + LTK_INFO_SIZE
+# AUTH_FAILED event = bdaddr (6) + address type (1) + status (1).
+_AUTH_FAILED_EV_SIZE = 8
 
 CONNECTION_ERRORS = (
     BluetoothSocketError,
@@ -137,6 +147,23 @@ class LongTermKey:
     ediv: int
     rand: bytes
     value: bytes
+
+
+@dataclass(slots=True, frozen=True)
+class NewLongTermKey:
+    """A NEW_LONG_TERM_KEY event: a freshly bonded key to persist."""
+
+    store_hint: int  # non-zero means the kernel suggests persisting the key
+    key: LongTermKey
+
+
+@dataclass(slots=True, frozen=True)
+class AuthenticationFailed:
+    """An AUTHENTICATION_FAILED event: pairing did not complete."""
+
+    address: str
+    address_type: int
+    status: int
 
 
 def _mgmt_address_bytes(address: str) -> bytes | None:
@@ -183,6 +210,7 @@ class BluetoothMGMTProtocol:
         on_connection_lost: Callable[[], None],
         is_shutting_down: Callable[[], bool],
         sock: socket.socket,
+        pairing_handlers: dict[tuple[int, str], PairingHandler],
     ) -> None:
         """Initialize the protocol."""
         self.transport: asyncio.Transport | None = None
@@ -191,6 +219,10 @@ class BluetoothMGMTProtocol:
         self._buffer_len = 0
         self._pos = 0
         self._scanners = scanners
+        # Shared by reference with MGMTBluetoothCtl; keyed by
+        # (controller_idx, peer address) so pairing events route to the client
+        # that registered for them.
+        self._pairing_handlers = pairing_handlers
         self._on_connection_lost = on_connection_lost
         self._is_shutting_down = is_shutting_down
         # Keyed by (opcode, controller_idx) so the same command can be in flight
@@ -341,6 +373,14 @@ class BluetoothMGMTProtocol:
                             future.set_result((status, response_data))
                 self._remove_from_buffer()
                 continue
+            elif event_code == MGMT_EV_NEW_LONG_TERM_KEY:
+                self._handle_new_long_term_key(controller_idx, header[6 : self._pos])
+                self._remove_from_buffer()
+                continue
+            elif event_code == MGMT_EV_AUTH_FAILED:
+                self._handle_auth_failed(controller_idx, header[6 : self._pos])
+                self._remove_from_buffer()
+                continue
             else:
                 self._remove_from_buffer()
                 continue
@@ -367,6 +407,44 @@ class BluetoothMGMTProtocol:
                     make_bluez_details(address_str, scanner.adapter),
                     monotonic_time_coarse(),
                 )
+
+    def _handle_new_long_term_key(self, controller_idx: _int, param: _bytes) -> None:
+        """Decode a NEW_LONG_TERM_KEY event and route it to its handler."""
+        if len(param) < _NEW_LTK_EV_SIZE:
+            _LOGGER.debug("hci%u: truncated NEW_LONG_TERM_KEY event", controller_idx)
+            return
+        store_hint = param[0]
+        addr, addr_type, key_type, central, enc_size, ediv, rand, value = (
+            LTK_INFO_UNPACK(param[1 : 1 + LTK_INFO_SIZE])
+        )
+        address = bytes_mac_to_str(addr)
+        if (handler := self._pairing_handlers.get((controller_idx, address))) is None:
+            return
+        handler(
+            NewLongTermKey(
+                store_hint,
+                LongTermKey(
+                    address,
+                    addr_type,
+                    key_type,
+                    bool(central),
+                    enc_size,
+                    ediv,
+                    rand,
+                    value,
+                ),
+            )
+        )
+
+    def _handle_auth_failed(self, controller_idx: _int, param: _bytes) -> None:
+        """Decode an AUTHENTICATION_FAILED event and route it to its handler."""
+        if len(param) < _AUTH_FAILED_EV_SIZE:
+            _LOGGER.debug("hci%u: truncated AUTH_FAILED event", controller_idx)
+            return
+        address = bytes_mac_to_str(param[0:6])
+        if (handler := self._pairing_handlers.get((controller_idx, address))) is None:
+            return
+        handler(AuthenticationFailed(address, param[6], param[7]))
 
     def _handle_load_conn_param_response(
         self, status: _int, controller_idx: _int
@@ -406,6 +484,10 @@ class MGMTBluetoothCtl:
         self.protocol: BluetoothMGMTProtocol | None = None
         self.sock: socket.socket | None = None
         self.scanners = scanners
+        # Pairing-event handlers keyed by (controller_idx, peer address); shared
+        # by reference with each protocol instance so registrations survive a
+        # socket reconnect.
+        self._pairing_handlers: dict[tuple[int, str], PairingHandler] = {}
         self._reconnect_task: asyncio.Task[None] | None = None
         self._on_connection_lost_future: asyncio.Future[None] | None = None
         self._shutting_down = False
@@ -467,6 +549,7 @@ class MGMTBluetoothCtl:
                         self._on_connection_lost,
                         lambda: self._shutting_down,
                         self.sock,
+                        self._pairing_handlers,
                     ),
                     None,
                     None,
@@ -831,6 +914,25 @@ class MGMTBluetoothCtl:
             "no response" if result is None else f"status={result[0]:#x}",
         )
         return False
+
+    def register_pairing_handler(
+        self, adapter_idx: int, address: str, handler: PairingHandler
+    ) -> Callable[[], None]:
+        """
+        Route NEW_LONG_TERM_KEY / AUTHENTICATION_FAILED events for a peer.
+
+        ``handler`` is called with a :class:`NewLongTermKey` or
+        :class:`AuthenticationFailed` for events on ``adapter_idx`` from
+        ``address``. Returns a callback that unregisters it.
+        """
+        key = (adapter_idx, address.upper())
+        self._pairing_handlers[key] = handler
+
+        def _unregister() -> None:
+            if self._pairing_handlers.get(key) is handler:
+                del self._pairing_handlers[key]
+
+        return _unregister
 
     def load_conn_params(
         self,
