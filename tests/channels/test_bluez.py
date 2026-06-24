@@ -2120,3 +2120,15 @@ async def test_load_long_term_keys_rejects_malformed_key(key: LongTermKey) -> No
     mock_protocol.command_response = _stub_command_response(0x00)
     assert await mgmt_ctl.load_long_term_keys(0, [key]) is False
     mock_protocol._write_to_socket.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_load_long_term_keys_rejects_out_of_range_field() -> None:
+    """An out-of-range integer field is a soft failure, not a struct.error."""
+    mgmt_ctl, mock_protocol = _mgmt_ctl_with_mock_protocol()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    bad = LongTermKey(
+        "AA:BB:CC:DD:EE:FF", 1, 300, False, 16, 0, b"\x00" * 8, b"\x00" * 16
+    )  # key_type 300 does not fit in a byte
+    assert await mgmt_ctl.load_long_term_keys(0, [bad]) is False
+    mock_protocol._write_to_socket.assert_not_called()

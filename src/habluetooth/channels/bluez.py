@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from struct import Struct
+from struct import error as struct_error
 from typing import TYPE_CHECKING, Any, cast
 
 from bluetooth_data_tools import monotonic_time_coarse
@@ -795,8 +796,11 @@ class MGMTBluetoothCtl:
                     "hci%u: malformed long-term key for %s", adapter_idx, key.address
                 )
                 return False
-            records.append(
-                LTK_INFO_PACK(
+            try:
+                # Out-of-range integer fields (e.g. a corrupt key_type) raise
+                # struct.error; keep that a soft failure rather than letting it
+                # escape the command path.
+                record = LTK_INFO_PACK(
                     addr,
                     key.address_type,
                     key.key_type,
@@ -806,7 +810,14 @@ class MGMTBluetoothCtl:
                     key.rand,
                     key.value,
                 )
-            )
+            except struct_error:
+                _LOGGER.exception(
+                    "hci%u: out-of-range field in long-term key for %s",
+                    adapter_idx,
+                    key.address,
+                )
+                return False
+            records.append(record)
         cmd_data = LTK_COUNT_PACK(len(keys)) + b"".join(records)
         result = await self._send_command_await(
             MGMT_OP_LOAD_LONG_TERM_KEYS, adapter_idx, cmd_data
