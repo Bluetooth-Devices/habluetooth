@@ -880,8 +880,14 @@ class BluetoothManager:
         # just takes the miss-lookup below and skips the rest (its
         # new_smoothed is never read, since the predicate bails when the
         # bucket is None). Runs before the same-payload short-circuit below
-        # because RSSI changes even when the payload does not. A missing
-        # RSSI (0) is folded to NO_RSSI_VALUE, matching arbitration.
+        # because RSSI changes even when the payload does not.
+        #
+        # A missing RSSI (proxies occasionally drop it) must NOT be folded in:
+        # NO_RSSI_VALUE (-127) would poison the average and, because the EWMA
+        # remembers it, drag the smoothed value down for several adverts
+        # afterwards, manufacturing phantom weak readings that flap ownership.
+        # So a no-RSSI advert keeps the last good smoothed value and writes
+        # nothing; it never seeds or updates the average.
         new_smoothed = 0.0
         # Fast path for proxy-free setups: when no address has ever been seen
         # from more than one source the whole map is empty, so skip the keyed
@@ -893,16 +899,26 @@ class BluetoothManager:
         )
         if smoothed_bucket is not None:
             rssi = service_info.rssi or NO_RSSI_VALUE
-            new_smoothed = rssi
             prev_smoothed = smoothed_bucket.get(source)
-            if prev_smoothed is not None:
+            if not service_info.rssi:
+                # No RSSI: keep the last good smoothed value (or NO_RSSI_VALUE
+                # with no history, which simply loses arbitration) and do not
+                # write, so the dropped reading can never poison the average.
+                if prev_smoothed is not None:
+                    new_smoothed = prev_smoothed
+                else:
+                    new_smoothed = NO_RSSI_VALUE
+            elif prev_smoothed is not None:
                 # prev_double is a cdef double, so the EWMA stays C-only.
                 prev_double = prev_smoothed
                 new_smoothed = (
                     _RSSI_SMOOTHING_FACTOR * rssi
                     + (1.0 - _RSSI_SMOOTHING_FACTOR) * prev_double
                 )
-            smoothed_bucket[source] = new_smoothed
+                smoothed_bucket[source] = new_smoothed
+            else:
+                new_smoothed = rssi
+                smoothed_bucket[source] = new_smoothed
         elif (
             old_service_info is not None
             and old_service_info.source is not source
@@ -914,11 +930,20 @@ class BluetoothManager:
             # defeating the "re-registered scanner starts fresh" guarantee.
             and old_service_info.source in self._sources
         ):
-            new_smoothed = service_info.rssi or NO_RSSI_VALUE
+            # First cross-source sighting: seed the bucket from the existing
+            # owner. Seed the new source only from a real reading; if it has no
+            # RSSI, leave it unseeded so it loses arbitration via NO_RSSI_VALUE
+            # (keeping the current owner) rather than priming the average with
+            # -127 or stealing ownership without a signal. Its next real advert
+            # seeds it cleanly.
             smoothed_bucket = {
-                old_service_info.source: old_service_info.rssi or NO_RSSI_VALUE,
-                source: new_smoothed,
+                old_service_info.source: old_service_info.rssi or NO_RSSI_VALUE
             }
+            if service_info.rssi:
+                new_smoothed = service_info.rssi
+                smoothed_bucket[source] = new_smoothed
+            else:
+                new_smoothed = NO_RSSI_VALUE
             self._smoothed_rssi[service_info.address] = smoothed_bucket
 
         # This logic is complex due to the many combinations of scanners
