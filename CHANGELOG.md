@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.25.1 (2026-06-25)
+
+### Bug fixes
+
+
+- Don't fold missing rssi into the smoothed average ([`de0836e`](https://github.com/Bluetooth-Devices/habluetooth/commit/de0836eff87b849fc265b773be48b382c28d164a))
+
+
 ## v6.25.0 (2026-06-25)
 
 ### Features
