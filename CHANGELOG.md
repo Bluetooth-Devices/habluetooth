@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.26.0 (2026-06-25)
+
+### Features
+
+
+- Bond on connect, encrypt bonded reconnects, and auto-confirm just works pairing ([`4d42391`](https://github.com/Bluetooth-Devices/habluetooth/commit/4d42391ee00f02da417b2893a0b7f96c65ae6852))
+
+
+### Documentation
+
+
+- Correct the stale att transport docstring and note the bond list limitation ([`4c2a97f`](https://github.com/Bluetooth-Devices/habluetooth/commit/4c2a97fb51b5d4abfa8a25131812eced3603c9ae))
+
+
 ## v6.25.1 (2026-06-25)
 
 ### Bug fixes
