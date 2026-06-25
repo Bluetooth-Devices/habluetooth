@@ -140,6 +140,20 @@ ADV_RSSI_SWITCH_THRESHOLD: Final = 16
 # selection that uses RSSI_SWITCH_THRESHOLD from
 # bleak_retry_connector
 
+# Extra margin, on top of ADV_RSSI_SWITCH_THRESHOLD, that a challenger must beat
+# the current owner by to RECLAIM ownership it was just demoted from, on the
+# active RSSI path (both scanners reporting). This is asymmetric hysteresis:
+# smoothing removes single-sample noise, but a heavily-multipathed stationary
+# device whose smoothed RSSI to two proxies genuinely straddles the 16 dB line
+# still oscillates, because each leg of the A->B->A ping-pong only needs 16 dB.
+# Charging 16 + deadband only to the source that was just demoted widens the
+# band its smoothed signal must swing back through to reclaim, killing that
+# residual ping-pong, while a genuine one-way move (never the demoted source)
+# still hands off at the plain 16 dB threshold and is not slowed. The stale-path
+# "comparable" handoff deliberately does not use this; a silent owner should
+# still be easy to replace.
+ADV_RSSI_SWITCH_DEADBAND: Final = 6
+
 
 # Connection parameter constants (units of 1.25ms for intervals)
 # Fast connection parameters for initial connection and service discovery

@@ -1537,6 +1537,186 @@ async def test_rssi_smoothing_skips_unregistered_old_source(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_rssi_deadband_does_not_slow_one_way_move(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A fresh challenger still takes ownership at the plain threshold.
+
+    The deadband only applies to a source reclaiming ownership it was just
+    demoted from; a challenger that has never owned the address pays only
+    ADV_RSSI_SWITCH_THRESHOLD (16 dB), so a 17 dB one-way move is not slowed.
+    The demoted owner is recorded for the asymmetric reclaim check.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:56"
+    t = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    challenger = generate_ble_device(address, "challenger_hci1")
+
+    inject_advertisement_with_time_and_source(
+        owner, _rssi_adv(-50), t, HCI0_SOURCE_ADDRESS
+    )
+    # 17 dB stronger and never previously the owner: switches on the plain
+    # 16 dB threshold, no deadband.
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-33), t + 1, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is challenger
+    # hci0 was demoted, so a quick reclaim by it now faces the deadband.
+    assert manager._demoted_source[address] == HCI0_SOURCE_ADDRESS
+
+    # Per-address eviction clears the reclaim record.
+    manager.async_clear_advertisement_history(address)
+    assert address not in manager._demoted_source
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rssi_deadband_damps_reclaim(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A just-demoted source must clear THRESHOLD + DEADBAND to reclaim ownership.
+
+    hci0 owns, hci1 takes over (one-way, plain threshold), then hci0 tries to
+    reclaim: a 20 dB margin sits inside the 16 + 6 deadband and must not switch
+    back, while a sustained 24 dB margin clears it and reclaims. Without the
+    asymmetric deadband the 20 dB reclaim would flip ownership immediately.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:57"
+    t = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    challenger = generate_ble_device(address, "challenger_hci1")
+
+    inject_advertisement_with_time_and_source(
+        owner, _rssi_adv(-50), t, HCI0_SOURCE_ADDRESS
+    )
+    # hci1 takes over (fresh challenger, plain 16 dB threshold).
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-30), t + 1, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is challenger
+    assert manager._demoted_source[address] == HCI0_SOURCE_ADDRESS
+
+    # hci0 reclaims at a sustained 20 dB margin (smoothed converges to -10 vs
+    # hci1's -30): inside the 16 + 6 deadband, so ownership stays with hci1.
+    for i in range(15):
+        inject_advertisement_with_time_and_source(
+            owner, _rssi_adv(-10), t + 2 + i, HCI0_SOURCE_ADDRESS
+        )
+    assert manager.async_ble_device_from_address(address, True) is challenger
+
+    # A sustained 24 dB margin (smoothed converges to -6) clears the deadband
+    # and hci0 reclaims.
+    for i in range(15):
+        inject_advertisement_with_time_and_source(
+            owner, _rssi_adv(-6), t + 20 + i, HCI0_SOURCE_ADDRESS
+        )
+    assert manager.async_ble_device_from_address(address, True) is owner
+    # The reclaim demotes hci1 in turn.
+    assert manager._demoted_source[address] == HCI1_SOURCE_ADDRESS
+
+    # Per-source eviction on unregister drops the reclaim record for that source.
+    for scanner in list(manager._sources.values()):
+        if scanner.source == HCI1_SOURCE_ADDRESS:
+            manager._async_unregister_scanner_internal(
+                manager._connectable_scanners, scanner, None
+            )
+    assert address not in manager._demoted_source
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rssi_deadband_not_charged_after_stale_handoff(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A stale-path handoff records no demotion, so the owner reclaims at THRESHOLD.
+
+    The deadband must only damp active RSSI ping-pong; a weak owner that goes
+    silent and is taken over on the stale path must not then be charged the
+    deadband to recover, which would leave the rightful owner stuck on a weaker
+    proxy (the regression #570/#580 guard against). Only an active RSSI switch
+    records a demotion.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:58"
+    start = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    owner_adv = generate_advertisement_data(
+        local_name="owner_hci0", service_uuids=[], rssi=-90
+    )
+    inject_advertisement_with_time_and_source(
+        owner, owner_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    manager.async_set_fallback_availability_interval(address, 10)
+
+    # Weak owner goes silent; a comparable (weaker) scanner takes over on the
+    # stale path, not the active RSSI path.
+    comparable = generate_ble_device(address, "comparable_hci1")
+    comparable_adv = generate_advertisement_data(
+        local_name="comparable_hci1", service_uuids=[], rssi=-95
+    )
+    inject_advertisement_with_time_and_source(
+        comparable,
+        comparable_adv,
+        start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+    assert manager.async_ble_device_from_address(address, True) is comparable
+    # The stale handoff is not an RSSI-path switch, so no reclaim penalty is set.
+    assert address not in manager._demoted_source
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rssi_deadband_connectable_recheck_records_no_demotion(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A connectable re-check switch does not record an all-history demotion.
+
+    When the best (all-history) advertisement stays put but the connectable
+    history switches sources on RSSI, that switch must not write to
+    _demoted_source; it is not an all-history ownership change, so a future
+    challenger of the all-history owner is not wrongly treated as a reclaim.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:59"
+    now = 50.0
+    # hci1 owns the best (all-history) path with a strong non-connectable adv.
+    best = generate_ble_device(address, "best_hci1")
+    inject_advertisement_with_time_and_source_connectable(
+        best, _rssi_adv(-30), now, HCI1_SOURCE_ADDRESS, False
+    )
+    # hci0 is the only connectable path, but weak.
+    weak_conn = generate_ble_device(address, "weak_conn_hci0")
+    inject_advertisement_with_time_and_source_connectable(
+        weak_conn, _rssi_adv(-90), now + 1, HCI0_SOURCE_ADDRESS, True
+    )
+    assert manager.async_ble_device_from_address(address, True) is weak_conn
+
+    # A third source sends a much stronger connectable adv: it loses the
+    # all-history compare to hci1 but wins the connectable re-check over hci0.
+    strong_conn = generate_ble_device(address, "strong_conn_hci2")
+    inject_advertisement_with_time_and_source_connectable(
+        strong_conn, _rssi_adv(-50), now + 2, "hci2", True
+    )
+    # all-history owner unchanged; connectable history switched to the new path.
+    assert manager.async_ble_device_from_address(address, False) is best
+    assert manager.async_ble_device_from_address(address, True) is strong_conn
+    # The connectable-only switch records no all-history demotion.
+    assert address not in manager._demoted_source
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_switching_adapters_based_on_rssi_connectable_to_non_connectable(
     register_hci0_scanner: None,
     register_hci1_scanner: None,
