@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.25.0 (2026-06-25)
+
+### Features
+
+
+- Add asymmetric rssi switch hysteresis to stop reclaim flapping ([`cc183ec`](https://github.com/Bluetooth-Devices/habluetooth/commit/cc183ecafb1631919a6a206453c281c9ca7e97e4))
+
+
 ## v6.24.0 (2026-06-24)
 
 ### Features
