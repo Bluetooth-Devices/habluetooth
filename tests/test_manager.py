@@ -1537,6 +1537,94 @@ async def test_rssi_smoothing_skips_unregistered_old_source(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_rssi_smoothing_ignores_missing_rssi(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A dropped RSSI (0) is not folded into the smoothed average.
+
+    Proxies occasionally report no RSSI. Folding NO_RSSI_VALUE (-127) into the
+    EWMA would poison the value and, because the average remembers it, drag it
+    down for several adverts, manufacturing phantom weak readings. A no-RSSI
+    advert must instead keep the last good smoothed value and write nothing.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:5A"
+    t = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    challenger = generate_ble_device(address, "challenger_hci1")
+
+    inject_advertisement_with_time_and_source(
+        owner, _rssi_adv(-50), t, HCI0_SOURCE_ADDRESS
+    )
+    # First cross-source sighting seeds the bucket at the real reading.
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-45), t + 1, HCI1_SOURCE_ADDRESS
+    )
+    assert manager._smoothed_rssi[address][HCI1_SOURCE_ADDRESS] == -45
+
+    # A burst of no-RSSI adverts must leave the smoothed value pinned, not walk
+    # it toward -127.
+    for i in range(3):
+        inject_advertisement_with_time_and_source(
+            challenger, _rssi_adv(0), t + 2 + i, HCI1_SOURCE_ADDRESS
+        )
+    assert manager._smoothed_rssi[address][HCI1_SOURCE_ADDRESS] == -45
+    # The owner is unaffected by the dropped readings.
+    assert manager.async_ble_device_from_address(address, True) is owner
+
+    # A new source whose very first advert has no RSSI is not seeded into the
+    # existing bucket (it loses arbitration via NO_RSSI_VALUE instead).
+    third = generate_ble_device(address, "third_hci2")
+    inject_advertisement_with_time_and_source(third, _rssi_adv(0), t + 6, "hci2")
+    assert "hci2" not in manager._smoothed_rssi[address]
+    assert manager.async_ble_device_from_address(address, True) is owner
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rssi_smoothing_no_bucket_seeded_from_missing_rssi(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A no-RSSI first cross-source sighting does not seed or steal ownership.
+
+    The bucket is seeded from the existing owner only; the no-RSSI source is
+    left unseeded so it loses arbitration (NO_RSSI_VALUE) and the owner is kept,
+    rather than priming the average with -127 or taking ownership with no
+    signal. The source's next real advert seeds it cleanly.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:5B"
+    t = 50.0
+    owner = generate_ble_device(address, "owner_hci0")
+    challenger = generate_ble_device(address, "challenger_hci1")
+
+    inject_advertisement_with_time_and_source(
+        owner, _rssi_adv(-50), t, HCI0_SOURCE_ADDRESS
+    )
+    # First cross-source advert has no RSSI: the challenger is not seeded and
+    # does not take ownership.
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(0), t + 1, HCI1_SOURCE_ADDRESS
+    )
+    assert manager._smoothed_rssi[address] == {HCI0_SOURCE_ADDRESS: -50}
+    assert manager.async_ble_device_from_address(address, True) is owner
+
+    # A later real reading seeds the challenger cleanly.
+    inject_advertisement_with_time_and_source(
+        challenger, _rssi_adv(-45), t + 2, HCI1_SOURCE_ADDRESS
+    )
+    assert manager._smoothed_rssi[address] == {
+        HCI0_SOURCE_ADDRESS: -50,
+        HCI1_SOURCE_ADDRESS: -45,
+    }
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_rssi_deadband_does_not_slow_one_way_move(
     register_hci0_scanner: None,
     register_hci1_scanner: None,
