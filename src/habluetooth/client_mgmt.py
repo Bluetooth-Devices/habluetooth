@@ -8,19 +8,21 @@ raw L2CAP ATT channel instead of going through bluetoothd/DBus. It wires the
 discovery on connect, and translates the discovered tree into bleak's unified
 GATT model so existing integrations can use it unchanged.
 
-It is **not** wired into Home Assistant: the scanner selection still builds the
-DBus-backed ``HaScanner`` and bleak's platform client. This module is the
-connect-side backend that a later mgmt scanner / factory change will route to;
-on its own nothing imports it, so it has no effect on the running system.
+``create_local_scanner`` routes connections here for local adapters, but Home
+Assistant does not call that factory yet, so nothing reaches this backend in
+production today.
 
-Pairing is intentionally out of scope here. ``pair``/``unpair`` raise, and
-``connect`` ignores the ``pair`` flag; the kernel still drives LE encryption
-from bonded keys via the socket's ``BT_SECURITY`` level. Mgmt-driven bonding
-lands in a follow-up alongside the mgmt connect/pairing commands.
+Pairing is driven over the management socket (Just Works). ``connect(pair=True)``
+and ``pair()`` bond with the peer and capture the long-term key so a later
+reconnect can restore it; on a reconnect for an already-bonded peer the socket
+requests encryption up front so the kernel re-encrypts the link, and any ATT
+operation the peer rejects for insufficient security escalates on demand.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -39,9 +41,14 @@ from .channels.att import (
     ATTClient,
     properties_to_strings,
 )
-from .channels.bluez import NewLongTermKey
+from .channels.bluez import (
+    AuthenticationFailed,
+    NewLongTermKey,
+    UserConfirmationRequest,
+)
 from .channels.l2cap import (
     BT_SECURITY_HIGH,
+    BT_SECURITY_LOW,
     BT_SECURITY_MEDIUM,
     L2CAPSocket,
 )
@@ -57,10 +64,8 @@ if TYPE_CHECKING:
 
     from .channels.att import GattService
     from .channels.bluez import (
-        AuthenticationFailed,
         LongTermKey,
         MGMTBluetoothCtl,
-        UserConfirmationRequest,
         UserPasskeyRequest,
     )
 
@@ -151,6 +156,9 @@ class HaMgmtClient(BaseBleakClient):
         self._att: ATTClient | None = None
         self._sock: L2CAPSocket | None = None
         self._connected = False
+        # Strong references to in-flight pairing reply tasks (e.g. an auto-sent
+        # confirmation) so they are not garbage-collected before they send.
+        self._pairing_tasks: set[asyncio.Task[Any]] = set()
 
     # -- properties --------------------------------------------------------
     @property
@@ -170,11 +178,13 @@ class HaMgmtClient(BaseBleakClient):
             msg = "already connected"
             raise BleakError(msg)
         await self._restore_bond()
-        if pair:
-            _LOGGER.debug(
-                "%s: connect(pair=True); use pair() to bond explicitly",
-                self.address,
-            )
+        # If we already hold a key for this peer, request encryption up front so
+        # the reconnect encrypts like bluetoothd rather than running MTU exchange
+        # and discovery in the clear until the first gated op is rejected. The
+        # on-demand escalation in the codec still backstops everything else.
+        security_level = (
+            BT_SECURITY_MEDIUM if self._has_stored_bond() else BT_SECURITY_LOW
+        )
         att = ATTClient(
             send=self._send_pdu,
             on_disconnect=self._handle_disconnect,
@@ -190,7 +200,13 @@ class HaMgmtClient(BaseBleakClient):
                     on_data=att.data_received,
                     on_close=att.connection_lost,
                     timeout=self._timeout,
+                    security_level=security_level,
                 )
+                if pair:
+                    # Honor bleak's connect(pair=True): bond as part of
+                    # connecting so callers that pair-then-use get a real bond
+                    # (and an encrypted link) before MTU exchange and discovery.
+                    await self._pair_if_possible()
                 await att.exchange_mtu(PREFERRED_MTU)
                 services = await att.discover()
         except BaseException:
@@ -418,6 +434,13 @@ class HaMgmtClient(BaseBleakClient):
                 len(keys),
             )
 
+    def _has_stored_bond(self) -> bool:
+        """Whether a long-term key is stored for this peer."""
+        if self._get_long_term_keys is None:
+            return False
+        address = self.address.upper()
+        return any(key.address.upper() == address for key in self._get_long_term_keys())
+
     def _require_mgmt(self) -> tuple[MGMTBluetoothCtl, int]:
         """Return the mgmt controller and adapter index, or raise if unavailable."""
         if self._mgmt is None or self._adapter_idx is None:
@@ -425,34 +448,99 @@ class HaMgmtClient(BaseBleakClient):
             raise BleakError(msg)
         return self._mgmt, self._adapter_idx
 
+    async def _pair_if_possible(self) -> None:
+        """Bond as part of connect when needed and mgmt is wired."""
+        if self._has_stored_bond():
+            # Already bonded: the proactive MEDIUM handles re-encryption, and
+            # re-pairing a bonded peer is rejected (ALREADY_PAIRED), which would
+            # otherwise fail the connect.
+            return
+        if self._mgmt is None or self._adapter_idx is None:
+            _LOGGER.debug(
+                "%s: connect(pair=True) but the management socket is not wired; "
+                "skipping bond",
+                self.address,
+            )
+            return
+        await self.pair()
+
     async def pair(self, *args: Any, **kwargs: Any) -> None:
-        """Bond with the peer over mgmt, capturing the key for reconnects."""
+        """
+        Bond with the peer over the management socket (Just Works).
+
+        Auto-accepts a Just Works confirmation (the only interaction a
+        NoInputNoOutput controller can satisfy) so such a peer does not stall the
+        bond, but rejects a real numeric comparison it cannot verify; and fails
+        fast on an authentication failure instead of waiting out the mgmt command
+        timeout. The captured key is stored for reconnects.
+        """
         mgmt, adapter_idx = self._require_mgmt()
         address = self.address
+        loop = asyncio.get_running_loop()
+        auth_failed: asyncio.Future[AuthenticationFailed] = loop.create_future()
 
         def _capture(event: PairingEvent) -> None:
-            # Just Works pairing (NoInputNoOutput) does not raise confirm/passkey
-            # requests; we only act on the captured key.
-            if not isinstance(event, NewLongTermKey):
-                return
-            if not event.store_hint:
-                # The kernel is signalling a key it does not want persisted.
-                return
-            if self._add_long_term_key is None:
-                _LOGGER.warning(
-                    "%s: captured a long-term key but no key store is wired",
-                    address,
+            if isinstance(event, NewLongTermKey):
+                self._store_captured_key(event)
+            elif isinstance(event, UserConfirmationRequest):
+                # confirm_hint != 0 means "just confirm, no number to compare"
+                # (the Just Works case a NoInputNoOutput controller can satisfy),
+                # so accept it; confirm_hint == 0 carries a real numeric value we
+                # cannot verify with no IO, so reject rather than blindly confirm
+                # and defeat the comparison's MITM protection. Runs in the read
+                # loop, so the async reply is scheduled with a strong reference.
+                accept = bool(event.confirm_hint)
+                task = loop.create_task(
+                    mgmt.user_confirmation_reply(
+                        adapter_idx, address, self._address_type, accept=accept
+                    )
                 )
-                return
-            self._add_long_term_key(event.key)
+                self._pairing_tasks.add(task)
+                task.add_done_callback(self._on_pairing_task_done)
+            elif isinstance(event, AuthenticationFailed) and not auth_failed.done():
+                auth_failed.set_result(event)
 
         unregister = mgmt.register_pairing_handler(adapter_idx, address, _capture)
+        pair_task = loop.create_task(
+            mgmt.pair_device(adapter_idx, address, self._address_type)
+        )
         try:
-            if not await mgmt.pair_device(adapter_idx, address, self._address_type):
+            await asyncio.wait(
+                (pair_task, auth_failed), return_when=asyncio.FIRST_COMPLETED
+            )
+            if auth_failed.done() and not pair_task.done():
+                # Surface the failure now rather than waiting out pair_device's
+                # mgmt timeout.
+                event = auth_failed.result()
+                msg = f"{address}: pairing failed (auth status 0x{event.status:02x})"
+                raise BleakError(msg)
+            if not await pair_task:
                 msg = f"{address}: pairing failed"
                 raise BleakError(msg)
         finally:
             unregister()
+            if not pair_task.done():
+                pair_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pair_task
+
+    def _store_captured_key(self, event: NewLongTermKey) -> None:
+        """Persist a captured long-term key, honoring the kernel's store hint."""
+        if not event.store_hint:
+            # The kernel is signalling a key it does not want persisted.
+            return
+        if self._add_long_term_key is None:
+            _LOGGER.warning(
+                "%s: captured a long-term key but no key store is wired", self.address
+            )
+            return
+        self._add_long_term_key(event.key)
+
+    def _on_pairing_task_done(self, task: asyncio.Task[Any]) -> None:
+        """Drop a finished pairing reply task and log any escaped failure."""
+        self._pairing_tasks.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            _LOGGER.debug("%s: pairing reply task failed: %s", self.address, exc)
 
     async def unpair(self) -> None:
         """Remove the bond over mgmt and forget the stored key."""
