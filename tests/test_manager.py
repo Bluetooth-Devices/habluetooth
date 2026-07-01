@@ -1103,6 +1103,166 @@ async def test_switching_adapters_based_on_stale_with_discovered_interval(
     )
 
 
+def _seed_stale_owner(address: str, start: float, owner_rssi: int = -100) -> BLEDevice:
+    """Register hci0 as the weak owner of a device with a 10s stale interval."""
+    manager = get_manager()
+    owner = generate_ble_device(address, "owner_hci0")
+    owner_adv = generate_advertisement_data(
+        local_name="owner_hci0", service_uuids=[], rssi=owner_rssi
+    )
+    inject_advertisement_with_time_and_source(
+        owner, owner_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    manager.async_set_fallback_availability_interval(address, 10)
+    return owner
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_no_stale_handoff_while_owner_connecting(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A device is not handed off on stale while its owner is paused connecting."""
+    manager = get_manager()
+    address = "44:44:33:11:23:60"
+    start = 50.0
+    owner = _seed_stale_owner(address, start)
+    scanner = manager._sources[HCI0_SOURCE_ADDRESS]
+
+    challenger = generate_ble_device(address, "challenger_hci1")
+    challenger_adv = generate_advertisement_data(
+        local_name="challenger_hci1", service_uuids=[], rssi=-99
+    )
+    # While hci0 holds a connection (scanning paused) a past-stale proxy advert
+    # must not steal ownership; the silence is hci0 being deaf, not the device.
+    with scanner.connecting():
+        assert scanner.scanning is False
+        inject_advertisement_with_time_and_source(
+            challenger,
+            challenger_adv,
+            start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
+            HCI1_SOURCE_ADDRESS,
+        )
+        assert manager.async_ble_device_from_address(address, True) is owner
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_no_stale_handoff_within_grace_after_resume(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """For one stale window after a connection resume, no stale handoff occurs."""
+    manager = get_manager()
+    address = "44:44:33:11:23:61"
+    start = 50.0
+    owner = _seed_stale_owner(address, start)
+    scanner = manager._sources[HCI0_SOURCE_ADDRESS]
+    # Resumed scanning at start + 10; the challenger advert below is past stale
+    # (elapsed 16 > 15) but only 6s after resume (< 15 stale window), so grace
+    # suppresses the handoff.
+    scanner._last_scan_resume_time = start + 10
+
+    challenger = generate_ble_device(address, "challenger_hci1")
+    challenger_adv = generate_advertisement_data(
+        local_name="challenger_hci1", service_uuids=[], rssi=-99
+    )
+    inject_advertisement_with_time_and_source(
+        challenger,
+        challenger_adv,
+        start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+    assert manager.async_ble_device_from_address(address, True) is owner
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_handoff_after_grace_expires(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Grace is bounded: past the stale window after resume, the device hands off."""
+    manager = get_manager()
+    address = "44:44:33:11:23:62"
+    start = 50.0
+    _seed_stale_owner(address, start)
+    scanner = manager._sources[HCI0_SOURCE_ADDRESS]
+    scanner._last_scan_resume_time = start + 10
+
+    challenger = generate_ble_device(address, "challenger_hci1")
+    challenger_adv = generate_advertisement_data(
+        local_name="challenger_hci1", service_uuids=[], rssi=-99
+    )
+    # One wobble past the full stale window after resume: grace expired and the
+    # advert is past stale, so the device hands off.
+    inject_advertisement_with_time_and_source(
+        challenger,
+        challenger_adv,
+        start + 10 + (10 + TRACKER_BUFFERING_WOBBLE_SECONDS) + 2,
+        HCI1_SOURCE_ADDRESS,
+    )
+    assert manager.async_ble_device_from_address(address, True) is challenger
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_handoff_when_owner_never_connected(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A never-paused scanner has no grace, so a genuinely stale device hands off."""
+    manager = get_manager()
+    address = "44:44:33:11:23:63"
+    start = 50.0
+    _seed_stale_owner(address, start)
+    scanner = manager._sources[HCI0_SOURCE_ADDRESS]
+    # Default: never paused for a connection.
+    assert scanner._last_scan_resume_time == 0.0
+
+    challenger = generate_ble_device(address, "challenger_hci1")
+    challenger_adv = generate_advertisement_data(
+        local_name="challenger_hci1", service_uuids=[], rssi=-99
+    )
+    inject_advertisement_with_time_and_source(
+        challenger,
+        challenger_adv,
+        start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+    assert manager.async_ble_device_from_address(address, True) is challenger
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stronger_challenger_wins_during_connection_grace(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Grace only suppresses the stale handoff; a stronger challenger still wins."""
+    manager = get_manager()
+    address = "44:44:33:11:23:64"
+    start = 50.0
+    _seed_stale_owner(address, start, owner_rssi=-90)
+    scanner = manager._sources[HCI0_SOURCE_ADDRESS]
+    scanner._last_scan_resume_time = start + 10
+
+    challenger = generate_ble_device(address, "challenger_hci1")
+    # Clearly stronger than the owner (well past ADV_RSSI_SWITCH_THRESHOLD): wins
+    # on the RSSI path even inside the connection grace window.
+    challenger_adv = generate_advertisement_data(
+        local_name="challenger_hci1", service_uuids=[], rssi=-20
+    )
+    inject_advertisement_with_time_and_source(
+        challenger,
+        challenger_adv,
+        start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+    assert manager.async_ble_device_from_address(address, True) is challenger
+
+
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
 async def test_stale_does_not_switch_to_much_weaker_scanner(

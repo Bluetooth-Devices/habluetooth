@@ -570,8 +570,10 @@ class BluetoothManager:
         """
         Return True when ``old_info`` should win over ``new_info``.
 
-        Only relevant when ``old_info`` came from a different still-scanning
-        source. The ``is not / !=`` ordering is a PyObject_RichCompare
+        Only relevant when ``old_info`` came from a different source that is
+        still scanning or currently paused for a connection (a local adapter
+        cannot scan while connecting but is not gone). The ``is not / !=``
+        ordering is a PyObject_RichCompare
         short-circuit that dominates this hot path; keep it intact. ``smoothed``
         is the address's per-source smoothed-RSSI bucket, which is None until
         the device is seen from more than one source; testing it first lets a
@@ -587,9 +589,13 @@ class BluetoothManager:
             and new_info.source is not old_info.source
             and new_info.source != old_info.source
             and (scanner := self._sources.get(old_info.source)) is not None
-            and scanner.scanning
+            # A local adapter paused for a connection reports scanning=False but
+            # is not gone; keep it in arbitration so its device is not handed off
+            # while it is merely deaf mid-connection (a genuinely stopped scanner
+            # has _connecting==0 and still short-circuits to a handoff).
+            and (scanner.scanning or scanner._connecting != 0)
             and self._prefer_previous_adv_from_different_source(
-                old_info, new_info, smoothed, new_rssi, record_demotion
+                old_info, new_info, smoothed, new_rssi, record_demotion, scanner
             )
         )
 
@@ -600,6 +606,7 @@ class BluetoothManager:
         smoothed: dict[str, float],
         new_rssi: float,
         record_demotion: bool,
+        scanner: BaseHaScanner,
     ) -> bool:
         """Prefer previous advertisement from a different source if it is better."""
         # Compare smoothed per-source RSSI so a momentary spike does not flip
@@ -615,7 +622,15 @@ class BluetoothManager:
         else:
             stale_seconds = FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
         elapsed = new.time - old.time
-        if elapsed > stale_seconds:
+        # Do not treat the owner as stale for silence that is only the owner
+        # being deaf while paused for a connection: a local adapter cannot scan
+        # while connecting (scanner._connecting), and for one stale window after
+        # it resumes it has not yet had a chance to re-hear the device. Bounded
+        # by stale_seconds so a device that genuinely moved away still hands off.
+        if elapsed > stale_seconds and not (
+            scanner._connecting
+            or new.time - scanner._last_scan_resume_time < stale_seconds
+        ):
             # The owner has not been heard within its expected interval.
             # Hand off immediately to a comparable-or-stronger scanner
             # (ordinary roaming), but make a materially weaker scanner wait
