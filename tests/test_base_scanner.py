@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from datetime import timedelta
 from typing import Any
@@ -472,6 +473,51 @@ async def test_base_scanner_connecting_behavior() -> None:
     assert len(scanner.discovered_devices) == 1
     assert len(scanner.discovered_devices_and_advertisement_data) == 1
     assert devices[0].name == "wohand"
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_scanner_records_scan_resume_time() -> None:
+    """_last_scan_resume_time is set when scanning resumes after a connection."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = FakeScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    # Never paused for a connection yet.
+    assert scanner._last_scan_resume_time == 0.0
+
+    # A normal connection pause records the resume time on exit.
+    with patch_bluetooth_time(123.0), scanner.connecting():
+        assert scanner._last_scan_resume_time == 0.0  # still paused
+    assert scanner._last_scan_resume_time == 123.0
+
+    # The resume time is recorded via the finally even if the body raises.
+    boom = RuntimeError("boom")
+    with (
+        contextlib.suppress(RuntimeError),
+        patch_bluetooth_time(456.0),
+        scanner.connecting(),
+    ):
+        raise boom
+    assert scanner._last_scan_resume_time == 456.0
+
+    # Nested connects only record on the outermost resume.
+    with patch_bluetooth_time(789.0), scanner.connecting():
+        with patch_bluetooth_time(700.0), scanner.connecting():
+            pass
+        assert scanner._last_scan_resume_time == 456.0  # inner exit, still paused
+    assert scanner._last_scan_resume_time == 789.0
+
+    # Clearing connection history resets it.
+    scanner._clear_connection_history()
+    assert scanner._last_scan_resume_time == 0.0
 
     cancel()
     unsetup()

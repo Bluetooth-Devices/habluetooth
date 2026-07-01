@@ -100,7 +100,8 @@ cdef class BluetoothManager:
         BluetoothServiceInfoBleak new,
         dict smoothed,
         double new_rssi,
-        bint record_demotion
+        bint record_demotion,
+        BaseHaScanner scanner
     )
 
     @cython.locals(demoted=set)
