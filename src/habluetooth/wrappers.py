@@ -15,6 +15,7 @@ from bleak import BleakClient, BleakError, normalize_uuid_str
 from bleak.backends.client import BaseBleakClient, get_platform_client_backend_type
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import (
+    NO_RSSI_VALUE,
     ble_device_description,
     clear_cache,
     device_source,
@@ -593,16 +594,19 @@ class HaBleakClientWrapper(BleakClient):
         that has a free connection slot.
         """
         address = self.__address
+        # advertisement.rssi may be None (e.g. a proxy that reports no signal
+        # strength); coerce to NO_RSSI_VALUE so sorting and the rssi_diff
+        # arithmetic below never hit None. This mirrors the guard in
+        # BaseHaScanner._score_connection_paths used by score_connection_path.
         sorted_devices = sorted(
             manager.async_scanner_devices_by_address(self.__address, True),
-            key=lambda x: x.advertisement.rssi,
+            key=lambda x: x.advertisement.rssi or NO_RSSI_VALUE,
             reverse=True,
         )
         rssi_diff = 0  # Default when there's only one device
         if len(sorted_devices) > 1:
-            rssi_diff = (
-                sorted_devices[0].advertisement.rssi
-                - sorted_devices[1].advertisement.rssi
+            rssi_diff = (sorted_devices[0].advertisement.rssi or NO_RSSI_VALUE) - (
+                sorted_devices[1].advertisement.rssi or NO_RSSI_VALUE
             )
             sorted_devices = sorted(
                 sorted_devices,
