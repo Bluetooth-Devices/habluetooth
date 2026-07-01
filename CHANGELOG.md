@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.26.1 (2026-07-01)
+
+### Bug fixes
+
+
+- Damp owner reclaim across all recent owners, not just the last ([`d54cec1`](https://github.com/Bluetooth-Devices/habluetooth/commit/d54cec1d2d7a56a2dbf18d9efe5aa131f74061d4))
+
+
 ## v6.26.0 (2026-06-25)
 
 ### Features
