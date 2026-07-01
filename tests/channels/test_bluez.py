@@ -201,6 +201,56 @@ def test_data_received_device_found(
     )
 
 
+@pytest.mark.parametrize(
+    ("rssi_byte", "expected_rssi"),
+    [
+        (b"\x00", 0),  # 0
+        (b"\x64", 100),  # +100
+        (b"\x7f", 127),  # +127 (mgmt "RSSI not available" sentinel, unchanged)
+        (b"\x80", -128),  # int8 floor — must convert, not stay +128
+        (b"\x81", -127),
+        (b"\xc8", -56),  # 200 - 256
+        (b"\xff", -1),  # -1
+    ],
+)
+def test_data_received_device_found_rssi_int8_conversion(
+    event_loop: asyncio.AbstractEventLoop,
+    mock_scanner: MockHaScanner,
+    rssi_byte: bytes,
+    expected_rssi: int,
+) -> None:
+    """The raw rssi byte must be decoded as a signed int8 (0x80 -> -128)."""
+    future = event_loop.create_future()
+    scanners: dict[int, HaScanner] = {0: mock_scanner}
+    protocol = BluetoothMGMTProtocol(
+        future, scanners, Mock(), Mock(return_value=False), Mock()
+    )
+
+    ad_data = b"\x02\x01\x06"
+    param_len = 6 + 1 + 1 + 4 + 2 + len(ad_data)
+
+    header = b"\x12\x00"  # DEVICE_FOUND
+    header += b"\x00\x00"  # controller_idx = 0
+    header += param_len.to_bytes(2, "little")
+
+    params = b"\xaa\xbb\xcc\xdd\xee\xff"  # address (reversed)
+    params += b"\x01"  # address_type
+    params += rssi_byte  # rssi
+    params += b"\x00\x00\x00\x00"  # flags
+    params += len(ad_data).to_bytes(2, "little")  # ad_data_len
+    params += ad_data
+
+    protocol.data_received(header + params)
+
+    mock_scanner._async_on_raw_bluez_advertisement.assert_called_once_with(
+        b"\xaa\xbb\xcc\xdd\xee\xff",
+        1,
+        expected_rssi,
+        0,
+        ad_data,
+    )
+
+
 def test_data_received_adv_monitor_device_found(
     event_loop: asyncio.AbstractEventLoop, mock_scanner: MockHaScanner
 ) -> None:
