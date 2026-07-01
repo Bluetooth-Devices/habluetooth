@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.26.2 (2026-07-01)
+
+### Bug fixes
+
+
+- Keep a device on its owner while the owner is paused for a connection ([`0de6a60`](https://github.com/Bluetooth-Devices/habluetooth/commit/0de6a60d992cb41e178682af19dc2294aa4aee8e))
+
+
 ## v6.26.1 (2026-07-01)
 
 ### Bug fixes
