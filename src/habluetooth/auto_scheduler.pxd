@@ -53,6 +53,8 @@ cdef class _ScannerWorker:
 
     cpdef void note_window_dispatched(self, double window_end, double now)
 
+    cpdef void _mark_window_open(self, double now, double window_end)
+
     @cython.locals(
         next_at=double,
         earliest=double,
@@ -145,6 +147,24 @@ cdef class AutoScanScheduler:
     )
 
     cpdef void _record_rescue_accept(self, str address, double accept_after)
+
+    cpdef void _record_window_dispatch(
+        self,
+        str address,
+        double dispatch_now,
+        str source,
+        double accept_after,
+    )
+
+    @cython.locals(address=str)
+    cpdef void _mark_delegated_dispatch(
+        self,
+        str source,
+        list addresses,
+        double dispatch_now,
+        double duration,
+        double accept_after,
+    )
 
     @cython.locals(accept_after=double)
     cpdef void _record_rescue_accepts(self, list due_buckets)

@@ -151,8 +151,9 @@ the owner stayed silent, without waiting for the window to close.
 Invariants
 ==========
 
-* At most one outstanding window per scanner (``_window_end`` guards
-  re-entry into ``_tick``).
+* At most one outstanding window per scanner, guaranteed by the
+  single per-worker task; the ``_window_end`` check in ``_tick`` is a
+  defense-in-depth guard for future callers, not the guarantor.
 * Per-device windows fire only on the scanner whose ``source`` matches
   the device's most recent advertisement source; other scanners that
   see the same device skip it.
@@ -160,9 +161,10 @@ Invariants
   scanner's ``_sweep_last_completed`` to ``now``. The rediscovery
   sweep therefore fires only on AUTO scanners that haven't had
   *any* active scan in ``AUTO_REDISCOVERY_INTERVAL`` (12 h).
-* A registration kick-starts tracking immediately; ``on_advertisement``
-  is the fallback that re-creates the entry if a worker ``unown``'d it
-  because the device's history was missing at tick time.
+* A registration kick-starts tracking immediately when history
+  exists; ``on_advertisement`` bootstraps on first sight otherwise and
+  re-creates the entry if a worker ``unown``'d it because the device's
+  history was missing at tick time.
 * Every accepted advertisement on a tracked address wakes the source's
   worker so an ownership flip on the same scanner triggers a
   re-evaluation of ``_next_event_at``.
@@ -354,24 +356,29 @@ class _ScannerWorker:
           intended "skip your own ticks during my window" hint is
           lost. ``_sweep_last_completed`` lives outside the
           ``finally`` and survives.
-        * The rediscovery sweep only exists to give AUTO scanners
-          that never see an active window a periodic active-scan
-          floor. A fallback the dispatcher delegates to *is*
-          actively scanning, so it doesn't need the floor —
-          ``_sweep_last_completed`` is bumped to ``now`` on every
-          delegation so its separately-scheduled 12 h sweep stays
-          deferred while delegated windows are happening, which is
-          the right answer regardless of how short the delegated
-          window is.
+        * A fallback the dispatcher delegates to *is* actively
+          scanning, so its sweep floor is satisfied (see "Invariants"
+          — any active window advances ``_sweep_last_completed``)
+          regardless of how short the delegated window is.
+        """
+        self._mark_window_open(now, window_end)
+
+    def _mark_window_open(self, now: float, window_end: float) -> None:
+        """
+        Record a window opening at ``now`` and ending at ``window_end``.
+
+        Single write site for the window-bookkeeping quartet: bumps
+        ``_window_end`` (tick suppression) and ``_sweep_last_completed``
+        (any active window satisfies the sweep floor; see "Invariants")
+        with ``max`` so a longer pre-existing value survives, then stamps
+        the diagnostics pair from the post-max end so it stays consistent
+        when a longer window was already open.
         """
         if self._window_end < window_end:
             self._window_end = window_end
         if self._sweep_last_completed < now:
             self._sweep_last_completed = now
         self._last_window_at = now
-        # Use the post-max _window_end so the (last_window_at,
-        # last_window_duration) pair stays consistent with the window
-        # end actually in effect when a longer one was already open.
         self._last_window_duration = self._window_end - now
 
     def _next_event_at(self, now: float) -> float:
@@ -458,8 +465,11 @@ class _ScannerWorker:
         """
         Advance all buckets by ``from_time + scan_interval`` (pre-await).
 
-        Called before the scanner await so a mid-window ownership
-        flip can't let a new owner double-fire.
+        Canonical statement of the pre-await rule: due times must be
+        advanced before the scanner await, so a new owner that wakes
+        mid-window sees the entries already advanced and an ownership
+        flip can't double-fire a window. Every dispatch path defers to
+        this rule.
         """
         last_window_by_address = self._scheduler._last_window_by_address
         source = self._scanner.source
@@ -509,25 +519,15 @@ class _ScannerWorker:
             duration = self._scheduler._coalesce_duration(all_due) if all_due else 0.0
             if sweep_due and duration < _AUTO_REDISCOVERY_SWEEP_DURATION:
                 duration = _AUTO_REDISCOVERY_SWEEP_DURATION
-            self._window_end = now + duration
-            self._last_window_at = now
-            self._last_window_duration = duration
-            # Advance pre-await: a new owner that wakes mid-window
-            # must see the entries already advanced, otherwise an
-            # RSSI flip would let the new owner fire a duplicate
-            # window.
+            # Open the window and take the sweep credit pre-await (any
+            # active window satisfies the 12 h floor; see "Invariants").
+            self._mark_window_open(now, now + duration)
+            # Advance pre-await so a mid-window ownership flip can't
+            # double-fire; see _advance_due.
             self._advance_due(due_buckets, now)
-            # Record this window's accept time for every address it
-            # covers (coarse monotonic so it compares with adv times);
-            # the manager's stale-handoff deferral hands off on the
-            # first challenger adv past this.
+            # Rescue accept times for the covered addresses (coarse
+            # clock; see _rescue_accept_after).
             self._scheduler._record_rescue_accepts(due_buckets)
-            # Any active window is functionally a sweep — the
-            # rediscovery sweep exists only to give AUTO scanners
-            # that haven't actively scanned in 12 h a floor, so
-            # there's no point in scheduling a separate one when
-            # the radio is about to scan anyway.
-            self._sweep_last_completed = now
             try:
                 await self._scanner.async_request_active_window(duration)
             except Exception as ex:  # pylint: disable=broad-except
@@ -604,12 +604,10 @@ class _ScannerWorker:
             had_any_progress = True
             if fallback is None:
                 # Covered by another ACTIVE scanner: no later dispatch
-                # here, so the tick time is the window start. Delegated
-                # addresses are recorded below at their dispatch time.
-                self._scheduler._last_window_by_address[address] = (now, None)
-                # Already actively scanned: accept captures immediately
-                # (coarse monotonic, see _rescue_accept_after).
-                self._scheduler._record_rescue_accept(address, coarse_now)
+                # here, so the tick time is the window start and captures
+                # are accepted immediately. Delegated addresses are
+                # recorded below at their dispatch time.
+                self._scheduler._record_window_dispatch(address, now, None, coarse_now)
                 continue
             existing = fallback_groups.get(fallback.source)
             if existing is None:
@@ -648,9 +646,6 @@ class _ScannerWorker:
         loop = self._scheduler._loop
         if TYPE_CHECKING:
             assert loop is not None
-        workers = self._scheduler._workers
-        last_window_by_address = self._scheduler._last_window_by_address
-        fb_worker: _ScannerWorker | None
         for fb, fb_due in fallback_groups.values():
             duration = self._scheduler._coalesce_duration(fb_due)
             # Sample loop.time() per iteration: each prior
@@ -661,13 +656,13 @@ class _ScannerWorker:
             # tick suppression off during the delegated window) and
             # under-report ``last_active_window`` for these addresses.
             dispatch_now = loop.time()
-            accept_after = monotonic_time_coarse() + _RESCUE_SCAN_ACCEPT_SECONDS
-            for request in fb_due:
-                last_window_by_address[request.address] = (dispatch_now, fb.source)
-                self._scheduler._record_rescue_accept(request.address, accept_after)
-            fb_worker = workers.get(fb.source)
-            if fb_worker is not None:
-                fb_worker.note_window_dispatched(dispatch_now + duration, dispatch_now)
+            self._scheduler._mark_delegated_dispatch(
+                fb.source,
+                [request.address for request in fb_due],
+                dispatch_now,
+                duration,
+                monotonic_time_coarse() + _RESCUE_SCAN_ACCEPT_SECONDS,
+            )
             try:
                 await fb.async_request_active_window(duration)
             except Exception:
@@ -1077,6 +1072,46 @@ class AutoScanScheduler:
         for bucket_address, _entries, _due in due_buckets:
             self._record_rescue_accept(bucket_address, accept_after)
 
+    def _record_window_dispatch(
+        self,
+        address: str,
+        dispatch_now: float,
+        source: str | None,
+        accept_after: float,
+    ) -> None:
+        """
+        Record one window dispatch covering ``address``.
+
+        Writes the diagnostics record (last-write, ``loop.time()`` base)
+        and the rescue accept time (keep-max, coarse clock; see
+        ``_rescue_accept_after``) together so the two maps cannot drift
+        at a dispatch site.
+        """
+        self._last_window_by_address[address] = (dispatch_now, source)
+        self._record_rescue_accept(address, accept_after)
+
+    def _mark_delegated_dispatch(
+        self,
+        source: str,
+        addresses: list[str],
+        dispatch_now: float,
+        duration: float,
+        accept_after: float,
+    ) -> None:
+        """
+        Record a window delegated to ``source`` covering ``addresses``.
+
+        Shared pre-dispatch bookkeeping for the connecting-fallback and
+        rescue challenger paths; recording before the dispatch means a
+        declined window still advances, so a stuck scanner cannot pin a
+        handoff. The ``async_request_active_window`` call itself stays at
+        the call site (awaited there vs fire-and-forget here).
+        """
+        for address in addresses:
+            self._record_window_dispatch(address, dispatch_now, source, accept_after)
+        if (worker := self._workers.get(source)) is not None:
+            worker.note_window_dispatched(dispatch_now + duration, dispatch_now)
+
     def _rescue_owner_side(
         self,
         address: str,
@@ -1129,15 +1164,15 @@ class AutoScanScheduler:
         ):
             return
         # Delegate a window to the challenger directly (it is not the
-        # schedule's owner, so the tick path will not serve it). The
-        # accept time is recorded pre-dispatch like every other site: a
-        # declined window still advances so a stuck scanner cannot pin
-        # the handoff past durably-gone.
+        # schedule's owner, so the tick path will not serve it).
         duration = self._coalesce_duration(list(requests))
-        self._record_rescue_accept(address, coarse_now + _RESCUE_SCAN_ACCEPT_SECONDS)
-        self._last_window_by_address[address] = (now, challenger_source)
-        if (worker := self._workers.get(challenger_source)) is not None:
-            worker.note_window_dispatched(now + duration, now)
+        self._mark_delegated_dispatch(
+            challenger_source,
+            [address],
+            now,
+            duration,
+            coarse_now + _RESCUE_SCAN_ACCEPT_SECONDS,
+        )
         task = loop.create_task(challenger.async_request_active_window(duration))
         self._rescue_tasks.add(task)
         task.add_done_callback(self._rescue_tasks.discard)
