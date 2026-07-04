@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.26.4 (2026-07-04)
+
+### Bug fixes
+
+
+- Damp stale handoffs per device class and give rescues an accept grace ([`65d3bb5`](https://github.com/Bluetooth-Devices/habluetooth/commit/65d3bb593352505e9352e731652e96dd256bef15))
+
+
 ## v6.26.3 (2026-07-04)
 
 ### Bug fixes
