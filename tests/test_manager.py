@@ -1192,20 +1192,24 @@ async def test_stale_switches_to_weaker_scanner_once_durably_gone(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+@pytest.mark.parametrize("debug", [True, False])
 async def test_stale_switches_to_comparable_scanner_at_normal_window(
     register_hci0_scanner: None,
     register_hci1_scanner: None,
+    debug: bool,
 ) -> None:
     """
-    A comparable scanner takes over a weak owner at the normal stale window.
+    A comparable scanner takes over a weak passive owner at the stale window.
 
     The owner is weak (below STRONG_OWNER_STALE_RSSI), so its silence is
     treated as the device possibly being gone and a comparable scanner is
     allowed to take over at the normal window. A strong owner is protected
-    (see test_stale_keeps_strong_owner_against_comparable_scanner).
+    (see test_stale_keeps_strong_owner_against_comparable_scanner). Runs
+    with debug logging both on and off to cover the log branches.
     """
     address = "44:44:33:11:23:44"
     start = 50.0
+    get_manager()._debug = debug
     owner = generate_ble_device(address, "owner_hci0")
     owner_adv = generate_advertisement_data(
         local_name="owner_hci0", service_uuids=[], rssi=-90
@@ -1486,6 +1490,56 @@ async def test_stale_active_need_defers_then_switches_after_rescue_window(
     # First challenger adv past the completed window: hand off.
     inject_advertisement_with_time_and_source(
         comparable, comparable_adv, start + 25, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is comparable
+    assert address not in manager._rescue_triggered
+    cancel_active()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_active_need_no_roaming_shortcut_for_weak_owner(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    An active-need device never takes the roaming shortcut.
+
+    A comparable challenger of a weak owner switches instantly for a
+    passive device, but for an active-need device the challenger may not
+    have actively scanned recently, so the handoff defers through the
+    rescue and lands only past the accept time.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:77"
+    start = 50.0
+    cancel_active = manager.async_register_active_scan(address)
+    weak_owner = generate_ble_device(address, "weak_owner_hci0")
+    weak_owner_adv = generate_advertisement_data(
+        local_name="weak_owner_hci0", service_uuids=[], rssi=-90
+    )
+    inject_advertisement_with_time_and_source(
+        weak_owner, weak_owner_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    # stale_seconds = 15, durably-gone = 37.5
+    manager.async_set_fallback_availability_interval(address, 10)
+
+    comparable = generate_ble_device(address, "comparable_hci1")
+    comparable_adv = generate_advertisement_data(
+        local_name="comparable_hci1", service_uuids=[], rssi=-95
+    )
+    # Comparable challenger of a weak owner just past stale: deferred,
+    # episode started (no instant roaming handoff).
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 16, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is weak_owner
+    assert manager._rescue_triggered[address] == start + 16
+    # A rescue window covered the address; the first adv past the accept
+    # time hands off.
+    manager._auto_scheduler._rescue_accept_after[address] = start + 21
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 22, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is comparable
     assert address not in manager._rescue_triggered

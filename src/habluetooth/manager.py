@@ -694,26 +694,30 @@ class BluetoothManager:
         need via async_register_active_scan because the device's data rides
         SCAN_RSP):
 
-        In every case a comparable-or-stronger challenger of a weak owner
-        takes over immediately (ordinary roaming), and an owner silent
-        past the durably-gone threshold loses to any challenger: receive
-        time is all we have (adverts carry no timestamp), so the
-        durably-gone wait is what lets a device that truly moved into
-        weak-only coverage still hand off. Any other challenger of a
-        strong owner must NOT take over on a single missed interval: the
-        owner almost certainly re-hears the device on its next
-        advertisement and either the handoff flaps straight back (a
-        materially stronger reclaim) or cannot flap back and ping-pongs on
-        alternating misses (a comparable pair) — the stationary-device
-        flap issues #568/#580 fixed. What differs is how the wait ends:
+        An owner silent past the durably-gone threshold loses to any
+        challenger, for every device class: receive time is all we have
+        (adverts carry no timestamp), so the durably-gone wait is what
+        lets a device that truly moved into weak-only coverage still hand
+        off. Short of that, a challenger of a strong owner must NOT take
+        over on a single missed interval: the owner almost certainly
+        re-hears the device on its next advertisement and either the
+        handoff flaps straight back (a materially stronger reclaim) or
+        cannot flap back and ping-pongs on alternating misses (a
+        comparable pair) — the stationary-device flap issues #568/#580
+        fixed. What differs per device class is everything in between:
 
-        * Passive device (no registered need): payloads are identical
-          across scanners, so waiting costs nothing data-wise; the
-          durably-gone handoff is the only escalation.
-        * Active-need device: instead of pinning ownership until the owner
-          is durably gone (issue #591), trigger an active window on both
-          the owner (a chance to re-hear the device) and the challenger
-          (its next capture is a fresh scan response), and hand off on the
+        * Passive device (no registered need): a comparable-or-stronger
+          challenger of a weak owner takes over immediately (ordinary
+          roaming; payloads are identical across scanners, so its capture
+          is as good as anyone's). Anything else waits for durably-gone,
+          which costs nothing data-wise for the same reason.
+        * Active-need device: there is no roaming shortcut at all — even a
+          comparable challenger of a weak owner may be an AUTO scanner in
+          its passive phase whose capture carries no fresh scan response
+          (issue #568). Instead of pinning ownership until the owner is
+          durably gone (issue #591), trigger an active window on both the
+          owner (a chance to re-hear the device) and the challenger (its
+          next capture is a fresh scan response), and hand off on the
           first challenger advertisement past the accept time while the
           owner stayed silent (see _rescue_stale_handoff). Accept times
           always sit RESCUE_SCAN_ACCEPT_SECONDS after coverage so the
@@ -730,38 +734,62 @@ class BluetoothManager:
             stale_seconds * _DURABLY_GONE_STALE_FACTOR,
             FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
         )
-        comparable_or_stronger = new_rssi >= old_rssi - ADV_RSSI_SWITCH_THRESHOLD
-        owner_strong = old_rssi >= _STRONG_OWNER_STALE_RSSI
-        if (comparable_or_stronger and not owner_strong) or elapsed > durably_gone:
+        if elapsed > durably_gone:
+            # Unconditional backstop for every device class: someone has to
+            # own a device whose owner has been silent this long, even if
+            # the challenger's capture is not an active one.
             if self._debug:
                 _LOGGER.debug(
                     "%s (%s): Switching from %s to %s (time elapsed:%s > stale"
-                    " seconds:%s; comparable_or_stronger:%s, owner_strong:%s,"
-                    " durably-gone threshold:%s)",
+                    " seconds:%s; durably-gone threshold:%s)",
                     new.name,
                     new.address,
                     self._async_describe_source(old),
                     self._async_describe_source(new),
                     elapsed,
                     stale_seconds,
-                    comparable_or_stronger,
-                    owner_strong,
                     durably_gone,
                 )
             self._end_rescue_episode(new.address, record_demotion)
             return True
         if self._auto_scheduler._requests_by_address.get(new.address) is None:
-            # Passive device: wait for durably-gone (payloads are identical
-            # across scanners, so keeping the owner costs nothing). End any
-            # rescue episode orphaned by its active-scan need being
+            # Passive device: a comparable-or-stronger challenger of a weak
+            # owner takes over immediately (ordinary roaming; its capture
+            # is as good as anyone's, payloads are identical across
+            # scanners). Anything else waits for durably-gone above, and
+            # ending the episode also cleans up after an active-scan need
             # unregistered mid-episode; a lingering entry would keep the
             # scheduler's no-episode fast path off for every dispatch.
+            comparable_or_stronger = new_rssi >= old_rssi - ADV_RSSI_SWITCH_THRESHOLD
+            owner_strong = old_rssi >= _STRONG_OWNER_STALE_RSSI
+            if comparable_or_stronger and not owner_strong:
+                if self._debug:
+                    _LOGGER.debug(
+                        "%s (%s): Switching from %s to %s (time elapsed:%s >"
+                        " stale seconds:%s; passive roaming,"
+                        " comparable_or_stronger:%s, owner_strong:%s)",
+                        new.name,
+                        new.address,
+                        self._async_describe_source(old),
+                        self._async_describe_source(new),
+                        elapsed,
+                        stale_seconds,
+                        comparable_or_stronger,
+                        owner_strong,
+                    )
+                self._end_rescue_episode(new.address, record_demotion)
+                return True
             self._end_rescue_episode(new.address, record_demotion)
             return False
-        # Active-need device with the handoff denied: run the rescue flow
-        # described above. Only the all-history decision (record_demotion)
-        # drives an episode; the connectable re-check keeps the plain
-        # damping so one adv can't double-drive the episode state.
+        # Active-need device: never take the roaming shortcut, even for a
+        # comparable challenger of a weak owner; the challenger may be an
+        # AUTO scanner sitting in its passive phase whose capture carries
+        # no fresh scan response (issue #568). Every handoff before
+        # durably-gone goes through the rescue flow, so it lands on a
+        # capture from an address a recent active window covered. Only the
+        # all-history decision (record_demotion) drives an episode; the
+        # connectable re-check keeps the plain damping so one adv can't
+        # double-drive the episode state.
         return record_demotion and self._rescue_stale_handoff(
             old, new, elapsed, stale_seconds
         )
@@ -787,9 +815,9 @@ class BluetoothManager:
         """
         Advance the rescue episode for a denied stale handoff; True = hand off.
 
-        Runs only for a device with a registered active-scan need whose
-        stale handoff was denied (strong owner / weaker challenger, not
-        durably gone). First denial starts an episode: the trigger time is
+        Runs for every stale challenger of a device with a registered
+        active-scan need that is not durably gone. First denial starts an
+        episode: the trigger time is
         recorded and the scheduler runs an active window on both the owner
         and the challenger. Later denials hand off once the rescue's accept
         time (the window has been actively scanning long enough that a
