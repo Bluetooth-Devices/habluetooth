@@ -28,6 +28,7 @@ from habluetooth.const import (
     DEFAULT_ACTIVE_SCAN_DURATION,
     DEFAULT_ACTIVE_SCAN_INTERVAL,
     DEFAULT_ON_DEMAND_SWEEP_DURATION,
+    RESCUE_SCAN_ACCEPT_SECONDS,
 )
 
 from . import generate_advertisement_data, generate_ble_device
@@ -6523,7 +6524,7 @@ async def test_trigger_rescue_auto_owner_and_auto_challenger() -> None:
     try:
         _inject_with_rssi(owner, address, rssi=-50)
         before = monotonic_time_coarse()
-        sched.trigger_rescue(address, challenger.source)
+        sched.trigger_rescue(address, challenger.source, owner.source)
         # Owner side: every due time clamped to now so the next tick fires.
         now = loop.time()
         assert all(due <= now for due in sched._schedule._due_at[address].values())
@@ -6533,8 +6534,13 @@ async def test_trigger_rescue_auto_owner_and_auto_challenger() -> None:
         await asyncio.sleep(0)
         assert challenger.active_window_calls == [7.0]
         assert not sched._rescue_tasks
-        # Completion recorded at dispatch + duration, comparable with adv times.
-        assert sched._rescue_window_end[address] >= before + 7.0
+        # Accept time recorded at dispatch + RESCUE_SCAN_ACCEPT_SECONDS,
+        # comparable with adv times; the handoff does not wait for the
+        # full window to close.
+        assert (
+            sched._rescue_accept_after[address] >= before + RESCUE_SCAN_ACCEPT_SECONDS
+        )
+        assert sched._rescue_accept_after[address] < before + 7.0
         # Owner side actually fires on its tick and re-records completion.
         await _run_worker_tick(sched, owner.source)
         assert owner.active_window_calls == [7.0]
@@ -6562,11 +6568,11 @@ async def test_trigger_rescue_active_challenger_counts_covered() -> None:
     try:
         _inject_with_rssi(owner, address, rssi=-50)
         before = monotonic_time_coarse()
-        sched.trigger_rescue(address, challenger.source)
+        sched.trigger_rescue(address, challenger.source, owner.source)
         after = monotonic_time_coarse()
         assert challenger.active_window_calls == []
         assert not sched._rescue_tasks
-        assert before <= sched._rescue_window_end[address] <= after
+        assert before <= sched._rescue_accept_after[address] <= after
     finally:
         cancel()
         c_owner()
@@ -6591,12 +6597,12 @@ async def test_trigger_rescue_active_owner_counts_covered() -> None:
     try:
         _inject_with_rssi(owner, address, rssi=-50)
         before = monotonic_time_coarse()
-        sched.trigger_rescue(address, challenger.source)
+        sched.trigger_rescue(address, challenger.source, owner.source)
         after = monotonic_time_coarse()
         # PASSIVE challenger gets no window; the owner side still covered.
         assert challenger.active_window_calls == []
         assert owner.active_window_calls == []
-        assert before <= sched._rescue_window_end[address] <= after
+        assert before <= sched._rescue_accept_after[address] <= after
     finally:
         cancel()
         c_owner()
@@ -6621,12 +6627,12 @@ async def test_trigger_rescue_connecting_challenger_not_delegated() -> None:
     try:
         _inject_with_rssi(owner, address, rssi=-50)
         challenger._add_connecting(address)
-        sched.trigger_rescue(address, challenger.source)
+        sched.trigger_rescue(address, challenger.source, owner.source)
         assert challenger.active_window_calls == []
         assert not sched._rescue_tasks
         # Owner is AUTO: its completion only lands when its tick runs, so
         # nothing has been recorded yet.
-        assert address not in sched._rescue_window_end
+        assert address not in sched._rescue_accept_after
     finally:
         challenger._finished_connecting(address, connected=False)
         cancel()
@@ -6639,23 +6645,23 @@ async def test_trigger_rescue_noop_untracked_or_not_started() -> None:
     """Untracked addresses and a never-started scheduler are safe no-ops."""
     manager = get_manager()
     sched = manager._auto_scheduler
-    sched.trigger_rescue("FF:FF:FF:FF:FF:FF", "AA:00:00:00:95:01")
-    assert "FF:FF:FF:FF:FF:FF" not in sched._rescue_window_end
+    sched.trigger_rescue("FF:FF:FF:FF:FF:FF", "AA:00:00:00:95:01", "AA:00:00:00:95:02")
+    assert "FF:FF:FF:FF:FF:FF" not in sched._rescue_accept_after
     fresh = type(sched)(manager)
-    fresh.trigger_rescue("FF:FF:FF:FF:FF:FF", "AA:00:00:00:95:01")
-    assert fresh._rescue_window_end == {}
+    fresh.trigger_rescue("FF:FF:FF:FF:FF:FF", "AA:00:00:00:95:01", "AA:00:00:00:95:02")
+    assert fresh._rescue_accept_after == {}
 
 
 @pytest.mark.asyncio
-async def test_remove_request_prunes_rescue_window_end() -> None:
+async def test_remove_request_prunes_rescue_accept_after() -> None:
     """The last request for an address prunes its rescue completion record."""
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:66:05"
     cancel = manager.async_register_active_scan(address, scan_interval=120.0)
-    sched._rescue_window_end[address] = 1.0
+    sched._rescue_accept_after[address] = 1.0
     cancel()
-    assert address not in sched._rescue_window_end
+    assert address not in sched._rescue_accept_after
 
 
 @pytest.mark.asyncio
@@ -6663,11 +6669,11 @@ async def test_stop_clears_rescue_state() -> None:
     """stop() drops rescue completions and cancels in-flight rescue windows."""
     manager = get_manager()
     sched = manager._auto_scheduler
-    sched._rescue_window_end["11:22:33:44:66:06"] = 1.0
+    sched._rescue_accept_after["11:22:33:44:66:06"] = 1.0
     task = asyncio.get_running_loop().create_task(asyncio.sleep(60, result=True))
     sched._rescue_tasks.add(task)
     sched.stop()
-    assert sched._rescue_window_end == {}
+    assert sched._rescue_accept_after == {}
     assert not sched._rescue_tasks
     assert task.cancelled() or task.cancelling()
     with contextlib.suppress(asyncio.CancelledError):
@@ -6675,7 +6681,7 @@ async def test_stop_clears_rescue_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_worker_tick_records_rescue_window_end() -> None:
+async def test_worker_tick_records_rescue_accept_after() -> None:
     """The owner tick path records the window end for every covered address."""
     manager = get_manager()
     sched = manager._auto_scheduler
@@ -6691,14 +6697,16 @@ async def test_worker_tick_records_rescue_window_end() -> None:
         before = monotonic_time_coarse()
         await _run_worker_tick(sched, scanner.source)
         assert scanner.active_window_calls == [5.0]
-        assert sched._rescue_window_end[address] >= before + 5.0
+        assert (
+            sched._rescue_accept_after[address] >= before + RESCUE_SCAN_ACCEPT_SECONDS
+        )
     finally:
         cancel()
         register_cancel()
 
 
 @pytest.mark.asyncio
-async def test_fallback_dispatch_records_rescue_window_end() -> None:
+async def test_fallback_dispatch_records_rescue_accept_after() -> None:
     """A window delegated to a fallback still records the rescue completion."""
     manager = get_manager()
     sched = manager._auto_scheduler
@@ -6718,7 +6726,9 @@ async def test_fallback_dispatch_records_rescue_window_end() -> None:
         before = monotonic_time_coarse()
         await _run_worker_tick(sched, owner.source)
         assert fallback.active_window_calls == [7.0]
-        assert sched._rescue_window_end[address] >= before + 7.0
+        assert (
+            sched._rescue_accept_after[address] >= before + RESCUE_SCAN_ACCEPT_SECONDS
+        )
     finally:
         owner._finished_connecting(address, connected=False)
         cancel()
@@ -6727,7 +6737,7 @@ async def test_fallback_dispatch_records_rescue_window_end() -> None:
 
 
 @pytest.mark.asyncio
-async def test_covered_by_active_records_rescue_window_end() -> None:
+async def test_covered_by_active_records_rescue_accept_after() -> None:
     """Owner mid-connect but an ACTIVE scanner covers: completion is now."""
     manager = get_manager()
     sched = manager._auto_scheduler
@@ -6748,9 +6758,93 @@ async def test_covered_by_active_records_rescue_window_end() -> None:
         await _run_worker_tick(sched, owner.source)
         after = monotonic_time_coarse()
         assert active.active_window_calls == []
-        assert before <= sched._rescue_window_end[address] <= after
+        assert before <= sched._rescue_accept_after[address] <= after
     finally:
         owner._finished_connecting(address, connected=False)
         cancel()
         c_owner()
         c_active()
+
+
+@pytest.mark.asyncio
+async def test_trigger_rescue_unregistered_sides_are_skipped() -> None:
+    """Unregistered owner or challenger sources are safe no-ops per side."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:10"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:9A:01", BluetoothScanningMode.ACTIVE)
+    c_owner = manager.async_register_scanner(owner)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        # Challenger never registered: only the owner side is served.
+        before = monotonic_time_coarse()
+        sched.trigger_rescue(address, "AA:00:00:00:9A:99", owner.source)
+        assert sched._rescue_accept_after[address] >= before
+        # Owner never registered: only the challenger side is served, and
+        # a later accept time is never rolled back by an earlier one.
+        recorded = sched._rescue_accept_after[address] + 1000.0
+        sched._rescue_accept_after[address] = recorded
+        sched.trigger_rescue(address, owner.source, "AA:00:00:00:9A:99")
+        assert sched._rescue_accept_after[address] == recorded
+    finally:
+        cancel()
+        c_owner()
+
+
+@pytest.mark.asyncio
+async def test_trigger_rescue_auto_challenger_without_worker() -> None:
+    """A dispatch to an AUTO challenger whose worker is gone still works."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:11"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:9B:01", BluetoothScanningMode.ACTIVE)
+    challenger = _DiscoverableAutoScanner(
+        "AA:00:00:00:9B:02", BluetoothScanningMode.AUTO
+    )
+    c_owner = manager.async_register_scanner(owner)
+    c_challenger = manager.async_register_scanner(challenger)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        worker = sched._workers.pop(challenger.source)
+        sched.trigger_rescue(address, challenger.source, owner.source)
+        for task in list(sched._rescue_tasks):
+            await task
+        assert challenger.active_window_calls == [7.0]
+        sched._workers[challenger.source] = worker
+    finally:
+        cancel()
+        c_owner()
+        c_challenger()
+
+
+@pytest.mark.asyncio
+async def test_schedule_advance_to_clamps_only_later_entries() -> None:
+    """advance_to pulls later due times forward and ignores unknown addresses."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    schedule = sched._schedule
+    address = "11:22:33:44:66:12"
+    cancel_a = manager.async_register_active_scan(address, scan_interval=120.0)
+    cancel_b = manager.async_register_active_scan(address, scan_interval=300.0)
+    scanner = _DiscoverableAutoScanner("AA:00:00:00:9C:01", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject_with_rssi(scanner, address, rssi=-50)
+        entries = schedule._due_at[address]
+        assert len(entries) == 2
+        earlier, later = sorted(entries.values())
+        midpoint = (earlier + later) / 2
+        schedule.advance_to(address, midpoint)
+        assert sorted(entries.values()) == [earlier, midpoint]
+        # Unknown address is a no-op.
+        schedule.advance_to("FF:FF:FF:FF:FF:FF", midpoint)
+    finally:
+        cancel_a()
+        cancel_b()
+        register_cancel()

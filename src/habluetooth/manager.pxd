@@ -104,7 +104,6 @@ cdef class BluetoothManager:
 
     @cython.locals(
         durably_gone=double,
-        needs_active_scan=bint,
         comparable_or_stronger=bint,
         owner_strong=bint,
     )

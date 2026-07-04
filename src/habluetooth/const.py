@@ -138,6 +138,15 @@ DEFAULT_ON_DEMAND_SWEEP_DURATION: Final = 10.0
 # paths line up with a typical connect completing (~10s).
 RESCUE_SCAN_RETRY_SECONDS: Final = 30.0
 
+# How long a rescue active window must have been running before a
+# capture from the scanning side is trusted as an active capture.
+# Once the radio has been actively scanning this long, an incoming
+# advertisement cannot be a delayed passive capture that is still
+# missing its scan response, so the deferred handoff can proceed
+# without waiting for the full window to close. Matches
+# AUTO_WINDOW_MIN_DURATION so it never exceeds a window's length.
+RESCUE_SCAN_ACCEPT_SECONDS: Final = 5.0
+
 
 FAILED_ADAPTER_MAC = "00:00:00:00:00:00"
 

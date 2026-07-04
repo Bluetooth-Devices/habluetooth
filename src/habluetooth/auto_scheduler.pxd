@@ -10,6 +10,7 @@ cdef double _AUTO_WINDOW_MIN_DURATION
 cdef double _AUTO_CONNECTING_DEFER
 cdef double _AUTO_COALESCE_LOOKAHEAD
 cdef double _ON_DEMAND_EXTENSION_SLOP
+cdef double _RESCUE_SCAN_ACCEPT_SECONDS
 cdef int NO_RSSI_VALUE
 
 
@@ -78,6 +79,9 @@ cdef class _ScanSchedule:
 
     cpdef void drop(self, str address, ActiveScanRequest request)
 
+    @cython.locals(entries=dict)
+    cpdef void advance_to(self, str address, double due_time)
+
     cpdef void assign(self, str address, str new_source)
 
     cpdef void unown(self, str address)
@@ -96,7 +100,7 @@ cdef class AutoScanScheduler:
     cdef public _ScanSchedule _schedule
     cdef public dict _workers
     cdef public dict _last_window_by_address
-    cdef public dict _rescue_window_end
+    cdef public dict _rescue_accept_after
     cdef public set _rescue_tasks
     cdef public object _loop
     cdef public bint _running
@@ -136,16 +140,18 @@ cdef class AutoScanScheduler:
         coarse_now=double,
         requests=set,
     )
-    cpdef void trigger_rescue(self, str address, str challenger_source)
+    cpdef void trigger_rescue(
+        self, str address, str challenger_source, str owner_source
+    )
 
-    cpdef void _record_rescue_end(self, str address, double end)
+    cpdef void _record_rescue_accept(self, str address, double accept_after)
 
-    @cython.locals(rescue_end=double)
-    cpdef void _record_rescue_window_ends(self, list due_buckets, double duration)
+    @cython.locals(accept_after=double)
+    cpdef void _record_rescue_accepts(self, list due_buckets)
 
-    @cython.locals(entries=dict)
     cpdef void _rescue_owner_side(
-        self, str address, set requests, double now, double coarse_now
+        self, str address, str owner_source, set requests, double now,
+        double coarse_now
     )
 
     @cython.locals(duration=double)

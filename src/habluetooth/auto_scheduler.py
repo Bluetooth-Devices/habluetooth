@@ -138,10 +138,13 @@ challenger_source)``. The owner side is served through the normal
 schedule (due times clamped to now, worker woken, connecting
 fallback included); the challenger side gets a directly delegated
 window so its next capture carries a fresh scan response. Every
-dispatch site records the window's end in ``_rescue_window_end``
-(coarse monotonic so it compares with advertisement times); the
-manager hands the device off on the first challenger advertisement
-that postdates the completed window while the owner stayed silent.
+dispatch site records the window's accept time in
+``_rescue_accept_after`` (dispatch + RESCUE_SCAN_ACCEPT_SECONDS,
+coarse monotonic so it compares with advertisement times); once a
+window has been actively scanning that long, a capture cannot be a
+delayed passive one, so the manager hands the device off on the
+first challenger advertisement that postdates the accept time while
+the owner stayed silent, without waiting for the window to close.
 
 
 Invariants
@@ -181,6 +184,7 @@ from .const import (
     AUTO_REDISCOVERY_SWEEP_DURATION,
     AUTO_WINDOW_MAX_DURATION,
     AUTO_WINDOW_MIN_DURATION,
+    RESCUE_SCAN_ACCEPT_SECONDS,
 )
 from .models import BluetoothScanningMode
 
@@ -197,6 +201,7 @@ _AUTO_REDISCOVERY_SWEEP_DURATION = AUTO_REDISCOVERY_SWEEP_DURATION
 _AUTO_WINDOW_MAX_DURATION = AUTO_WINDOW_MAX_DURATION
 _AUTO_WINDOW_MIN_DURATION = AUTO_WINDOW_MIN_DURATION
 _AUTO_COALESCE_LOOKAHEAD = AUTO_COALESCE_LOOKAHEAD
+_RESCUE_SCAN_ACCEPT_SECONDS = RESCUE_SCAN_ACCEPT_SECONDS
 
 # Retry delay when the owner is mid-connect: short enough that we
 # retry shortly after a typical connect completes (~10s), long enough
@@ -511,11 +516,11 @@ class _ScannerWorker:
             # RSSI flip would let the new owner fire a duplicate
             # window.
             self._advance_due(due_buckets, now)
-            # Record when this window ends for every address it covers
-            # (coarse monotonic so it compares with adv times); the
-            # manager's stale-handoff deferral hands off on the first
-            # challenger adv past this.
-            self._scheduler._record_rescue_window_ends(due_buckets, duration)
+            # Record this window's accept time for every address it
+            # covers (coarse monotonic so it compares with adv times);
+            # the manager's stale-handoff deferral hands off on the
+            # first challenger adv past this.
+            self._scheduler._record_rescue_accepts(due_buckets)
             # Any active window is functionally a sweep — the
             # rediscovery sweep exists only to give AUTO scanners
             # that haven't actively scanned in 12 h a floor, so
@@ -583,6 +588,7 @@ class _ScannerWorker:
         exclude_source = self._scanner.source
         had_any_progress = False
         retry_at = now + _AUTO_CONNECTING_DEFER
+        coarse_now = monotonic_time_coarse()
         for address, entries, due in due_buckets:
             covered, fallback = self._scheduler._resolve_fallback_for_address(
                 address, exclude_source
@@ -600,9 +606,9 @@ class _ScannerWorker:
                 # here, so the tick time is the window start. Delegated
                 # addresses are recorded below at their dispatch time.
                 self._scheduler._last_window_by_address[address] = (now, None)
-                # Already actively scanned: the rescue window counts as
-                # ending now (coarse monotonic, see _rescue_window_end).
-                self._scheduler._record_rescue_end(address, monotonic_time_coarse())
+                # Already actively scanned: accept captures immediately
+                # (coarse monotonic, see _rescue_accept_after).
+                self._scheduler._record_rescue_accept(address, coarse_now)
                 continue
             existing = fallback_groups.get(fallback.source)
             if existing is None:
@@ -654,10 +660,10 @@ class _ScannerWorker:
             # tick suppression off during the delegated window) and
             # under-report ``last_active_window`` for these addresses.
             dispatch_now = loop.time()
-            rescue_end = monotonic_time_coarse() + duration
+            accept_after = monotonic_time_coarse() + _RESCUE_SCAN_ACCEPT_SECONDS
             for request in fb_due:
                 last_window_by_address[request.address] = (dispatch_now, fb.source)
-                self._scheduler._record_rescue_end(request.address, rescue_end)
+                self._scheduler._record_rescue_accept(request.address, accept_after)
             fb_worker = workers.get(fb.source)
             if fb_worker is not None:
                 fb_worker.note_window_dispatched(dispatch_now + duration, dispatch_now)
@@ -706,6 +712,15 @@ class _ScanSchedule:
         entries.pop(request, None)
         if not entries:
             self.unown(address)
+
+    def advance_to(self, address: str, due_time: float) -> None:
+        """Pull every due time for ``address`` forward to ``due_time``."""
+        entries = self._due_at.get(address)
+        if entries is None:
+            return
+        for request in entries:
+            if entries[request] > due_time:
+                entries[request] = due_time
 
     def assign(self, address: str, new_source: str) -> None:
         """Move ownership of ``address`` to ``new_source`` and wake its worker."""
@@ -772,8 +787,8 @@ class AutoScanScheduler:
         "_on_demand_sweep_end",
         "_on_demand_sweep_future",
         "_requests_by_address",
+        "_rescue_accept_after",
         "_rescue_tasks",
-        "_rescue_window_end",
         "_running",
         "_schedule",
         "_workers",
@@ -792,15 +807,16 @@ class AutoScanScheduler:
         # to the current owner to see if the right scanner scanned it.
         # Diagnostics-only; pruned with requests.
         self._last_window_by_address: dict[str, tuple[float, str | None]] = {}
-        # address -> coarse-monotonic time the last active window covering
-        # it ended (dispatch time + duration; "already ACTIVE and scanning"
-        # counts as ending now). Written at every dispatch site plus
-        # trigger_rescue; read by the manager's stale-handoff deferral,
-        # which hands a device off on the first challenger advertisement
-        # that postdates this (issue #591). Coarse monotonic on purpose so
-        # it compares directly with advertisement times (loop.time() is a
-        # different clock). Pruned with requests.
-        self._rescue_window_end: dict[str, float] = {}
+        # address -> coarse-monotonic time after which a capture from the
+        # scanning side is trusted as an active capture (dispatch time +
+        # RESCUE_SCAN_ACCEPT_SECONDS; "already ACTIVE and scanning" counts
+        # as now). Written at every dispatch site plus trigger_rescue;
+        # read by the manager's stale-handoff deferral, which hands a
+        # device off on the first challenger advertisement that postdates
+        # this (issue #591). Coarse monotonic on purpose so it compares
+        # directly with advertisement times (loop.time() is a different
+        # clock). Pruned with requests.
+        self._rescue_accept_after: dict[str, float] = {}
         # Strong refs to in-flight challenger-side rescue windows started
         # by trigger_rescue (fire-and-forget create_task).
         self._rescue_tasks: set[asyncio.Task[bool]] = set()
@@ -871,7 +887,7 @@ class AutoScanScheduler:
         self._schedule.clear()
         self._workers.clear()
         self._last_window_by_address.clear()
-        self._rescue_window_end.clear()
+        self._rescue_accept_after.clear()
         for task in self._rescue_tasks:
             task.cancel()
         self._rescue_tasks.clear()
@@ -965,7 +981,7 @@ class AutoScanScheduler:
             if not bucket:
                 del self._requests_by_address[request.address]
                 self._last_window_by_address.pop(request.address, None)
-                self._rescue_window_end.pop(request.address, None)
+                self._rescue_accept_after.pop(request.address, None)
         self._schedule.drop(request.address, request)
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
@@ -1002,7 +1018,9 @@ class AutoScanScheduler:
         for request in requests:
             self._schedule.seed(address, request, now + request.scan_interval)
 
-    def trigger_rescue(self, address: str, challenger_source: str) -> None:
+    def trigger_rescue(
+        self, address: str, challenger_source: str, owner_source: str
+    ) -> None:
         """
         Run an active window on both sides of a deferred stale handoff.
 
@@ -1011,16 +1029,16 @@ class AutoScanScheduler:
         active scans is deferred instead of taken. The owner side gets
         an immediate window: its per-address due times are clamped to
         now and its worker woken, so the normal tick path (including
-        the connecting fallback) dispatches it and records the
-        completion. The challenger side gets a delegated window so its
-        next capture carries a fresh scan response. A scanner that is
-        already ACTIVE and scanning counts as covered now. Completion
-        lands in ``_rescue_window_end`` (coarse monotonic, comparable
-        with advertisement times); the manager hands off on the first
-        challenger advertisement that postdates it. A mid-connect,
-        passive, or stopped owner cannot get a window right now and is
-        skipped without blocking the rescue; the owner being deaf is
-        exactly the case being handed off from.
+        the connecting fallback) dispatches it and records the accept
+        time. The challenger side gets a delegated window so its next
+        capture carries a fresh scan response. A scanner that is
+        already ACTIVE and scanning counts as covered now. The accept
+        time lands in ``_rescue_accept_after`` (coarse monotonic,
+        comparable with advertisement times); the manager hands off on
+        the first challenger advertisement that postdates it. A
+        mid-connect, passive, or stopped owner cannot get a window
+        right now and is skipped without blocking the rescue; the
+        owner being deaf is exactly the case being handed off from.
         """
         loop = self._loop
         if (
@@ -1031,55 +1049,45 @@ class AutoScanScheduler:
             return
         now = loop.time()
         coarse_now = monotonic_time_coarse()
-        self._rescue_owner_side(address, requests, now, coarse_now)
+        self._rescue_owner_side(address, owner_source, requests, now, coarse_now)
         self._rescue_challenger_side(
             address, challenger_source, requests, loop, now, coarse_now
         )
 
-    def _record_rescue_end(self, address: str, end: float) -> None:
-        """Record a rescue completion, keeping any later pre-existing end."""
-        if self._rescue_window_end.get(address, 0.0) < end:
-            self._rescue_window_end[address] = end
+    def _record_rescue_accept(self, address: str, accept_after: float) -> None:
+        """Record a rescue accept time, keeping any later pre-existing one."""
+        if self._rescue_accept_after.get(address, 0.0) < accept_after:
+            self._rescue_accept_after[address] = accept_after
 
-    def _record_rescue_window_ends(
+    def _record_rescue_accepts(
         self,
         due_buckets: list[
             tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]
         ],
-        duration: float,
     ) -> None:
-        """Record a dispatched window's end for every address it covers."""
-        rescue_end = monotonic_time_coarse() + duration
+        """Record a dispatched window's accept time for the addresses it covers."""
+        accept_after = monotonic_time_coarse() + _RESCUE_SCAN_ACCEPT_SECONDS
         for bucket_address, _entries, _due in due_buckets:
-            self._record_rescue_end(bucket_address, rescue_end)
+            self._record_rescue_accept(bucket_address, accept_after)
 
     def _rescue_owner_side(
         self,
         address: str,
+        owner_source: str,
         requests: set[ActiveScanRequest],
         now: float,
         coarse_now: float,
     ) -> None:
         """Serve the owner's side of a rescue through the normal schedule."""
-        manager = self._manager
-        history = manager.async_last_service_info(address, False)
-        owner_source = None if history is None else history.source
-        owner_scanner = (
-            None if owner_source is None else manager._sources.get(owner_source)
-        )
-        if owner_scanner is None:
+        if (owner_scanner := self._manager._sources.get(owner_source)) is None:
             return
         if owner_source in self._workers:
-            # AUTO owner: clamp its due times to now and wake its
+            # AUTO owner: bring its due times to now and wake its
             # worker; the tick path dispatches the window (or routes
             # to a fallback when the owner is mid-connect) and
-            # records the completion time.
+            # records the accept time.
             self._seed_requests(address, requests, now)
-            entries = self._schedule._due_at.get(address)
-            if entries is not None:
-                for request in entries:
-                    if entries[request] > now:
-                        entries[request] = now
+            self._schedule.advance_to(address, now)
             self._schedule.assign(address, owner_source)
         elif (
             owner_scanner.requested_mode is BluetoothScanningMode.ACTIVE
@@ -1087,7 +1095,7 @@ class AutoScanScheduler:
         ):
             # Already actively scanning: the owner's silence is
             # already meaningful; count its side as covered now.
-            self._record_rescue_end(address, coarse_now)
+            self._record_rescue_accept(address, coarse_now)
 
     def _rescue_challenger_side(
         self,
@@ -1103,7 +1111,7 @@ class AutoScanScheduler:
             return
         mode = challenger.requested_mode
         if mode is BluetoothScanningMode.ACTIVE and challenger.scanning:
-            self._record_rescue_end(address, coarse_now)
+            self._record_rescue_accept(address, coarse_now)
             return
         if (
             mode is not BluetoothScanningMode.AUTO
@@ -1112,11 +1120,11 @@ class AutoScanScheduler:
             return
         # Delegate a window to the challenger directly (it is not the
         # schedule's owner, so the tick path will not serve it). The
-        # completion is recorded pre-dispatch like every other site: a
+        # accept time is recorded pre-dispatch like every other site: a
         # declined window still advances so a stuck scanner cannot pin
         # the handoff past durably-gone.
         duration = self._coalesce_duration(list(requests))
-        self._record_rescue_end(address, coarse_now + duration)
+        self._record_rescue_accept(address, coarse_now + _RESCUE_SCAN_ACCEPT_SECONDS)
         self._last_window_by_address[address] = (now, challenger_source)
         if (worker := self._workers.get(challenger_source)) is not None:
             worker.note_window_dispatched(now + duration, now)

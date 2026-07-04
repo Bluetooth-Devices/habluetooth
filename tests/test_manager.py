@@ -1355,6 +1355,9 @@ async def test_stale_passive_device_switches_to_weaker_scanner(
     """
     address = "44:44:33:11:23:60"
     start = 50.0
+    # Exercise the non-debug switch path; the sibling passive test runs
+    # with the test-default debug logging on.
+    get_manager()._debug = False
     strong = generate_ble_device(address, "strong_hci0")
     strong_adv = generate_advertisement_data(
         local_name="strong_hci0", service_uuids=[], rssi=-46
@@ -1412,19 +1415,23 @@ async def test_stale_passive_strong_owner_yields_to_comparable_scanner(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+@pytest.mark.parametrize("debug", [True, False])
 async def test_stale_active_need_defers_then_switches_after_rescue_window(
     register_hci0_scanner: None,
     register_hci1_scanner: None,
+    debug: bool,
 ) -> None:
     """
     An active-need device defers the stale handoff until a rescue window ran.
 
     The first challenger advertisement past the stale window starts a rescue
-    episode (ownership kept); once the rescue window's completion is recorded
-    and the owner stays silent, the next challenger advertisement that
-    postdates the completion takes ownership.
+    episode (ownership kept); once the rescue's accept time is recorded and
+    the owner stays silent, the next challenger advertisement that postdates
+    it takes ownership. Runs with debug logging both on and off to cover
+    both sides of the logging branches.
     """
     manager = get_manager()
+    manager._debug = debug
     address = "44:44:33:11:23:62"
     start = 50.0
     cancel_active = manager.async_register_active_scan(address)
@@ -1451,7 +1458,7 @@ async def test_stale_active_need_defers_then_switches_after_rescue_window(
     # A rescue window covering the address completed while the owner
     # stayed silent (the fake scanners cannot run real windows, so the
     # completion is recorded directly).
-    manager._auto_scheduler._rescue_window_end[address] = start + 20
+    manager._auto_scheduler._rescue_accept_after[address] = start + 20
     # Still before the completion: owner kept.
     inject_advertisement_with_time_and_source(
         comparable, comparable_adv, start + 19, HCI1_SOURCE_ADDRESS
@@ -1501,7 +1508,7 @@ async def test_stale_active_need_owner_reheard_invalidates_episode(
         comparable, comparable_adv, start + 16, HCI1_SOURCE_ADDRESS
     )
     assert manager._rescue_triggered[address] == start + 16
-    manager._auto_scheduler._rescue_window_end[address] = start + 17
+    manager._auto_scheduler._rescue_accept_after[address] = start + 17
     # The owner re-hears the device: the episode is now moot.
     inject_advertisement_with_time_and_source(
         strong, strong_adv, start + 18, HCI0_SOURCE_ADDRESS
@@ -1549,7 +1556,7 @@ async def test_stale_active_need_retriggers_when_window_never_ran(
     real_scheduler = manager._auto_scheduler
     mock_scheduler = Mock()
     mock_scheduler._requests_by_address = {address: {Mock()}}
-    mock_scheduler._rescue_window_end = {}
+    mock_scheduler._rescue_accept_after = {}
     manager._auto_scheduler = mock_scheduler
     try:
         # Episode starts: first trigger.
