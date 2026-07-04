@@ -6574,11 +6574,18 @@ async def test_trigger_rescue_active_challenger_counts_covered() -> None:
         # Already actively scanning: no window, no task, covered with
         # the standard accept grace.
         assert challenger.active_window_calls == []
+        assert owner.active_window_calls == []
         assert not sched._rescue_tasks
         assert (
             before + RESCUE_SCAN_ACCEPT_SECONDS
             <= sched._rescue_accept_after[address]
             <= after + RESCUE_SCAN_ACCEPT_SECONDS
+        )
+        # The owner side is skipped entirely: its scheduled due times are
+        # not clamped to now.
+        loop_now = asyncio.get_running_loop().time()
+        assert all(
+            due > loop_now + 60 for due in sched._schedule._due_at[address].values()
         )
     finally:
         cancel()
@@ -6811,11 +6818,11 @@ async def test_trigger_rescue_unregistered_sides_are_skipped() -> None:
         before = monotonic_time_coarse()
         sched.trigger_rescue(address, "AA:00:00:00:9A:99", owner.source)
         assert sched._rescue_accept_after[address] >= before
-        # Owner never registered: the owner side is skipped and an ACTIVE
-        # challenger is never delegated a window, so nothing is recorded.
+        # Neither side registered: nothing is recorded and the owner
+        # side's unregistered guard is exercised.
         recorded = sched._rescue_accept_after[address] + 1000.0
         sched._rescue_accept_after[address] = recorded
-        sched.trigger_rescue(address, owner.source, "AA:00:00:00:9A:99")
+        sched.trigger_rescue(address, "AA:00:00:00:9A:99", "AA:00:00:00:9A:98")
         assert sched._rescue_accept_after[address] == recorded
         # A later accept time is never rolled back by an earlier one: the
         # ACTIVE owner side records "now", which loses to the later value.

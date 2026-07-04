@@ -183,7 +183,7 @@ cdef class AutoScanScheduler:
     cpdef void _rescue_challenger_side(
         self,
         str address,
-        str challenger_source,
+        object challenger,
         set requests,
         object loop,
         double now,

@@ -1033,19 +1033,23 @@ class AutoScanScheduler:
         self, address: str, challenger_source: str, owner_source: str
     ) -> None:
         """
-        Run an active window on both sides of a deferred stale handoff.
+        Serve a deferred stale handoff; scans start only on AUTO scanners.
 
         Called synchronously by the manager's advertisement arbitration
         (issue #591) when the stale handoff for a device that needs
-        active scans is deferred instead of taken. The owner side gets
-        an immediate window: its per-address due times are clamped to
-        now and its worker woken, so the normal tick path (including
-        the connecting fallback) dispatches it and records the accept
-        time. The challenger side gets a delegated window so its next
-        capture carries a fresh scan response. A scanner that is already
-        ACTIVE and scanning counts as covered, with the standard accept
-        grace so the owner always gets one re-hear window before any
-        handoff. The accept time lands in
+        active scans is deferred instead of taken. A challenger that is
+        already ACTIVE and scanning short-circuits everything: its
+        captures already carry the scan response and the owner only
+        needs to hear a bare advertisement (passive listening suffices)
+        to invalidate the episode, so no window runs anywhere and only
+        the accept grace is recorded. Otherwise the owner side gets an
+        immediate window when the owner is AUTO (due times clamped to
+        now, worker woken, so the normal tick path including the
+        connecting fallback dispatches it) or counts as covered when
+        the owner is ACTIVE, and an AUTO challenger gets a delegated
+        window so its next capture carries a fresh scan response. Every
+        accept time keeps the standard grace so the owner always gets
+        one re-hear window before any handoff, and lands in
         ``_rescue_accept_after`` (coarse monotonic, comparable with
         advertisement times); the manager hands off on the first
         challenger advertisement that postdates it. A passive or
@@ -1064,12 +1068,25 @@ class AutoScanScheduler:
             or (requests := self._requests_by_address.get(address)) is None
         ):
             return
-        now = loop.time()
         coarse_now = monotonic_time_coarse()
+        challenger = self._manager._sources.get(challenger_source)
+        if (
+            challenger is not None
+            and challenger.requested_mode is BluetoothScanningMode.ACTIVE
+            and challenger.scanning
+        ):
+            # The challenger is already actively scanning: no scan needs
+            # to start on either side; only the accept grace matters.
+            self._record_rescue_accept(
+                address, coarse_now + _RESCUE_SCAN_ACCEPT_SECONDS
+            )
+            return
+        now = loop.time()
         self._rescue_owner_side(address, owner_source, requests, now, coarse_now)
-        self._rescue_challenger_side(
-            address, challenger_source, requests, loop, now, coarse_now
-        )
+        if challenger is not None:
+            self._rescue_challenger_side(
+                address, challenger, requests, loop, now, coarse_now
+            )
 
     def _record_rescue_accept(self, address: str, accept_after: float) -> None:
         """Record a rescue accept time, keeping any later pre-existing one."""
@@ -1169,7 +1186,7 @@ class AutoScanScheduler:
     def _rescue_challenger_side(
         self,
         address: str,
-        challenger_source: str,
+        challenger: BaseHaScanner,
         requests: set[ActiveScanRequest],
         loop: asyncio.AbstractEventLoop,
         now: float,
@@ -1178,22 +1195,13 @@ class AutoScanScheduler:
         """
         Delegate a rescue window to the challenger's scanner.
 
-        An ACTIVE-and-scanning challenger already produces active captures,
-        so its side counts as covered with the standard accept grace (the
-        owner still gets one re-hear window before any handoff). Only an
-        AUTO challenger needs (and can take) a window; a passive or
-        mid-connect challenger cannot produce an active capture right now.
+        Only an AUTO challenger needs (and can take) a window; a passive
+        or mid-connect challenger cannot produce an active capture right
+        now (an ACTIVE-and-scanning challenger short-circuited the rescue
+        in ``trigger_rescue`` before either side was served).
         """
-        if (challenger := self._manager._sources.get(challenger_source)) is None:
-            return
-        mode = challenger.requested_mode
-        if mode is BluetoothScanningMode.ACTIVE and challenger.scanning:
-            self._record_rescue_accept(
-                address, coarse_now + _RESCUE_SCAN_ACCEPT_SECONDS
-            )
-            return
         if (
-            mode is not BluetoothScanningMode.AUTO
+            challenger.requested_mode is not BluetoothScanningMode.AUTO
             or challenger._connections_in_progress() > 0
         ):
             return
@@ -1201,7 +1209,7 @@ class AutoScanScheduler:
         # schedule's owner, so the tick path will not serve it).
         duration = self._coalesce_duration(requests)
         self._mark_delegated_dispatch(
-            challenger_source,
+            challenger.source,
             [address],
             now,
             duration,
