@@ -175,6 +175,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from bleak_retry_connector import NO_RSSI_VALUE
@@ -1175,7 +1176,30 @@ class AutoScanScheduler:
         )
         task = loop.create_task(challenger.async_request_active_window(duration))
         self._rescue_tasks.add(task)
-        task.add_done_callback(self._rescue_tasks.discard)
+        task.add_done_callback(
+            partial(self._rescue_task_done, challenger.name, duration)
+        )
+
+    def _rescue_task_done(
+        self, name: str, duration: float, task: asyncio.Task[bool]
+    ) -> None:
+        """
+        Reap a finished challenger rescue window task.
+
+        Drops the strong ref and retrieves the exception of a failed
+        window so it is logged like the awaited fallback dispatch path
+        instead of surfacing as an asyncio unretrieved-exception error;
+        cancellation (``stop()``) is not a failure.
+        """
+        self._rescue_tasks.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            _LOGGER.error(
+                "%s: error running rescue active window of %.1fs: %s",
+                name,
+                duration,
+                exc,
+                exc_info=exc,
+            )
 
     def _resolve_fallback_for_address(
         self, address: str, exclude_source: str

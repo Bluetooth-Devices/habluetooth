@@ -6860,3 +6860,45 @@ async def test_schedule_advance_to_clamps_only_later_entries() -> None:
         cancel_a()
         cancel_b()
         register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_trigger_rescue_challenger_window_failure_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed challenger rescue window is logged, not left unretrieved."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:13"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+
+    class _RaisingScanner(_DiscoverableAutoScanner):
+        async def async_request_active_window(self, duration: float) -> bool:
+            msg = "boom"
+            raise ValueError(msg)
+
+    owner = _DiscoverableAutoScanner("AA:00:00:00:9D:01", BluetoothScanningMode.ACTIVE)
+    challenger = _RaisingScanner("AA:00:00:00:9D:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_challenger = manager.async_register_scanner(challenger)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        with caplog.at_level(logging.ERROR, logger="habluetooth.auto_scheduler"):
+            sched.trigger_rescue(address, challenger.source, owner.source)
+            for task in list(sched._rescue_tasks):
+                with contextlib.suppress(ValueError):
+                    await task
+            # Let the done callbacks run.
+            await asyncio.sleep(0)
+        assert not sched._rescue_tasks
+        assert any(
+            "error running rescue active window" in record.getMessage()
+            and challenger.source in record.getMessage()
+            for record in caplog.records
+        )
+    finally:
+        cancel()
+        c_owner()
+        c_challenger()

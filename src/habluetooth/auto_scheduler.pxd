@@ -174,6 +174,10 @@ cdef class AutoScanScheduler:
         double coarse_now
     )
 
+    cpdef void _rescue_task_done(
+        self, str name, double duration, object task
+    )
+
     @cython.locals(duration=double)
     cpdef void _rescue_challenger_side(
         self,
