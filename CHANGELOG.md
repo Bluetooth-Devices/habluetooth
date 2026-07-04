@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.26.5 (2026-07-04)
+
+### Bug fixes
+
+
+- Require one and a half stale windows before a roam handoff ([`d495968`](https://github.com/Bluetooth-Devices/habluetooth/commit/d4959685247283b52201f24d36ad896c9bec521a))
+
+
 ## v6.26.4 (2026-07-04)
 
 ### Bug fixes
