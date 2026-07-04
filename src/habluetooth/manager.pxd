@@ -13,6 +13,7 @@ cdef double _DURABLY_GONE_STALE_FACTOR
 cdef int _STRONG_OWNER_STALE_RSSI
 cdef double _RSSI_SMOOTHING_FACTOR
 cdef int _ADV_RSSI_SWITCH_DEADBAND
+cdef double _RESCUE_SCAN_RETRY_SECONDS
 cdef frozenset _EMPTY_DEMOTED
 cdef object FILTER_UUIDS
 cdef object AdvertisementData
@@ -54,6 +55,7 @@ cdef class BluetoothManager:
     cdef public dict _connectable_history
     cdef public dict _smoothed_rssi
     cdef public dict _demoted_sources
+    cdef public dict _rescue_triggered
     cdef public dict _name_cache
     cdef public set _non_connectable_scanners
     cdef public set _connectable_scanners
@@ -88,9 +90,6 @@ cdef class BluetoothManager:
     @cython.locals(
         stale_seconds=double,
         elapsed=double,
-        durably_gone=double,
-        comparable_or_stronger=bint,
-        owner_strong=bint,
         old_rssi=double,
         switch_margin=int,
     )
@@ -100,8 +99,32 @@ cdef class BluetoothManager:
         BluetoothServiceInfoBleak new,
         dict smoothed,
         double new_rssi,
+        bint record_demotion
+    )
+
+    @cython.locals(
+        durably_gone=double,
+        needs_active_scan=bint,
+        comparable_or_stronger=bint,
+        owner_strong=bint,
+    )
+    cdef bint _stale_challenger_wins(
+        self,
+        BluetoothServiceInfoBleak old,
+        BluetoothServiceInfoBleak new,
+        double new_rssi,
+        double old_rssi,
+        double elapsed,
+        double stale_seconds,
         bint record_demotion,
-        BaseHaScanner scanner
+    )
+
+    cdef bint _rescue_stale_handoff(
+        self,
+        BluetoothServiceInfoBleak old,
+        BluetoothServiceInfoBleak new,
+        double elapsed,
+        double stale_seconds,
     )
 
     @cython.locals(demoted=set)

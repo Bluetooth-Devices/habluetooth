@@ -96,6 +96,8 @@ cdef class AutoScanScheduler:
     cdef public _ScanSchedule _schedule
     cdef public dict _workers
     cdef public dict _last_window_by_address
+    cdef public dict _rescue_window_end
+    cdef public set _rescue_tasks
     cdef public object _loop
     cdef public bint _running
     cdef public object _on_demand_sweep_future
@@ -128,6 +130,34 @@ cdef class AutoScanScheduler:
     cpdef void start(self, object loop)
 
     cpdef void stop(self)
+
+    @cython.locals(
+        now=double,
+        coarse_now=double,
+        requests=set,
+    )
+    cpdef void trigger_rescue(self, str address, str challenger_source)
+
+    cpdef void _record_rescue_end(self, str address, double end)
+
+    @cython.locals(rescue_end=double)
+    cpdef void _record_rescue_window_ends(self, list due_buckets, double duration)
+
+    @cython.locals(entries=dict)
+    cpdef void _rescue_owner_side(
+        self, str address, set requests, double now, double coarse_now
+    )
+
+    @cython.locals(duration=double)
+    cpdef void _rescue_challenger_side(
+        self,
+        str address,
+        str challenger_source,
+        set requests,
+        object loop,
+        double now,
+        double coarse_now,
+    )
 
     @cython.locals(
         best_rssi=int,

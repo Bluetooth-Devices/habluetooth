@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
+from bluetooth_data_tools import monotonic_time_coarse
 from freezegun import freeze_time
 
 from habluetooth import (
@@ -6495,3 +6496,261 @@ async def test_invariant_through_stop_and_restart() -> None:
         cancel()
         register_cancel()
     _assert_schedule_invariant(sched)
+
+
+@pytest.mark.asyncio
+async def test_trigger_rescue_auto_owner_and_auto_challenger() -> None:
+    """
+    trigger_rescue serves both sides of a deferred stale handoff.
+
+    The AUTO owner's due times are clamped to now so its worker fires a
+    window on its next tick; the AUTO challenger gets a directly delegated
+    window and the rescue completion is recorded.
+    """
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    loop = asyncio.get_running_loop()
+    address = "11:22:33:44:66:01"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:91:01", BluetoothScanningMode.AUTO)
+    challenger = _DiscoverableAutoScanner(
+        "AA:00:00:00:91:02", BluetoothScanningMode.AUTO
+    )
+    c_owner = manager.async_register_scanner(owner)
+    c_challenger = manager.async_register_scanner(challenger)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        before = monotonic_time_coarse()
+        sched.trigger_rescue(address, challenger.source)
+        # Owner side: every due time clamped to now so the next tick fires.
+        now = loop.time()
+        assert all(due <= now for due in sched._schedule._due_at[address].values())
+        # Challenger side: a directly delegated window.
+        for task in list(sched._rescue_tasks):
+            await task
+        await asyncio.sleep(0)
+        assert challenger.active_window_calls == [7.0]
+        assert not sched._rescue_tasks
+        # Completion recorded at dispatch + duration, comparable with adv times.
+        assert sched._rescue_window_end[address] >= before + 7.0
+        # Owner side actually fires on its tick and re-records completion.
+        await _run_worker_tick(sched, owner.source)
+        assert owner.active_window_calls == [7.0]
+    finally:
+        cancel()
+        c_owner()
+        c_challenger()
+
+
+@pytest.mark.asyncio
+async def test_trigger_rescue_active_challenger_counts_covered() -> None:
+    """An ACTIVE challenger is already scanning; the rescue completes now."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:02"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:92:01", BluetoothScanningMode.AUTO)
+    challenger = _DiscoverableAutoScanner(
+        "AA:00:00:00:92:02", BluetoothScanningMode.ACTIVE
+    )
+    c_owner = manager.async_register_scanner(owner)
+    c_challenger = manager.async_register_scanner(challenger)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        before = monotonic_time_coarse()
+        sched.trigger_rescue(address, challenger.source)
+        after = monotonic_time_coarse()
+        assert challenger.active_window_calls == []
+        assert not sched._rescue_tasks
+        assert before <= sched._rescue_window_end[address] <= after
+    finally:
+        cancel()
+        c_owner()
+        c_challenger()
+
+
+@pytest.mark.asyncio
+async def test_trigger_rescue_active_owner_counts_covered() -> None:
+    """An ACTIVE owner is already scanning; its side completes now."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:03"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:93:01", BluetoothScanningMode.ACTIVE)
+    challenger = _DiscoverableAutoScanner(
+        "AA:00:00:00:93:02", BluetoothScanningMode.PASSIVE
+    )
+    c_owner = manager.async_register_scanner(owner)
+    c_challenger = manager.async_register_scanner(challenger)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        before = monotonic_time_coarse()
+        sched.trigger_rescue(address, challenger.source)
+        after = monotonic_time_coarse()
+        # PASSIVE challenger gets no window; the owner side still covered.
+        assert challenger.active_window_calls == []
+        assert owner.active_window_calls == []
+        assert before <= sched._rescue_window_end[address] <= after
+    finally:
+        cancel()
+        c_owner()
+        c_challenger()
+
+
+@pytest.mark.asyncio
+async def test_trigger_rescue_connecting_challenger_not_delegated() -> None:
+    """A mid-connect challenger cannot run a window; no completion is faked."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:04"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:94:01", BluetoothScanningMode.AUTO)
+    challenger = _DiscoverableAutoScanner(
+        "AA:00:00:00:94:02", BluetoothScanningMode.AUTO
+    )
+    c_owner = manager.async_register_scanner(owner)
+    c_challenger = manager.async_register_scanner(challenger)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        challenger._add_connecting(address)
+        sched.trigger_rescue(address, challenger.source)
+        assert challenger.active_window_calls == []
+        assert not sched._rescue_tasks
+        # Owner is AUTO: its completion only lands when its tick runs, so
+        # nothing has been recorded yet.
+        assert address not in sched._rescue_window_end
+    finally:
+        challenger._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_challenger()
+
+
+@pytest.mark.asyncio
+async def test_trigger_rescue_noop_untracked_or_not_started() -> None:
+    """Untracked addresses and a never-started scheduler are safe no-ops."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    sched.trigger_rescue("FF:FF:FF:FF:FF:FF", "AA:00:00:00:95:01")
+    assert "FF:FF:FF:FF:FF:FF" not in sched._rescue_window_end
+    fresh = type(sched)(manager)
+    fresh.trigger_rescue("FF:FF:FF:FF:FF:FF", "AA:00:00:00:95:01")
+    assert fresh._rescue_window_end == {}
+
+
+@pytest.mark.asyncio
+async def test_remove_request_prunes_rescue_window_end() -> None:
+    """The last request for an address prunes its rescue completion record."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:05"
+    cancel = manager.async_register_active_scan(address, scan_interval=120.0)
+    sched._rescue_window_end[address] = 1.0
+    cancel()
+    assert address not in sched._rescue_window_end
+
+
+@pytest.mark.asyncio
+async def test_stop_clears_rescue_state() -> None:
+    """stop() drops rescue completions and cancels in-flight rescue windows."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    sched._rescue_window_end["11:22:33:44:66:06"] = 1.0
+    task = asyncio.get_running_loop().create_task(asyncio.sleep(60, result=True))
+    sched._rescue_tasks.add(task)
+    sched.stop()
+    assert sched._rescue_window_end == {}
+    assert not sched._rescue_tasks
+    assert task.cancelled() or task.cancelling()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_records_rescue_window_end() -> None:
+    """The owner tick path records the window end for every covered address."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:07"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=5.0
+    )
+    scanner = _DiscoverableAutoScanner("AA:00:00:00:97:01", BluetoothScanningMode.AUTO)
+    register_cancel = manager.async_register_scanner(scanner)
+    try:
+        _inject_with_rssi(scanner, address, rssi=-50)
+        _make_due(sched, address)
+        before = monotonic_time_coarse()
+        await _run_worker_tick(sched, scanner.source)
+        assert scanner.active_window_calls == [5.0]
+        assert sched._rescue_window_end[address] >= before + 5.0
+    finally:
+        cancel()
+        register_cancel()
+
+
+@pytest.mark.asyncio
+async def test_fallback_dispatch_records_rescue_window_end() -> None:
+    """A window delegated to a fallback still records the rescue completion."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:08"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:98:01", BluetoothScanningMode.AUTO)
+    fallback = _DiscoverableAutoScanner("AA:00:00:00:98:02", BluetoothScanningMode.AUTO)
+    c_owner = manager.async_register_scanner(owner)
+    c_fallback = manager.async_register_scanner(fallback)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        fallback.add_discovered(address, rssi=-70)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        before = monotonic_time_coarse()
+        await _run_worker_tick(sched, owner.source)
+        assert fallback.active_window_calls == [7.0]
+        assert sched._rescue_window_end[address] >= before + 7.0
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_fallback()
+
+
+@pytest.mark.asyncio
+async def test_covered_by_active_records_rescue_window_end() -> None:
+    """Owner mid-connect but an ACTIVE scanner covers: completion is now."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:09"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:99:01", BluetoothScanningMode.AUTO)
+    active = _DiscoverableAutoScanner("AA:00:00:00:99:02", BluetoothScanningMode.ACTIVE)
+    c_owner = manager.async_register_scanner(owner)
+    c_active = manager.async_register_scanner(active)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        active.add_discovered(address, rssi=-70)
+        owner._add_connecting(address)
+        _make_due(sched, address)
+        before = monotonic_time_coarse()
+        await _run_worker_tick(sched, owner.source)
+        after = monotonic_time_coarse()
+        assert active.active_window_calls == []
+        assert before <= sched._rescue_window_end[address] <= after
+    finally:
+        owner._finished_connecting(address, connected=False)
+        cancel()
+        c_owner()
+        c_active()

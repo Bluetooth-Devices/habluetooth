@@ -129,6 +129,15 @@ DEFAULT_ACTIVE_SCAN_DURATION: Final = 10.0
 # window without holding the caller too long.
 DEFAULT_ON_DEMAND_SWEEP_DURATION: Final = 10.0
 
+# How long a rescue-scan episode waits for its triggered active window
+# before re-triggering (issue #591). A stale handoff for a device that
+# needs active scans is deferred until the owner (and the challenger)
+# have had an active window; if none materialized within this long
+# (scanner busy, dispatch lost), the next arbitration re-triggers.
+# Matches the auto scheduler's connecting-defer retry so both retry
+# paths line up with a typical connect completing (~10s).
+RESCUE_SCAN_RETRY_SECONDS: Final = 30.0
+
 
 FAILED_ADAPTER_MAC = "00:00:00:00:00:00"
 
