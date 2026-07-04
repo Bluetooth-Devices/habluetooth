@@ -1487,9 +1487,15 @@ async def test_stale_active_need_defers_then_switches_after_rescue_window(
         comparable, comparable_adv, start + 19, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is strong
-    # First challenger adv past the completed window: hand off.
+    # Past the accept time but within one advertising interval of the
+    # trigger: still deferred (the owner gets a full re-hear cycle).
     inject_advertisement_with_time_and_source(
         comparable, comparable_adv, start + 25, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
+    # Past the accept time and one full interval past the trigger: hand off.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 27, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is comparable
     assert address not in manager._rescue_triggered
@@ -1535,11 +1541,11 @@ async def test_stale_active_need_no_roaming_shortcut_for_weak_owner(
     )
     assert manager.async_ble_device_from_address(address, True) is weak_owner
     assert manager._rescue_triggered[address] == start + 16
-    # A rescue window covered the address; the first adv past the accept
-    # time hands off.
+    # A rescue window covered the address; the handoff needs the accept
+    # time passed and one full advertising interval since the trigger.
     manager._auto_scheduler._rescue_accept_after[address] = start + 21
     inject_advertisement_with_time_and_source(
-        comparable, comparable_adv, start + 22, HCI1_SOURCE_ADDRESS
+        comparable, comparable_adv, start + 27, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is comparable
     assert address not in manager._rescue_triggered
@@ -1718,9 +1724,14 @@ async def test_stale_active_need_comparable_active_challenger_defers(
         comparable, comparable_adv, now + 2, "AA:BB:CC:DD:EE:22"
     )
     assert manager.async_ble_device_from_address(address, True) is strong
-    # Past the accept time with the owner still silent: hand off.
+    # Past the accept but within one advertising interval: still deferred.
     inject_advertisement_with_time_and_source(
         comparable, comparable_adv, accept + 1, "AA:BB:CC:DD:EE:22"
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
+    # Past the accept and one full interval past the trigger: hand off.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, max(accept + 1, now + 11), "AA:BB:CC:DD:EE:22"
     )
     assert manager.async_ble_device_from_address(address, True) is comparable
     assert address not in manager._rescue_triggered
@@ -1780,9 +1791,9 @@ async def test_stale_active_need_weaker_active_challenger_defers() -> None:
         weak, weak_adv, now + 2, "AA:BB:CC:DD:EE:AA"
     )
     assert manager.async_ble_device_from_address(address, True) is strong
-    # Past the accept time with the owner still silent: hand off.
+    # Past the accept and one full interval past the trigger: hand off.
     inject_advertisement_with_time_and_source(
-        weak, weak_adv, accept + 1, "AA:BB:CC:DD:EE:AA"
+        weak, weak_adv, max(accept + 1, now + 11), "AA:BB:CC:DD:EE:AA"
     )
     assert manager.async_ble_device_from_address(address, True) is weak
     assert address not in manager._rescue_triggered
@@ -1958,9 +1969,10 @@ async def test_rescue_end_to_end_owner_mid_connect_fallback_window() -> None:
         assert fallback.active_window_calls
         accept = sched._rescue_accept_after[address]
         assert accept >= now
-        # First challenger adv past the accept time: hand off.
+        # First challenger adv past the accept time and one advertising
+        # interval past the trigger: hand off.
         inject_advertisement_with_time_and_source(
-            weak, weak_adv, accept + 1, challenger.source
+            weak, weak_adv, max(accept + 1, now + 11), challenger.source
         )
         assert manager.async_ble_device_from_address(address, True) is weak
         assert address not in manager._rescue_triggered
@@ -2013,7 +2025,7 @@ async def test_rescue_episode_is_per_address_any_challenger_completes(
         local_name="challenger_hci8", service_uuids=[], rssi=-62
     )
     inject_advertisement_with_time_and_source(
-        challenger_b, challenger_b_adv, start + 25, "AA:BB:CC:DD:EE:88"
+        challenger_b, challenger_b_adv, start + 27, "AA:BB:CC:DD:EE:88"
     )
     assert manager.async_ble_device_from_address(address, True) is challenger_b
     assert address not in manager._rescue_triggered
@@ -2070,6 +2082,58 @@ async def test_connectable_recheck_does_not_drive_rescue_episode(
     )
     assert manager.async_ble_device_from_address(address, False) is nc_device
     assert manager.async_ble_device_from_address(address, True) is connectable_owner
+    assert address not in manager._rescue_triggered
+    cancel_active()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_connectable_recheck_roams_active_need_device_at_stale(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+    register_non_connectable_scanner: None,
+) -> None:
+    """
+    The connectable re-check keeps the roaming rule for active-need devices.
+
+    Connection routing cares about liveness, not scan-response freshness:
+    when the weak connectable owner goes silent, the connectable history
+    must repoint to a comparable live challenger at the stale window
+    instead of routing connect attempts at a dead radio until durably
+    gone, and it must not drive rescue episode state.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:78"
+    start = 50.0
+    cancel_active = manager.async_register_active_scan(address)
+    connectable_owner = generate_ble_device(address, "conn_hci0")
+    connectable_owner_adv = generate_advertisement_data(
+        local_name="conn_hci0", service_uuids=[], rssi=-80
+    )
+    inject_advertisement_with_time_and_source(
+        connectable_owner, connectable_owner_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    manager.async_set_fallback_availability_interval(address, 10)
+    # A much stronger non-connectable source takes all-history on the
+    # RSSI path; the connectable history stays with hci0.
+    nc_device = generate_ble_device(address, "nc")
+    nc_adv = generate_advertisement_data(local_name="nc", service_uuids=[], rssi=-30)
+    inject_advertisement_with_time_and_source_connectable(
+        nc_device, nc_adv, start + 10, NON_CONNECTABLE_REMOTE_SOURCE_ADDRESS, False
+    )
+    assert manager.async_ble_device_from_address(address, True) is connectable_owner
+    # A comparable connectable challenger of the weak, now-stale owner:
+    # all-history keeps (fresh strong NC owner), but the connectable
+    # re-check roams to the live challenger.
+    challenger = generate_ble_device(address, "challenger_hci1")
+    challenger_adv = generate_advertisement_data(
+        local_name="challenger_hci1", service_uuids=[], rssi=-85
+    )
+    inject_advertisement_with_time_and_source(
+        challenger, challenger_adv, start + 17, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, False) is nc_device
+    assert manager.async_ble_device_from_address(address, True) is challenger
     assert address not in manager._rescue_triggered
     cancel_active()
 
@@ -2148,6 +2212,12 @@ async def test_rescue_accept_time_boundaries(
         comparable, comparable_adv, start + 20, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is strong
+    # Past the accept but within one advertising interval of the trigger:
+    # still deferred.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 24, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
     cancel_a()
 
     # Part 2: an accept time equal to the trigger time counts.
@@ -2170,7 +2240,7 @@ async def test_rescue_accept_time_boundaries(
     )
     manager_sched._rescue_accept_after[address] = start + 16
     inject_advertisement_with_time_and_source(
-        comparable2, comparable2_adv, start + 17, HCI1_SOURCE_ADDRESS
+        comparable2, comparable2_adv, start + 27, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is comparable2
     cancel_b()

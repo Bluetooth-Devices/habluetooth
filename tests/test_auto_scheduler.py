@@ -6581,12 +6581,10 @@ async def test_trigger_rescue_active_challenger_counts_covered() -> None:
             <= sched._rescue_accept_after[address]
             <= after + RESCUE_SCAN_ACCEPT_SECONDS
         )
-        # The owner side is skipped entirely: its scheduled due times are
-        # not clamped to now.
+        # The owner side is still served: its scheduled due times are
+        # clamped to now so its worker fires a window on the next tick.
         loop_now = asyncio.get_running_loop().time()
-        assert all(
-            due > loop_now + 60 for due in sched._schedule._due_at[address].values()
-        )
+        assert all(due <= loop_now for due in sched._schedule._due_at[address].values())
     finally:
         cancel()
         c_owner()
@@ -6674,14 +6672,18 @@ async def test_trigger_rescue_noop_untracked_or_not_started() -> None:
 
 @pytest.mark.asyncio
 async def test_remove_request_prunes_rescue_accept_after() -> None:
-    """The last request for an address prunes its rescue accept time."""
+    """The last request for an address prunes all rescue state."""
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:66:05"
     cancel = manager.async_register_active_scan(address, scan_interval=120.0)
     sched._rescue_accept_after[address] = 1.0
+    manager._rescue_triggered[address] = 1.0
     cancel()
     assert address not in sched._rescue_accept_after
+    # The episode's lifetime is bounded by the need: a device that never
+    # goes stale again must not keep an orphaned episode alive.
+    assert address not in manager._rescue_triggered
 
 
 @pytest.mark.asyncio
@@ -6825,7 +6827,8 @@ async def test_trigger_rescue_unregistered_sides_are_skipped() -> None:
         sched.trigger_rescue(address, "AA:00:00:00:9A:99", "AA:00:00:00:9A:98")
         assert sched._rescue_accept_after[address] == recorded
         # A later accept time is never rolled back by an earlier one: the
-        # ACTIVE owner side records "now", which loses to the later value.
+        # ACTIVE owner side records coverage plus the accept grace, which
+        # loses to the later value.
         sched.trigger_rescue(address, "AA:00:00:00:9A:99", owner.source)
         assert sched._rescue_accept_after[address] == recorded
     finally:

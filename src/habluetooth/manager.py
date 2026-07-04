@@ -704,7 +704,9 @@ class BluetoothManager:
         handoff flaps straight back (a materially stronger reclaim) or
         cannot flap back and ping-pongs on alternating misses (a
         comparable pair) — the stationary-device flap issues #568/#580
-        fixed. What differs per device class is everything in between:
+        fixed. A materially stronger challenger can still win at any time
+        on the smoothed RSSI path below (deadband-protected, stale or
+        not); what differs per device class is everything in between:
 
         * Passive device (no registered need): a comparable-or-stronger
           challenger of a weak owner takes over immediately (ordinary
@@ -756,51 +758,59 @@ class BluetoothManager:
             # Passive device: a comparable-or-stronger challenger of a weak
             # owner takes over immediately (ordinary roaming; its capture
             # is as good as anyone's, payloads are identical across
-            # scanners). Anything else waits for durably-gone above, and
-            # ending the episode also cleans up after an active-scan need
-            # unregistered mid-episode; a lingering entry would keep the
-            # scheduler's no-episode fast path off for every dispatch.
+            # scanners). Anything else waits for durably-gone above. The
+            # episode ends either way; it also cleans up after an
+            # active-scan need unregistered mid-episode (defense in depth,
+            # the unregister itself clears it too).
+            self._end_rescue_episode(new.address, record_demotion)
             comparable_or_stronger = new_rssi >= old_rssi - ADV_RSSI_SWITCH_THRESHOLD
             owner_strong = old_rssi >= _STRONG_OWNER_STALE_RSSI
             if comparable_or_stronger and not owner_strong:
                 if self._debug:
                     _LOGGER.debug(
                         "%s (%s): Switching from %s to %s (time elapsed:%s >"
-                        " stale seconds:%s; passive roaming,"
-                        " comparable_or_stronger:%s, owner_strong:%s)",
+                        " stale seconds:%s; passive roaming, comparable"
+                        " challenger of a weak owner)",
                         new.name,
                         new.address,
                         self._async_describe_source(old),
                         self._async_describe_source(new),
                         elapsed,
                         stale_seconds,
-                        comparable_or_stronger,
-                        owner_strong,
                     )
-                self._end_rescue_episode(new.address, record_demotion)
                 return True
-            self._end_rescue_episode(new.address, record_demotion)
             return False
-        # Active-need device: never take the roaming shortcut, even for a
-        # comparable challenger of a weak owner; the challenger may be an
-        # AUTO scanner sitting in its passive phase whose capture carries
-        # no fresh scan response (issue #568). Every handoff before
-        # durably-gone goes through the rescue flow, so it lands on a
-        # capture from an address a recent active window covered. Only the
-        # all-history decision (record_demotion) drives an episode; the
-        # connectable re-check keeps the plain damping so one adv can't
-        # double-drive the episode state.
-        return record_demotion and self._rescue_stale_handoff(
-            old, new, elapsed, stale_seconds
-        )
+        if not record_demotion:
+            # Connectable re-check: connection routing cares about
+            # liveness, not scan-response freshness, so the ordinary
+            # roaming rule applies here exactly as it does for a passive
+            # device; the connectable history must repoint away from a
+            # silent scanner at the stale window rather than route a
+            # connect attempt at a dead radio until durably-gone. Only
+            # the all-history decision drives episode state.
+            return (
+                new_rssi >= old_rssi - ADV_RSSI_SWITCH_THRESHOLD
+                and old_rssi < _STRONG_OWNER_STALE_RSSI
+            )
+        # Active-need all-history decision: never take the roaming
+        # shortcut, even for a comparable challenger of a weak owner; the
+        # challenger may be an AUTO scanner sitting in its passive phase
+        # whose capture carries no fresh scan response (issue #568).
+        # Every handoff before durably-gone goes through the rescue flow,
+        # so it lands on a capture from an address a recent active window
+        # covered.
+        return self._rescue_stale_handoff(old, new, elapsed, stale_seconds)
 
     def _end_rescue_episode(self, address: str, record_demotion: bool) -> None:
         """
-        End any rescue episode when a stale handoff proceeds immediately.
+        End any rescue episode on a stale arbitration outside the rescue.
 
-        Only the all-history decision (record_demotion) owns episode state,
-        and the empty-dict check keeps the common no-episode case to a
-        single branch.
+        Runs on the durably-gone handoff and on every passive stale
+        arbitration whether or not the device hands off (the passive case
+        also cleans up an episode orphaned by an unregistered active-scan
+        need). Only the all-history decision (record_demotion) owns
+        episode state, and the empty-dict check keeps the common
+        no-episode case to a single branch.
         """
         if record_demotion and self._rescue_triggered:
             self._rescue_triggered.pop(address, None)
@@ -847,7 +857,17 @@ class BluetoothManager:
                 )
             return False
         accept_after = self._auto_scheduler._rescue_accept_after.get(new.address, 0.0)
-        if accept_after >= pending and new.time > accept_after:
+        # The accept grace alone is empty for slow advertisers (a
+        # 60s-interval sensor cannot re-advertise within it), so the
+        # handoff additionally requires one full advertising interval
+        # (stale_seconds minus the wobble) since the trigger; that
+        # guarantees the owner one transmission opportunity to invalidate
+        # the episode regardless of the device's cadence.
+        if (
+            accept_after >= pending
+            and new.time > accept_after
+            and new.time - pending > stale_seconds - TRACKER_BUFFERING_WOBBLE_SECONDS
+        ):
             # A rescue window's accept time postdates the trigger and the
             # owner is still silent: hand off. The accept time is the max
             # across both sides, so a deaf owner whose window never ran
