@@ -699,8 +699,11 @@ class BluetoothManager:
           genuinely fresh data regardless of its signal strength; hand off
           immediately.
         * Active-need device: the owner's silence often just means nobody
-          has run an active window lately (or the owner is deaf
-          mid-connection), and a far weaker challenger's capture may itself
+          has run an active window lately (or its radio is busy with
+          connections while it still reports scanning; an owner that
+          paused scanning entirely never reaches this code, its devices
+          were handed off at the scanning gate), and a far weaker
+          challenger's capture may itself
           be a stale scan response (issue #568). A comparable-or-stronger
           challenger of a weak owner still takes over immediately (ordinary
           roaming; a strong owner that briefly goes quiet is almost

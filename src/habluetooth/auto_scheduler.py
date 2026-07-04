@@ -193,6 +193,8 @@ from .const import (
 from .models import BluetoothScanningMode
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from .base_scanner import BaseHaScanner
     from .manager import BluetoothManager
     from .models import BluetoothServiceInfoBleak
@@ -362,25 +364,30 @@ class _ScannerWorker:
           — any active window advances ``_sweep_last_completed``)
           regardless of how short the delegated window is.
         """
-        self._mark_window_open(now, window_end)
+        self._mark_window_open(now, window_end - now)
 
-    def _mark_window_open(self, now: float, window_end: float) -> None:
+    def _mark_window_open(self, now: float, duration: float) -> None:
         """
-        Record a window opening at ``now`` and ending at ``window_end``.
+        Record a window opening at ``now`` running for ``duration`` seconds.
 
         Single write site for the window-bookkeeping quartet: bumps
         ``_window_end`` (tick suppression) and ``_sweep_last_completed``
         (any active window satisfies the sweep floor; see "Invariants")
-        with ``max`` so a longer pre-existing value survives, then stamps
-        the diagnostics pair from the post-max end so it stays consistent
-        when a longer window was already open.
+        with ``max`` so a longer pre-existing value survives. The
+        diagnostics duration is stored exactly when this window's end
+        wins (float back-derivation of ``end - now`` is inexact) and from
+        the post-max end when a longer window was already open, so the
+        pair stays consistent with the end actually in effect.
         """
+        window_end = now + duration
         if self._window_end < window_end:
             self._window_end = window_end
+            self._last_window_duration = duration
+        else:
+            self._last_window_duration = self._window_end - now
         if self._sweep_last_completed < now:
             self._sweep_last_completed = now
         self._last_window_at = now
-        self._last_window_duration = self._window_end - now
 
     def _next_event_at(self, now: float) -> float:
         """
@@ -522,7 +529,7 @@ class _ScannerWorker:
                 duration = _AUTO_REDISCOVERY_SWEEP_DURATION
             # Open the window and take the sweep credit pre-await (any
             # active window satisfies the 12 h floor; see "Invariants").
-            self._mark_window_open(now, now + duration)
+            self._mark_window_open(now, duration)
             # Advance pre-await so a mid-window ownership flip can't
             # double-fire; see _advance_due.
             self._advance_due(due_buckets, now)
@@ -812,7 +819,10 @@ class AutoScanScheduler:
         # device off on the first challenger advertisement that postdates
         # this (issue #591). Coarse monotonic on purpose so it compares
         # directly with advertisement times (loop.time() is a different
-        # clock). Pruned with requests.
+        # clock). Pruned with requests, not with the device: a stale
+        # accept time can never authorize a handoff because a fresh
+        # episode's trigger time always postdates it (the manager
+        # requires accept_after >= pending).
         self._rescue_accept_after: dict[str, float] = {}
         # Strong refs to in-flight challenger-side rescue windows started
         # by trigger_rescue (fire-and-forget create_task).
@@ -1034,10 +1044,14 @@ class AutoScanScheduler:
         counts as covered now. The accept time lands in
         ``_rescue_accept_after`` (coarse monotonic, comparable with
         advertisement times); the manager hands off on the first
-        challenger advertisement that postdates it. A mid-connect,
-        passive, or stopped owner cannot get a window right now and is
-        skipped without blocking the rescue; the owner being deaf is
-        exactly the case being handed off from.
+        challenger advertisement that postdates it. A passive or
+        stopped owner cannot get a window right now and is skipped
+        without blocking the rescue. An owner that paused scanning for
+        a connection never reaches the rescue at all: arbitration hands
+        its devices off at the ``scanner.scanning`` gate before this is
+        called (only owners still reporting scanning get here; their
+        mid-connect windows are covered by the worker tick's
+        connecting fallback).
         """
         loop = self._loop
         if (
@@ -1166,7 +1180,7 @@ class AutoScanScheduler:
             return
         # Delegate a window to the challenger directly (it is not the
         # schedule's owner, so the tick path will not serve it).
-        duration = self._coalesce_duration(list(requests))
+        duration = self._coalesce_duration(requests)
         self._mark_delegated_dispatch(
             challenger_source,
             [address],
@@ -1237,7 +1251,7 @@ class AutoScanScheduler:
                 best = scanner
         return False, best
 
-    def _coalesce_duration(self, entries: list[ActiveScanRequest]) -> float:
+    def _coalesce_duration(self, entries: Iterable[ActiveScanRequest]) -> float:
         """
         Pick max requested duration, clamped to [MIN, MAX].
 

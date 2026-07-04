@@ -1649,6 +1649,53 @@ async def test_stale_active_need_active_challenger_switches_immediately(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_owner_paused_for_connection_hands_off_immediately(
+    register_hci1_scanner: None,
+) -> None:
+    """
+    An owner that paused scanning for a connection is not kept in arbitration.
+
+    The #590 hold was reverted (issue #591): pinning ownership to a deaf
+    scanner rejected fresh challenger data while recording nothing. A
+    scanner that pauses scanning to connect hands its devices to any
+    challenger immediately; the stale damping and the rescue flow only
+    arbitrate between scanners that are still scanning.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:68"
+    start = 50.0
+    cancel_active = manager.async_register_active_scan(address)
+    owner_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    owner_scanner.connectable = True
+    cancel_scanner = manager.async_register_scanner(owner_scanner, connection_slots=5)
+    strong = generate_ble_device(address, "strong_hci3")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci3", service_uuids=[], rssi=-50
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, "AA:BB:CC:DD:EE:33"
+    )
+    manager.async_set_fallback_availability_interval(address, 10)
+
+    weak = generate_ble_device(address, "weak_hci1")
+    weak_adv = generate_advertisement_data(
+        local_name="weak_hci1", service_uuids=[], rssi=-90
+    )
+    with owner_scanner.connecting():
+        assert owner_scanner.scanning is False
+        # Not even stale (elapsed 1 < 15) and far weaker: hands off
+        # immediately, and no rescue episode is started.
+        inject_advertisement_with_time_and_source(
+            weak, weak_adv, start + 1, HCI1_SOURCE_ADDRESS
+        )
+        assert manager.async_ble_device_from_address(address, True) is weak
+        assert address not in manager._rescue_triggered
+    cancel_active()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_stale_active_need_durably_gone_ends_episode(
     register_hci0_scanner: None,
     register_hci1_scanner: None,

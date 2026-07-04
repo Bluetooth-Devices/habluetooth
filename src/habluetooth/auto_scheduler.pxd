@@ -53,7 +53,8 @@ cdef class _ScannerWorker:
 
     cpdef void note_window_dispatched(self, double window_end, double now)
 
-    cpdef void _mark_window_open(self, double now, double window_end)
+    @cython.locals(window_end=double)
+    cpdef void _mark_window_open(self, double now, double duration)
 
     @cython.locals(
         next_at=double,
