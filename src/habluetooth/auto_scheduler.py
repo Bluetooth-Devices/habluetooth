@@ -1031,14 +1031,16 @@ class AutoScanScheduler:
         now and its worker woken, so the normal tick path (including
         the connecting fallback) dispatches it and records the accept
         time. The challenger side gets a delegated window so its next
-        capture carries a fresh scan response. A scanner that is
-        already ACTIVE and scanning counts as covered now. The accept
-        time lands in ``_rescue_accept_after`` (coarse monotonic,
-        comparable with advertisement times); the manager hands off on
-        the first challenger advertisement that postdates it. A
-        mid-connect, passive, or stopped owner cannot get a window
-        right now and is skipped without blocking the rescue; the
-        owner being deaf is exactly the case being handed off from.
+        capture carries a fresh scan response (an ACTIVE-and-scanning
+        challenger never reaches here; the manager hands off to it
+        immediately). An owner that is already ACTIVE and scanning
+        counts as covered now. The accept time lands in
+        ``_rescue_accept_after`` (coarse monotonic, comparable with
+        advertisement times); the manager hands off on the first
+        challenger advertisement that postdates it. A mid-connect,
+        passive, or stopped owner cannot get a window right now and is
+        skipped without blocking the rescue; the owner being deaf is
+        exactly the case being handed off from.
         """
         loop = self._loop
         if (
@@ -1106,15 +1108,18 @@ class AutoScanScheduler:
         now: float,
         coarse_now: float,
     ) -> None:
-        """Delegate a rescue window to the challenger's scanner."""
+        """
+        Delegate a rescue window to the challenger's scanner.
+
+        Only an AUTO challenger needs (and can take) a window: the manager
+        hands off immediately for an ACTIVE-and-scanning challenger before
+        ever triggering a rescue, and a passive or mid-connect challenger
+        cannot produce an active capture right now.
+        """
         if (challenger := self._manager._sources.get(challenger_source)) is None:
             return
-        mode = challenger.requested_mode
-        if mode is BluetoothScanningMode.ACTIVE and challenger.scanning:
-            self._record_rescue_accept(address, coarse_now)
-            return
         if (
-            mode is not BluetoothScanningMode.AUTO
+            challenger.requested_mode is not BluetoothScanningMode.AUTO
             or challenger._connections_in_progress() > 0
         ):
             return

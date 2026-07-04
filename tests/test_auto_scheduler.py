@@ -6551,8 +6551,8 @@ async def test_trigger_rescue_auto_owner_and_auto_challenger() -> None:
 
 
 @pytest.mark.asyncio
-async def test_trigger_rescue_active_challenger_counts_covered() -> None:
-    """An ACTIVE challenger is already scanning; the rescue completes now."""
+async def test_trigger_rescue_active_challenger_not_delegated() -> None:
+    """An ACTIVE challenger gets no window; the manager hands off before this."""
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:66:02"
@@ -6567,12 +6567,12 @@ async def test_trigger_rescue_active_challenger_counts_covered() -> None:
     c_challenger = manager.async_register_scanner(challenger)
     try:
         _inject_with_rssi(owner, address, rssi=-50)
-        before = monotonic_time_coarse()
         sched.trigger_rescue(address, challenger.source, owner.source)
-        after = monotonic_time_coarse()
         assert challenger.active_window_calls == []
         assert not sched._rescue_tasks
-        assert before <= sched._rescue_accept_after[address] <= after
+        # The AUTO owner side is served through the schedule; the accept
+        # time only lands when its worker tick dispatches the window.
+        assert address not in sched._rescue_accept_after
     finally:
         cancel()
         c_owner()
@@ -6783,11 +6783,15 @@ async def test_trigger_rescue_unregistered_sides_are_skipped() -> None:
         before = monotonic_time_coarse()
         sched.trigger_rescue(address, "AA:00:00:00:9A:99", owner.source)
         assert sched._rescue_accept_after[address] >= before
-        # Owner never registered: only the challenger side is served, and
-        # a later accept time is never rolled back by an earlier one.
+        # Owner never registered: the owner side is skipped and an ACTIVE
+        # challenger is never delegated a window, so nothing is recorded.
         recorded = sched._rescue_accept_after[address] + 1000.0
         sched._rescue_accept_after[address] = recorded
         sched.trigger_rescue(address, owner.source, "AA:00:00:00:9A:99")
+        assert sched._rescue_accept_after[address] == recorded
+        # A later accept time is never rolled back by an earlier one: the
+        # ACTIVE owner side records "now", which loses to the later value.
+        sched.trigger_rescue(address, "AA:00:00:00:9A:99", owner.source)
         assert sched._rescue_accept_after[address] == recorded
     finally:
         cancel()

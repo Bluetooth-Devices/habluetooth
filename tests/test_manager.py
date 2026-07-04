@@ -1581,6 +1581,63 @@ async def test_stale_active_need_retriggers_when_window_never_ran(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+@pytest.mark.parametrize("debug", [True, False])
+async def test_stale_active_need_active_challenger_switches_immediately(
+    register_hci0_scanner: None,
+    debug: bool,
+) -> None:
+    """
+    A challenger on a continuously ACTIVE scanner hands off without a rescue.
+
+    Its capture already carries the device's scan response, so there is
+    nothing for a rescue window to add; the stale handoff proceeds
+    immediately, like a passive device. Runs with debug logging both on
+    and off to cover both sides of the logging branch.
+    """
+    manager = get_manager()
+    manager._debug = debug
+    address = "44:44:33:11:23:67"
+    start = 50.0
+    cancel_active = manager.async_register_active_scan(address)
+    active_scanner = FakeScanner(
+        "AA:BB:CC:DD:EE:22",
+        "hci2",
+        requested_mode=BluetoothScanningMode.ACTIVE,
+    )
+    active_scanner.connectable = True
+    cancel_scanner = manager.async_register_scanner(active_scanner, connection_slots=5)
+    strong = generate_ble_device(address, "strong_hci0")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci0", service_uuids=[], rssi=-50
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    # stale_seconds = 15, durably-gone = 37.5
+    manager.async_set_fallback_availability_interval(address, 10)
+
+    comparable = generate_ble_device(address, "comparable_hci2")
+    comparable_adv = generate_advertisement_data(
+        local_name="comparable_hci2", service_uuids=[], rssi=-60
+    )
+    # A leftover episode from another challenger must be ended by the
+    # immediate handoff; the debug=False run exercises the no-episode
+    # branch.
+    if debug:
+        manager._rescue_triggered[address] = start
+    # Just past the stale window and far before durably-gone: the ACTIVE
+    # challenger wins right away, no rescue deferral.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 16, "AA:BB:CC:DD:EE:22"
+    )
+    assert manager.async_ble_device_from_address(address, True) is comparable
+    assert address not in manager._rescue_triggered
+    cancel_active()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_stale_active_need_durably_gone_ends_episode(
     register_hci0_scanner: None,
     register_hci1_scanner: None,

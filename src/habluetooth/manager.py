@@ -703,14 +703,16 @@ class BluetoothManager:
           be a stale scan response (issue #568). A comparable-or-stronger
           challenger of a weak owner still takes over immediately (ordinary
           roaming; a strong owner that briefly goes quiet is almost
-          certainly still there). Otherwise, instead of pinning ownership
-          until the owner is durably gone (issue #591), trigger an active
-          window on both the owner (a chance to re-hear the device) and the
-          challenger (its next capture is a fresh scan response), and hand
-          off on the first challenger advertisement past the accept time
-          (the window has been actively scanning long enough that a capture
-          cannot be a delayed passive one) while the owner stayed silent
-          (see _rescue_stale_handoff).
+          certainly still there), and so does a challenger whose scanner
+          runs continuous ACTIVE scanning, since its capture already
+          carries the scan response. Otherwise, instead of pinning
+          ownership until the owner is durably gone (issue #591), trigger
+          an active window on both the owner (a chance to re-hear the
+          device) and the challenger (its next capture is a fresh scan
+          response), and hand off on the first challenger advertisement
+          past the accept time (the window has been actively scanning long
+          enough that a capture cannot be a delayed passive one) while the
+          owner stayed silent (see _rescue_stale_handoff).
         * Either way an owner silent past the durably-gone threshold loses
           to any challenger: receive time is all we have (adverts carry no
           timestamp), so the durably-gone wait is what lets a device that
@@ -763,6 +765,31 @@ class BluetoothManager:
                     elapsed,
                     stale_seconds,
                 )
+            return True
+        challenger_scanner = self._sources.get(new.source)
+        if (
+            challenger_scanner is not None
+            and challenger_scanner.requested_mode is BluetoothScanningMode.ACTIVE
+            and challenger_scanner.scanning
+        ):
+            # The challenger runs continuous active scanning, so this
+            # capture already carries the device's scan response; it is as
+            # fresh as active data gets and there is nothing for a rescue
+            # window to add. Hand off immediately, like passive.
+            if self._debug:
+                _LOGGER.debug(
+                    "%s (%s): Switching from %s to %s (time elapsed:%s > stale"
+                    " seconds:%s; challenger is actively scanning, capture"
+                    " is fresh)",
+                    new.name,
+                    new.address,
+                    self._async_describe_source(old),
+                    self._async_describe_source(new),
+                    elapsed,
+                    stale_seconds,
+                )
+            if record_demotion and self._rescue_triggered:
+                self._rescue_triggered.pop(new.address, None)
             return True
         # Active-need device with the handoff denied: run the rescue flow
         # described above. Only the all-history decision (record_demotion)
