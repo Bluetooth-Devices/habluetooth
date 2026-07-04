@@ -1096,9 +1096,20 @@ async def test_switching_adapters_based_on_stale_with_discovered_interval(
         start_time_monotonic + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
         HCI1_SOURCE_ADDRESS,
     )
-    # Should switch to hci1 since the previous advertisement is stale
-    # even though the signal is poor because the device is now
-    # likely unreachable via hci0
+    # One missed interval is a per-scanner reception lottery: still hci0.
+    assert (
+        get_manager().async_ble_device_from_address(address, True)
+        is switchbot_device_poor_signal_hci0
+    )
+    inject_advertisement_with_time_and_source(
+        switchbot_device_poor_signal_hci1,
+        switchbot_adv_poor_signal_hci1,
+        start_time_monotonic + 23,
+        HCI1_SOURCE_ADDRESS,
+    )
+    # Past the roam gate (1.5 stale windows): switch to hci1 since the
+    # previous advertisement is stale even though the signal is poor
+    # because the device is now likely unreachable via hci0
     assert (
         get_manager().async_ble_device_from_address(address, True)
         is switchbot_device_poor_signal_hci1
@@ -1116,9 +1127,10 @@ async def test_stale_does_not_switch_to_much_weaker_scanner(
 
     Regression for #568: scan-response-only sensors behind many active proxies
     oscillated because a weaker proxy holding a stale capture won the receive-time
-    staleness check on a single missed interval. The damping only applies to
-    devices with a registered active-scan need; a passive device hands off on
-    stale immediately (see test_stale_passive_device_switches_to_weaker_scanner).
+    staleness check on a single missed interval. This device has a registered
+    active-scan need, so the rescue flow governs; a materially weaker passive
+    challenger instead waits for durably-gone (see
+    test_stale_passive_weaker_scanner_waits_for_durably_gone).
     """
     address = "44:44:33:11:23:42"
     start = 50.0
@@ -1199,13 +1211,15 @@ async def test_stale_switches_to_comparable_scanner_at_normal_window(
     debug: bool,
 ) -> None:
     """
-    A comparable scanner takes over a weak passive owner at the stale window.
+    A comparable scanner takes over a weak passive owner after the roam gate.
 
     The owner is weak (below STRONG_OWNER_STALE_RSSI), so its silence is
-    treated as the device possibly being gone and a comparable scanner is
-    allowed to take over at the normal window. A strong owner is protected
-    (see test_stale_keeps_strong_owner_against_comparable_scanner). Runs
-    with debug logging both on and off to cover the log branches.
+    treated as the device possibly being gone, but a single missed
+    interval is a per-scanner reception lottery; the comparable scanner
+    may only take over once STALE_ROAM_FACTOR stale windows elapsed. A
+    strong owner is protected regardless (see
+    test_stale_keeps_strong_owner_against_comparable_scanner). Runs with
+    debug logging both on and off to cover the log branches.
     """
     address = "44:44:33:11:23:44"
     start = 50.0
@@ -1219,7 +1233,8 @@ async def test_stale_switches_to_comparable_scanner_at_normal_window(
     )
     get_manager().async_set_fallback_availability_interval(address, 10)
 
-    # Weak owner, comparable challenger: ordinary handoff at the normal window.
+    # Weak owner, comparable challenger: kept on a single missed interval
+    # (a per-scanner reception miss must not roam a stationary device).
     comparable = generate_ble_device(address, "comparable_hci1")
     comparable_adv = generate_advertisement_data(
         local_name="comparable_hci1", service_uuids=[], rssi=-95
@@ -1229,6 +1244,12 @@ async def test_stale_switches_to_comparable_scanner_at_normal_window(
         comparable_adv,
         start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
         HCI1_SOURCE_ADDRESS,
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is owner
+    # Past STALE_ROAM_FACTOR stale windows (1.5 * 15 = 22.5): the ordinary
+    # roaming handoff proceeds.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 23, HCI1_SOURCE_ADDRESS
     )
     assert get_manager().async_ble_device_from_address(address, True) is comparable
 
@@ -2179,15 +2200,21 @@ async def test_connectable_recheck_roams_active_need_device_at_stale(
         nc_device, nc_adv, start + 10, NON_CONNECTABLE_REMOTE_SOURCE_ADDRESS, False
     )
     assert manager.async_ble_device_from_address(address, True) is connectable_owner
-    # A comparable connectable challenger of the weak, now-stale owner:
-    # all-history keeps (fresh strong NC owner), but the connectable
-    # re-check roams to the live challenger.
+    # A comparable connectable challenger of the weak owner within the
+    # roam gate: the connectable history is kept (single reception miss).
     challenger = generate_ble_device(address, "challenger_hci1")
     challenger_adv = generate_advertisement_data(
         local_name="challenger_hci1", service_uuids=[], rssi=-85
     )
     inject_advertisement_with_time_and_source(
         challenger, challenger_adv, start + 17, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is connectable_owner
+    # Past the roam gate (1.5 * 15 = 22.5 since the connectable owner's
+    # last adv): all-history keeps (fresh strong NC owner), but the
+    # connectable re-check roams to the live challenger.
+    inject_advertisement_with_time_and_source(
+        challenger, challenger_adv, start + 24, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, False) is nc_device
     assert manager.async_ble_device_from_address(address, True) is challenger
@@ -2864,17 +2891,14 @@ async def test_rssi_deadband_not_charged_after_stale_handoff(
     )
     manager.async_set_fallback_availability_interval(address, 10)
 
-    # Weak owner goes silent; a comparable (weaker) scanner takes over on the
-    # stale path, not the active RSSI path.
+    # Weak owner goes silent; a comparable (weaker) scanner takes over on
+    # the stale path once the roam gate elapsed, not the active RSSI path.
     comparable = generate_ble_device(address, "comparable_hci1")
     comparable_adv = generate_advertisement_data(
         local_name="comparable_hci1", service_uuids=[], rssi=-95
     )
     inject_advertisement_with_time_and_source(
-        comparable,
-        comparable_adv,
-        start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
-        HCI1_SOURCE_ADDRESS,
+        comparable, comparable_adv, start + 23, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is comparable
     # The stale handoff is not an RSSI-path switch, so no reclaim penalty is set.

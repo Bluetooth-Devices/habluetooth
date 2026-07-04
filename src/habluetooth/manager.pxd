@@ -14,6 +14,7 @@ cdef int _STRONG_OWNER_STALE_RSSI
 cdef double _RSSI_SMOOTHING_FACTOR
 cdef int _ADV_RSSI_SWITCH_DEADBAND
 cdef double _RESCUE_SCAN_RETRY_SECONDS
+cdef double _STALE_ROAM_FACTOR
 cdef frozenset _EMPTY_DEMOTED
 cdef object FILTER_UUIDS
 cdef object AdvertisementData
@@ -102,11 +103,7 @@ cdef class BluetoothManager:
         bint record_demotion
     )
 
-    @cython.locals(
-        durably_gone=double,
-        comparable_or_stronger=bint,
-        owner_strong=bint,
-    )
+    @cython.locals(durably_gone=double)
     cdef bint _stale_challenger_wins(
         self,
         BluetoothServiceInfoBleak old,
