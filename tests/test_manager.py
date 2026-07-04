@@ -2124,6 +2124,45 @@ async def test_rescue_accept_time_boundaries(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_passive_stale_arbitration_clears_orphaned_episode(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A device that lost its active-scan need drops its episode on arbitration.
+
+    The orphaned entry must not linger; it would keep the scheduler's
+    no-episode fast path off for every window dispatch.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:76"
+    start = 50.0
+    strong = generate_ble_device(address, "strong_hci0")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci0", service_uuids=[], rssi=-50
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    manager.async_set_fallback_availability_interval(address, 10)
+    # Episode left behind by an active-scan need that was since unregistered.
+    manager._rescue_triggered[address] = start
+
+    weak = generate_ble_device(address, "weak_hci1")
+    weak_adv = generate_advertisement_data(
+        local_name="weak_hci1", service_uuids=[], rssi=-90
+    )
+    # Weaker passive challenger past stale: kept, and the orphaned
+    # episode is cleaned up.
+    inject_advertisement_with_time_and_source(
+        weak, weak_adv, start + 16, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
+    assert address not in manager._rescue_triggered
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_clear_advertisement_history_clears_rescue_state(
     register_hci0_scanner: None,
     register_hci1_scanner: None,

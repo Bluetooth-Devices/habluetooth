@@ -226,7 +226,7 @@ class BluetoothManager:
         # invalidates the episode (old.time >= trigger), so a stale
         # record can never authorize a later instant switch. Evicted
         # with the device; an entry orphaned by its active-scan need being
-        # unregistered is cleared on the device's next stale handoff.
+        # unregistered is cleared on the device's next stale arbitration.
         self._rescue_triggered: dict[str, float] = {}
         # Cross-scanner name cache: address -> best name seen across all
         # scanners. Passive scanners typically miss the device name because
@@ -752,9 +752,11 @@ class BluetoothManager:
             return True
         if self._auto_scheduler._requests_by_address.get(new.address) is None:
             # Passive device: wait for durably-gone (payloads are identical
-            # across scanners, so keeping the owner costs nothing). Any
-            # orphaned rescue episode from a deregistered active-scan need
-            # is cleaned up by the durably-gone handoff above or eviction.
+            # across scanners, so keeping the owner costs nothing). End any
+            # rescue episode orphaned by its active-scan need being
+            # unregistered mid-episode; a lingering entry would keep the
+            # scheduler's no-episode fast path off for every dispatch.
+            self._end_rescue_episode(new.address, record_demotion)
             return False
         # Active-need device with the handoff denied: run the rescue flow
         # described above. Only the all-history decision (record_demotion)
