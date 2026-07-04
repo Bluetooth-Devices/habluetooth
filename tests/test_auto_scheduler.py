@@ -6523,6 +6523,7 @@ async def test_trigger_rescue_auto_owner_and_auto_challenger() -> None:
     c_challenger = manager.async_register_scanner(challenger)
     try:
         _inject_with_rssi(owner, address, rssi=-50)
+        manager._rescue_triggered[address] = 0.1
         before = monotonic_time_coarse()
         sched.trigger_rescue(address, challenger.source, owner.source)
         # Owner side: every due time clamped to now so the next tick fires.
@@ -6596,6 +6597,7 @@ async def test_trigger_rescue_active_owner_counts_covered() -> None:
     c_challenger = manager.async_register_scanner(challenger)
     try:
         _inject_with_rssi(owner, address, rssi=-50)
+        manager._rescue_triggered[address] = 0.1
         before = monotonic_time_coarse()
         sched.trigger_rescue(address, challenger.source, owner.source)
         after = monotonic_time_coarse()
@@ -6731,6 +6733,7 @@ async def test_fallback_dispatch_records_rescue_accept_after() -> None:
         fallback.add_discovered(address, rssi=-70)
         owner._add_connecting(address)
         _make_due(sched, address)
+        manager._rescue_triggered[address] = 0.1
         before = monotonic_time_coarse()
         await _run_worker_tick(sched, owner.source)
         assert fallback.active_window_calls == [7.0]
@@ -6762,6 +6765,7 @@ async def test_covered_by_active_records_rescue_accept_after() -> None:
         active.add_discovered(address, rssi=-70)
         owner._add_connecting(address)
         _make_due(sched, address)
+        manager._rescue_triggered[address] = 0.1
         before = monotonic_time_coarse()
         await _run_worker_tick(sched, owner.source)
         after = monotonic_time_coarse()
@@ -6787,6 +6791,7 @@ async def test_trigger_rescue_unregistered_sides_are_skipped() -> None:
     c_owner = manager.async_register_scanner(owner)
     try:
         _inject_with_rssi(owner, address, rssi=-50)
+        manager._rescue_triggered[address] = 0.1
         # Challenger never registered: only the owner side is served.
         before = monotonic_time_coarse()
         sched.trigger_rescue(address, "AA:00:00:00:9A:99", owner.source)

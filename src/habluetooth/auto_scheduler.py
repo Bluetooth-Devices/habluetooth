@@ -1098,12 +1098,17 @@ class AutoScanScheduler:
         Record one window dispatch covering ``address``.
 
         Writes the diagnostics record (last-write, ``loop.time()`` base)
-        and the rescue accept time (keep-max, coarse clock; see
-        ``_rescue_accept_after``) together so the two maps cannot drift
-        at a dispatch site.
+        unconditionally; the rescue accept time (keep-max, coarse clock;
+        see ``_rescue_accept_after``) is recorded only while a rescue
+        episode is in flight anywhere, matching ``_record_rescue_accepts``,
+        so ordinary dispatches pay nothing for rescue bookkeeping. The
+        rescue paths themselves always run with the episode already
+        recorded (the manager stamps ``_rescue_triggered`` before calling
+        ``trigger_rescue``).
         """
         self._last_window_by_address[address] = (dispatch_now, source)
-        self._record_rescue_accept(address, accept_after)
+        if self._manager._rescue_triggered:
+            self._record_rescue_accept(address, accept_after)
 
     def _mark_delegated_dispatch(
         self,
