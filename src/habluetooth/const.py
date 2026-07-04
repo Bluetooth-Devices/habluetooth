@@ -144,7 +144,12 @@ RESCUE_SCAN_RETRY_SECONDS: Final = 30.0
 # Once the radio has been actively scanning this long, an incoming
 # advertisement cannot be a delayed passive capture that is still
 # missing its scan response, so the deferred handoff can proceed
-# without waiting for the full window to close. Derived from
+# without waiting for the full window to close. Every accept time
+# (including "already ACTIVE and scanning" coverage) sits this far
+# after coverage was confirmed, which doubles as a grace window: the
+# owner always gets one chance to re-hear the device and invalidate
+# the episode before any handoff, so a single missed advertising
+# interval can never flap ownership. Derived from
 # AUTO_WINDOW_MIN_DURATION so it can never exceed a window's length.
 RESCUE_SCAN_ACCEPT_SECONDS: Final = AUTO_WINDOW_MIN_DURATION
 

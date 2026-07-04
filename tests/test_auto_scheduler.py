@@ -6571,10 +6571,15 @@ async def test_trigger_rescue_active_challenger_counts_covered() -> None:
         before = monotonic_time_coarse()
         sched.trigger_rescue(address, challenger.source, owner.source)
         after = monotonic_time_coarse()
-        # Already actively scanning: no window, no task, covered now.
+        # Already actively scanning: no window, no task, covered with
+        # the standard accept grace.
         assert challenger.active_window_calls == []
         assert not sched._rescue_tasks
-        assert before <= sched._rescue_accept_after[address] <= after
+        assert (
+            before + RESCUE_SCAN_ACCEPT_SECONDS
+            <= sched._rescue_accept_after[address]
+            <= after + RESCUE_SCAN_ACCEPT_SECONDS
+        )
     finally:
         cancel()
         c_owner()
@@ -6602,10 +6607,15 @@ async def test_trigger_rescue_active_owner_counts_covered() -> None:
         before = monotonic_time_coarse()
         sched.trigger_rescue(address, challenger.source, owner.source)
         after = monotonic_time_coarse()
-        # PASSIVE challenger gets no window; the owner side still covered.
+        # PASSIVE challenger gets no window; the owner side is covered
+        # with the standard accept grace.
         assert challenger.active_window_calls == []
         assert owner.active_window_calls == []
-        assert before <= sched._rescue_accept_after[address] <= after
+        assert (
+            before + RESCUE_SCAN_ACCEPT_SECONDS
+            <= sched._rescue_accept_after[address]
+            <= after + RESCUE_SCAN_ACCEPT_SECONDS
+        )
     finally:
         cancel()
         c_owner()
@@ -6771,7 +6781,11 @@ async def test_covered_by_active_records_rescue_accept_after() -> None:
         await _run_worker_tick(sched, owner.source)
         after = monotonic_time_coarse()
         assert active.active_window_calls == []
-        assert before <= sched._rescue_accept_after[address] <= after
+        assert (
+            before + RESCUE_SCAN_ACCEPT_SECONDS
+            <= sched._rescue_accept_after[address]
+            <= after + RESCUE_SCAN_ACCEPT_SECONDS
+        )
     finally:
         owner._finished_connecting(address, connected=False)
         cancel()

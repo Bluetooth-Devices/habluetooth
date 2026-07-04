@@ -106,7 +106,6 @@ cdef class BluetoothManager:
         durably_gone=double,
         comparable_or_stronger=bint,
         owner_strong=bint,
-        challenger_scanner=BaseHaScanner,
     )
     cdef bint _stale_challenger_wins(
         self,
