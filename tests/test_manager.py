@@ -1127,9 +1127,10 @@ async def test_stale_does_not_switch_to_much_weaker_scanner(
 
     Regression for #568: scan-response-only sensors behind many active proxies
     oscillated because a weaker proxy holding a stale capture won the receive-time
-    staleness check on a single missed interval. The damping only applies to
-    devices with a registered active-scan need; a passive device hands off on
-    stale immediately (see test_stale_passive_device_switches_to_weaker_scanner).
+    staleness check on a single missed interval. This device has a registered
+    active-scan need, so the rescue flow governs; a materially weaker passive
+    challenger instead waits for durably-gone (see
+    test_stale_passive_weaker_scanner_waits_for_durably_gone).
     """
     address = "44:44:33:11:23:42"
     start = 50.0
