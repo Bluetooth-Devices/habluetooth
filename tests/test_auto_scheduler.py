@@ -6654,7 +6654,7 @@ async def test_trigger_rescue_noop_untracked_or_not_started() -> None:
 
 @pytest.mark.asyncio
 async def test_remove_request_prunes_rescue_accept_after() -> None:
-    """The last request for an address prunes its rescue completion record."""
+    """The last request for an address prunes its rescue accept time."""
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:66:05"
@@ -6682,7 +6682,7 @@ async def test_stop_clears_rescue_state() -> None:
 
 @pytest.mark.asyncio
 async def test_worker_tick_records_rescue_accept_after() -> None:
-    """The owner tick path records the window end for every covered address."""
+    """The owner tick path records accept times only during a rescue."""
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:66:07"
@@ -6694,12 +6694,20 @@ async def test_worker_tick_records_rescue_accept_after() -> None:
     try:
         _inject_with_rssi(scanner, address, rssi=-50)
         _make_due(sched, address)
-        before = monotonic_time_coarse()
+        # No rescue episode anywhere: the ordinary cadence records nothing.
         await _run_worker_tick(sched, scanner.source)
         assert scanner.active_window_calls == [5.0]
+        assert address not in sched._rescue_accept_after
+        # With an episode in flight the tick records the accept time.
+        manager._rescue_triggered[address] = 0.1
+        _make_due(sched, address)
+        before = monotonic_time_coarse()
+        await _run_worker_tick(sched, scanner.source)
+        assert scanner.active_window_calls == [5.0, 5.0]
         assert (
             sched._rescue_accept_after[address] >= before + RESCUE_SCAN_ACCEPT_SECONDS
         )
+        manager._rescue_triggered.pop(address, None)
     finally:
         cancel()
         register_cancel()

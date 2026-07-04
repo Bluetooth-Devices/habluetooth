@@ -133,8 +133,9 @@ Rescue windows
 
 When the manager defers a stale ownership handoff for a tracked
 address (the owner went silent past its interval but is not durably
-gone — issue #591), it calls ``trigger_rescue(address,
-challenger_source)``. The owner side is served through the normal
+gone — issue #591), it calls
+``trigger_rescue(address, challenger_source, owner_source)``. The
+owner side is served through the normal
 schedule (due times clamped to now, worker woken, connecting
 fallback included); the challenger side gets a directly delegated
 window so its next capture carries a fresh scan response. Every
@@ -1068,6 +1069,10 @@ class AutoScanScheduler:
         ],
     ) -> None:
         """Record a dispatched window's accept time for the addresses it covers."""
+        if not due_buckets or not self._manager._rescue_triggered:
+            # No rescue episode anywhere: nothing will read the accept
+            # times, so the ordinary active-scan cadence pays nothing.
+            return
         accept_after = monotonic_time_coarse() + _RESCUE_SCAN_ACCEPT_SECONDS
         for bucket_address, _entries, _due in due_buckets:
             self._record_rescue_accept(bucket_address, accept_after)

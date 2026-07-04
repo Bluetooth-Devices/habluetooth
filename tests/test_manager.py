@@ -1574,6 +1574,17 @@ async def test_stale_active_need_retriggers_when_window_never_ran(
             comparable, comparable_adv, start + 105, HCI1_SOURCE_ADDRESS
         )
         assert mock_scheduler.trigger_rescue.call_count == 2
+        # The retry restarted the episode, so the next adv within the
+        # retry wait does not re-trigger again.
+        inject_advertisement_with_time_and_source(
+            comparable, comparable_adv, start + 120, HCI1_SOURCE_ADDRESS
+        )
+        assert mock_scheduler.trigger_rescue.call_count == 2
+        # And another full retry wait later it does.
+        inject_advertisement_with_time_and_source(
+            comparable, comparable_adv, start + 140, HCI1_SOURCE_ADDRESS
+        )
+        assert mock_scheduler.trigger_rescue.call_count == 3
     finally:
         manager._auto_scheduler = real_scheduler
     assert manager.async_ble_device_from_address(address, True) is strong

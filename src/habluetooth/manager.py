@@ -225,7 +225,8 @@ class BluetoothManager:
         # (see _rescue_stale_handoff). The owner being heard again
         # invalidates the episode (old.time >= trigger), so a stale
         # record can never authorize a later instant switch. Evicted
-        # with the device.
+        # with the device; an entry orphaned by its active-scan need being
+        # unregistered is cleared on the device's next stale handoff.
         self._rescue_triggered: dict[str, float] = {}
         # Cross-scanner name cache: address -> best name seen across all
         # scanners. Passive scanners typically miss the device name because
@@ -745,15 +746,13 @@ class BluetoothManager:
                     owner_strong,
                     durably_gone,
                 )
-            if record_demotion and self._rescue_triggered:
-                # An ordinary stale handoff ends any rescue episode. The
-                # empty-dict check keeps the common no-episode case to a
-                # single branch.
-                self._rescue_triggered.pop(new.address, None)
+            self._end_rescue_episode(new.address, record_demotion)
             return True
         if self._auto_scheduler._requests_by_address.get(new.address) is None:
             # Passive device: the challenger's newer capture is genuinely
-            # fresh data; hand off.
+            # fresh data; hand off. Ending the episode here also cleans up
+            # after a device whose active-scan need was unregistered while
+            # an episode was in flight.
             if self._debug:
                 _LOGGER.debug(
                     "%s (%s): Switching from %s to %s (time elapsed:%s > stale"
@@ -765,6 +764,7 @@ class BluetoothManager:
                     elapsed,
                     stale_seconds,
                 )
+            self._end_rescue_episode(new.address, record_demotion)
             return True
         challenger_scanner = self._sources.get(new.source)
         if (
@@ -788,8 +788,7 @@ class BluetoothManager:
                     elapsed,
                     stale_seconds,
                 )
-            if record_demotion and self._rescue_triggered:
-                self._rescue_triggered.pop(new.address, None)
+            self._end_rescue_episode(new.address, record_demotion)
             return True
         # Active-need device with the handoff denied: run the rescue flow
         # described above. Only the all-history decision (record_demotion)
@@ -798,6 +797,17 @@ class BluetoothManager:
         return record_demotion and self._rescue_stale_handoff(
             old, new, elapsed, stale_seconds
         )
+
+    def _end_rescue_episode(self, address: str, record_demotion: bool) -> None:
+        """
+        End any rescue episode when a stale handoff proceeds immediately.
+
+        Only the all-history decision (record_demotion) owns episode state,
+        and the empty-dict check keeps the common no-episode case to a
+        single branch.
+        """
+        if record_demotion and self._rescue_triggered:
+            self._rescue_triggered.pop(address, None)
 
     def _rescue_stale_handoff(
         self,
@@ -842,8 +852,11 @@ class BluetoothManager:
             return False
         accept_after = self._auto_scheduler._rescue_accept_after.get(new.address, 0.0)
         if accept_after >= pending and new.time > accept_after:
-            # Both sides had their active window after the trigger and the
-            # owner is still silent: hand off.
+            # A rescue window's accept time postdates the trigger and the
+            # owner is still silent: hand off. The accept time is the max
+            # across both sides, so a deaf owner whose window never ran
+            # does not block the handoff; being deaf is exactly the case
+            # being handed off from.
             del self._rescue_triggered[new.address]
             if self._debug:
                 _LOGGER.debug(
@@ -860,8 +873,10 @@ class BluetoothManager:
             return True
         if new.time - pending > _RESCUE_SCAN_RETRY_SECONDS:
             # The triggered window never materialized (scanner busy,
-            # dispatch lost): try again. The episode start is kept so a
-            # late accept time still satisfies it.
+            # dispatch lost): restart the episode and try again. Advancing
+            # the trigger time spaces retries by the retry interval instead
+            # of re-triggering on every advertisement once it elapses.
+            self._rescue_triggered[new.address] = new.time
             self._auto_scheduler.trigger_rescue(new.address, new.source, old.source)
         return False
 

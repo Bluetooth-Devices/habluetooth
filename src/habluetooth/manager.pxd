@@ -119,6 +119,8 @@ cdef class BluetoothManager:
         bint record_demotion,
     )
 
+    cdef void _end_rescue_episode(self, str address, bint record_demotion)
+
     cdef bint _rescue_stale_handoff(
         self,
         BluetoothServiceInfoBleak old,
