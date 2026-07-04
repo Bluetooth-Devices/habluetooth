@@ -1171,15 +1171,21 @@ class AutoScanScheduler:
         """
         Delegate a rescue window to the challenger's scanner.
 
-        Only an AUTO challenger needs (and can take) a window: the manager
-        hands off immediately for an ACTIVE-and-scanning challenger before
-        ever triggering a rescue, and a passive or mid-connect challenger
+        An ACTIVE-and-scanning challenger already produces active captures,
+        so its side counts as covered now (the manager only defers a
+        materially weaker ACTIVE challenger; a comparable one was handed
+        off before the rescue was triggered). Only an AUTO challenger
+        needs (and can take) a window; a passive or mid-connect challenger
         cannot produce an active capture right now.
         """
         if (challenger := self._manager._sources.get(challenger_source)) is None:
             return
+        mode = challenger.requested_mode
+        if mode is BluetoothScanningMode.ACTIVE and challenger.scanning:
+            self._record_rescue_accept(address, coarse_now)
+            return
         if (
-            challenger.requested_mode is not BluetoothScanningMode.AUTO
+            mode is not BluetoothScanningMode.AUTO
             or challenger._connections_in_progress() > 0
         ):
             return

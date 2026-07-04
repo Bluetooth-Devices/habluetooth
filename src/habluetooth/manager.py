@@ -695,9 +695,13 @@ class BluetoothManager:
         SCAN_RSP):
 
         * Passive device (no registered need): any scanning scanner hears
-          the bare advertisement, so the challenger's newer capture is
-          genuinely fresh data regardless of its signal strength; hand off
-          immediately.
+          the bare advertisement, so a comparable-or-stronger challenger's
+          newer capture takes over immediately, even against a strong
+          owner (there is no scan response to go stale). A materially
+          weaker challenger that happened to catch the one advertisement
+          the owner missed must not steal on a hair-past-stale interval
+          only to flap back on the owner's next capture; it waits for the
+          durably-gone handoff.
         * Active-need device: the owner's silence often just means nobody
           has run an active window lately (or its radio is busy with
           connections while it still reports scanning; an owner that
@@ -707,9 +711,13 @@ class BluetoothManager:
           be a stale scan response (issue #568). A comparable-or-stronger
           challenger of a weak owner still takes over immediately (ordinary
           roaming; a strong owner that briefly goes quiet is almost
-          certainly still there), and so does a challenger whose scanner
-          runs continuous ACTIVE scanning, since its capture already
-          carries the scan response. Otherwise, instead of pinning
+          certainly still there), and so does a comparable-or-stronger
+          challenger whose scanner runs continuous ACTIVE scanning, since
+          its capture already carries the scan response (a materially
+          weaker ACTIVE challenger defers like any other; its side of the
+          rescue counts as covered immediately, so it wins on its next
+          advertisement only if the owner stays silent). Otherwise,
+          instead of pinning
           ownership until the owner is durably gone (issue #591), trigger
           an active window on both the owner (a chance to re-hear the
           device) and the challenger (its next capture is a fresh scan
@@ -752,33 +760,42 @@ class BluetoothManager:
             self._end_rescue_episode(new.address, record_demotion)
             return True
         if self._auto_scheduler._requests_by_address.get(new.address) is None:
-            # Passive device: the challenger's newer capture is genuinely
-            # fresh data; hand off. Ending the episode here also cleans up
-            # after a device whose active-scan need was unregistered while
-            # an episode was in flight.
-            if self._debug:
-                _LOGGER.debug(
-                    "%s (%s): Switching from %s to %s (time elapsed:%s > stale"
-                    " seconds:%s; passive device, newer capture wins)",
-                    new.name,
-                    new.address,
-                    self._async_describe_source(old),
-                    self._async_describe_source(new),
-                    elapsed,
-                    stale_seconds,
-                )
-            self._end_rescue_episode(new.address, record_demotion)
-            return True
+            # Passive device: a comparable-or-stronger challenger's newer
+            # capture wins immediately; a materially weaker challenger
+            # waits for the durably-gone handoff above so a single missed
+            # interval at the owner cannot flap ownership (see the
+            # docstring). Ending the episode here also cleans up after a
+            # device whose active-scan need was unregistered while an
+            # episode was in flight.
+            if comparable_or_stronger:
+                if self._debug:
+                    _LOGGER.debug(
+                        "%s (%s): Switching from %s to %s (time elapsed:%s >"
+                        " stale seconds:%s; passive device, comparable newer"
+                        " capture wins)",
+                        new.name,
+                        new.address,
+                        self._async_describe_source(old),
+                        self._async_describe_source(new),
+                        elapsed,
+                        stale_seconds,
+                    )
+                self._end_rescue_episode(new.address, record_demotion)
+                return True
+            return False
         challenger_scanner = self._sources.get(new.source)
         if (
-            challenger_scanner is not None
+            comparable_or_stronger
+            and challenger_scanner is not None
             and challenger_scanner.requested_mode is BluetoothScanningMode.ACTIVE
             and challenger_scanner.scanning
         ):
             # The challenger runs continuous active scanning, so this
             # capture already carries the device's scan response; it is as
             # fresh as active data gets and there is nothing for a rescue
-            # window to add. Hand off immediately, like passive.
+            # window to add. Hand off immediately. A materially weaker
+            # ACTIVE challenger falls through to the rescue deferral so a
+            # single missed interval at the owner cannot flap ownership.
             if self._debug:
                 _LOGGER.debug(
                     "%s (%s): Switching from %s to %s (time elapsed:%s > stale"

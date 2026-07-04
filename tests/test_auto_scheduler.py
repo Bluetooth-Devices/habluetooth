@@ -6552,8 +6552,8 @@ async def test_trigger_rescue_auto_owner_and_auto_challenger() -> None:
 
 
 @pytest.mark.asyncio
-async def test_trigger_rescue_active_challenger_not_delegated() -> None:
-    """An ACTIVE challenger gets no window; the manager hands off before this."""
+async def test_trigger_rescue_active_challenger_counts_covered() -> None:
+    """A weaker ACTIVE challenger gets no window; its side is covered now."""
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:66:02"
@@ -6568,12 +6568,13 @@ async def test_trigger_rescue_active_challenger_not_delegated() -> None:
     c_challenger = manager.async_register_scanner(challenger)
     try:
         _inject_with_rssi(owner, address, rssi=-50)
+        before = monotonic_time_coarse()
         sched.trigger_rescue(address, challenger.source, owner.source)
+        after = monotonic_time_coarse()
+        # Already actively scanning: no window, no task, covered now.
         assert challenger.active_window_calls == []
         assert not sched._rescue_tasks
-        # The AUTO owner side is served through the schedule; the accept
-        # time only lands when its worker tick dispatches the window.
-        assert address not in sched._rescue_accept_after
+        assert before <= sched._rescue_accept_after[address] <= after
     finally:
         cancel()
         c_owner()
