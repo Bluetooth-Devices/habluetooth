@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.26.3 (2026-07-04)
+
+### Bug fixes
+
+
+- Replace the paused owner hold with rescue active scans ([`c443fba`](https://github.com/Bluetooth-Devices/habluetooth/commit/c443fba16eb12ae1d89c5d2b4b72641090e90520))
+
+
 ## v6.26.2 (2026-07-01)
 
 ### Bug fixes
