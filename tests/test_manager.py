@@ -1851,6 +1851,63 @@ async def test_owner_paused_for_connection_hands_off_immediately(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_stale_active_need_retry_does_not_clobber_matured_accept(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    The retry never restarts an episode whose window already ran.
+
+    Once an accept time is recorded, the episode is only waiting out the
+    accept and interval gates; restarting it would push the trigger time
+    forward and make the gates unreachable for slow advertisers.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:79"
+    start = 50.0
+    strong = generate_ble_device(address, "strong_hci0")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci0", service_uuids=[], rssi=-50
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    # stale_seconds = 35, durably-gone = 87.5
+    manager.async_set_fallback_availability_interval(address, 30)
+
+    comparable = generate_ble_device(address, "comparable_hci1")
+    comparable_adv = generate_advertisement_data(
+        local_name="comparable_hci1", service_uuids=[], rssi=-60
+    )
+    real_scheduler = manager._auto_scheduler
+    mock_scheduler = Mock()
+    mock_scheduler._requests_by_address = {address: {Mock()}}
+    mock_scheduler._rescue_accept_after = {}
+    manager._auto_scheduler = mock_scheduler
+    try:
+        # Episode starts.
+        inject_advertisement_with_time_and_source(
+            comparable, comparable_adv, start + 36, HCI1_SOURCE_ADDRESS
+        )
+        assert mock_scheduler.trigger_rescue.call_count == 1
+        assert manager._rescue_triggered[address] == start + 36
+        # A window ran; its accept time is still in the future.
+        mock_scheduler._rescue_accept_after[address] = start + 80
+        # Past the retry wait, but the accept exists: no restart, the
+        # trigger time is preserved so the gates can mature.
+        inject_advertisement_with_time_and_source(
+            comparable, comparable_adv, start + 70, HCI1_SOURCE_ADDRESS
+        )
+        assert mock_scheduler.trigger_rescue.call_count == 1
+        assert manager._rescue_triggered[address] == start + 36
+        assert manager.async_ble_device_from_address(address, True) is strong
+    finally:
+        manager._auto_scheduler = real_scheduler
+        manager._rescue_triggered.pop(address, None)
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_stale_active_need_durably_gone_ends_episode(
     register_hci0_scanner: None,
     register_hci1_scanner: None,

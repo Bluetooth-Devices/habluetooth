@@ -887,11 +887,16 @@ class BluetoothManager:
                     pending,
                 )
             return True
-        if new.time - pending > _RESCUE_SCAN_RETRY_SECONDS:
+        if accept_after < pending and new.time - pending > _RESCUE_SCAN_RETRY_SECONDS:
             # The triggered window never materialized (scanner busy,
             # dispatch lost): restart the episode and try again. Advancing
             # the trigger time spaces retries by the retry interval instead
-            # of re-triggering on every advertisement once it elapses.
+            # of re-triggering on every advertisement once it elapses. A
+            # recorded accept means the episode is merely waiting out the
+            # gates above; restarting would clobber it. Net effect of the
+            # retry cadence: the rescue only accelerates handoffs for
+            # advertisers faster than roughly the retry interval, and the
+            # durably-gone backstop governs slower ones.
             self._rescue_triggered[new.address] = new.time
             self._auto_scheduler.trigger_rescue(new.address, new.source, old.source)
         return False
