@@ -61,7 +61,6 @@ class BaseHaScanner:
         "_expire_seconds",
         "_last_connect_completed_time",
         "_last_detection",
-        "_last_scan_resume_time",
         "_loop",
         "_manager",
         "_previous_service_info",
@@ -133,11 +132,6 @@ class BaseHaScanner:
         self._connect_completed_total: int = 0
         self._connect_failed_total: int = 0
         self._last_connect_completed_time: float = 0.0
-        # Monotonic time this scanner last resumed scanning after a connection
-        # pause (a local adapter cannot scan while connecting). 0.0 = never
-        # paused. Used to avoid handing off a device on staleness that is only
-        # the owner having been deaf during a connection.
-        self._last_scan_resume_time: float = 0.0
 
     def _on_start_success(self) -> None:
         """
@@ -155,7 +149,6 @@ class BaseHaScanner:
         self._connect_completed_total = 0
         self._connect_failed_total = 0
         self._last_connect_completed_time = 0.0
-        self._last_scan_resume_time = 0.0
 
     def _finished_connecting(self, address: str, connected: bool) -> None:
         """Finished connecting."""
@@ -377,10 +370,6 @@ class BaseHaScanner:
         finally:
             self._connecting -= 1
             self.scanning = not self._connecting
-            if not self._connecting:
-                # Fully resumed scanning; record when so a device is not treated
-                # as stale for the window it went unheard during the connection.
-                self._last_scan_resume_time = monotonic_time_coarse()
 
     @property
     def discovered_devices(self) -> list[BLEDevice]:

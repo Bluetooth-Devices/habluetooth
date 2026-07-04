@@ -10,6 +10,7 @@ cdef double _AUTO_WINDOW_MIN_DURATION
 cdef double _AUTO_CONNECTING_DEFER
 cdef double _AUTO_COALESCE_LOOKAHEAD
 cdef double _ON_DEMAND_EXTENSION_SLOP
+cdef double _RESCUE_SCAN_ACCEPT_SECONDS
 cdef int NO_RSSI_VALUE
 
 
@@ -52,6 +53,9 @@ cdef class _ScannerWorker:
 
     cpdef void note_window_dispatched(self, double window_end, double now)
 
+    @cython.locals(window_end=double)
+    cpdef void _mark_window_open(self, double now, double duration)
+
     @cython.locals(
         next_at=double,
         earliest=double,
@@ -78,6 +82,9 @@ cdef class _ScanSchedule:
 
     cpdef void drop(self, str address, ActiveScanRequest request)
 
+    @cython.locals(entries=dict)
+    cpdef void advance_to(self, str address, double due_time)
+
     cpdef void assign(self, str address, str new_source)
 
     cpdef void unown(self, str address)
@@ -96,6 +103,8 @@ cdef class AutoScanScheduler:
     cdef public _ScanSchedule _schedule
     cdef public dict _workers
     cdef public dict _last_window_by_address
+    cdef public dict _rescue_accept_after
+    cdef public set _rescue_tasks
     cdef public object _loop
     cdef public bint _running
     cdef public object _on_demand_sweep_future
@@ -128,6 +137,58 @@ cdef class AutoScanScheduler:
     cpdef void start(self, object loop)
 
     cpdef void stop(self)
+
+    @cython.locals(
+        now=double,
+        coarse_now=double,
+        requests=set,
+    )
+    cpdef void trigger_rescue(
+        self, str address, str challenger_source, str owner_source
+    )
+
+    cpdef void _record_rescue_accept(self, str address, double accept_after)
+
+    cpdef void _record_window_dispatch(
+        self,
+        str address,
+        double dispatch_now,
+        str source,
+        double accept_after,
+    )
+
+    @cython.locals(address=str)
+    cpdef void _mark_delegated_dispatch(
+        self,
+        str source,
+        list addresses,
+        double dispatch_now,
+        double duration,
+        double accept_after,
+    )
+
+    @cython.locals(accept_after=double)
+    cpdef void _record_rescue_accepts(self, list due_buckets)
+
+    cpdef void _rescue_owner_side(
+        self, str address, str owner_source, set requests, double now,
+        double coarse_now
+    )
+
+    cpdef void _rescue_task_done(
+        self, str name, double duration, object task
+    )
+
+    @cython.locals(duration=double)
+    cpdef void _rescue_challenger_side(
+        self,
+        str address,
+        str challenger_source,
+        set requests,
+        object loop,
+        double now,
+        double coarse_now,
+    )
 
     @cython.locals(
         best_rssi=int,

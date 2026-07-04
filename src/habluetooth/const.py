@@ -129,6 +129,25 @@ DEFAULT_ACTIVE_SCAN_DURATION: Final = 10.0
 # window without holding the caller too long.
 DEFAULT_ON_DEMAND_SWEEP_DURATION: Final = 10.0
 
+# How long a rescue-scan episode waits for its triggered active window
+# before re-triggering (issue #591). A stale handoff for a device that
+# needs active scans is deferred until the owner (and the challenger)
+# have had an active window; if none materialized within this long
+# (scanner busy, dispatch lost, window declined), the next arbitration
+# restarts the episode and re-triggers, so retries are spaced by this
+# interval. Long enough for a slow window dispatch to land, short
+# enough that the durably-gone backstop is not the only recovery.
+RESCUE_SCAN_RETRY_SECONDS: Final = 30.0
+
+# How long a rescue active window must have been running before a
+# capture from the scanning side is trusted as an active capture.
+# Once the radio has been actively scanning this long, an incoming
+# advertisement cannot be a delayed passive capture that is still
+# missing its scan response, so the deferred handoff can proceed
+# without waiting for the full window to close. Derived from
+# AUTO_WINDOW_MIN_DURATION so it can never exceed a window's length.
+RESCUE_SCAN_ACCEPT_SECONDS: Final = AUTO_WINDOW_MIN_DURATION
+
 
 FAILED_ADAPTER_MAC = "00:00:00:00:00:00"
 
