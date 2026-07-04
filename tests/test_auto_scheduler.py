@@ -6907,3 +6907,46 @@ async def test_trigger_rescue_challenger_window_failure_is_logged(
         cancel()
         c_owner()
         c_challenger()
+
+
+@pytest.mark.asyncio
+async def test_trigger_rescue_cancelled_window_logs_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A challenger rescue window cancelled by stop() produces no error log."""
+    manager = get_manager()
+    sched = manager._auto_scheduler
+    address = "11:22:33:44:66:14"
+    cancel = manager.async_register_active_scan(
+        address, scan_interval=120.0, scan_duration=7.0
+    )
+    owner = _DiscoverableAutoScanner("AA:00:00:00:9E:01", BluetoothScanningMode.ACTIVE)
+    challenger = _DiscoverableAutoScanner(
+        "AA:00:00:00:9E:02", BluetoothScanningMode.AUTO
+    )
+    # Block the challenger's window so the task is still in flight when
+    # the scheduler stops.
+    challenger._block_event = asyncio.Event()
+    c_owner = manager.async_register_scanner(owner)
+    c_challenger = manager.async_register_scanner(challenger)
+    try:
+        _inject_with_rssi(owner, address, rssi=-50)
+        manager._rescue_triggered[address] = 0.1
+        with caplog.at_level(logging.ERROR, logger="habluetooth.auto_scheduler"):
+            sched.trigger_rescue(address, challenger.source, owner.source)
+            await asyncio.sleep(0)
+            task = next(iter(sched._rescue_tasks))
+            sched.stop()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            # Let the done callback run.
+            await asyncio.sleep(0)
+        assert not sched._rescue_tasks
+        assert not any(
+            "error running rescue active window" in record.getMessage()
+            for record in caplog.records
+        )
+    finally:
+        cancel()
+        c_owner()
+        c_challenger()
