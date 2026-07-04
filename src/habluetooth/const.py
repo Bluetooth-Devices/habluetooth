@@ -47,6 +47,20 @@ CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS: Final = 195
 # device that genuinely moved into weak-only coverage hand off.
 DURABLY_GONE_STALE_FACTOR: Final = 2.5
 
+# How many stale windows must elapse before the roaming rule (a
+# comparable-or-stronger challenger of a weak owner) may take a stale
+# device. Scanners duty-cycle their scan windows, so "the owner missed
+# an advertisement" is a per-scanner reception lottery, not evidence
+# the device moved; on a stationary network the first missed interval
+# routinely parks ownership on a weak scanner that the strong owner
+# then reclaims on the RSSI path, churning ownership with no data
+# benefit. Requiring one and a half stale windows means the owner must
+# effectively miss two reception opportunities before a roam, while a
+# genuinely departed device still roams well before the durably-gone
+# backstop (must stay below DURABLY_GONE_STALE_FACTOR or the roaming
+# rule can never fire).
+STALE_ROAM_FACTOR: Final = 1.5
+
 # An owner whose last advertisement was at least this strong is treated as
 # close/stationary: a brief reception gap is almost certainly RF/scan-response
 # jitter rather than the device leaving, so a merely-comparable challenger

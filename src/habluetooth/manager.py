@@ -46,6 +46,7 @@ from .const import (
     MIN_ACTIVE_SCAN_INTERVAL,
     RESCUE_SCAN_RETRY_SECONDS,
     RSSI_SMOOTHING_FACTOR,
+    STALE_ROAM_FACTOR,
     STRONG_OWNER_STALE_RSSI,
     UNAVAILABLE_TRACK_SECONDS,
 )
@@ -94,6 +95,7 @@ _STRONG_OWNER_STALE_RSSI = STRONG_OWNER_STALE_RSSI
 _RSSI_SMOOTHING_FACTOR = RSSI_SMOOTHING_FACTOR
 _ADV_RSSI_SWITCH_DEADBAND = ADV_RSSI_SWITCH_DEADBAND
 _RESCUE_SCAN_RETRY_SECONDS = RESCUE_SCAN_RETRY_SECONDS
+_STALE_ROAM_FACTOR = STALE_ROAM_FACTOR
 
 # Shared empty set used as the default for the reclaim-hysteresis lookup, so the
 # hot path skips a None check and never allocates a throwaway set.
@@ -709,10 +711,13 @@ class BluetoothManager:
         not); what differs per device class is everything in between:
 
         * Passive device (no registered need): a comparable-or-stronger
-          challenger of a weak owner takes over immediately (ordinary
-          roaming; payloads are identical across scanners, so its capture
-          is as good as anyone's). Anything else waits for durably-gone,
-          which costs nothing data-wise for the same reason.
+          challenger of a weak owner takes over once the owner has been
+          silent STALE_ROAM_FACTOR stale windows (ordinary roaming;
+          payloads are identical across scanners, so its capture is as
+          good as anyone's, and the extra half window keeps a per-scanner
+          reception miss from roaming a stationary device). Anything else
+          waits for durably-gone, which costs nothing data-wise for the
+          same reason.
         * Active-need device: there is no roaming shortcut at all — even a
           comparable challenger of a weak owner may be an AUTO scanner in
           its passive phase whose capture carries no fresh scan response
@@ -756,27 +761,33 @@ class BluetoothManager:
             return True
         if self._auto_scheduler._requests_by_address.get(new.address) is None:
             # Passive device: a comparable-or-stronger challenger of a weak
-            # owner takes over immediately (ordinary roaming; its capture
-            # is as good as anyone's, payloads are identical across
-            # scanners). Anything else waits for durably-gone above. The
-            # episode ends either way; it also cleans up after an
+            # owner takes over once the owner has been silent for
+            # STALE_ROAM_FACTOR stale windows (its capture is as good as
+            # anyone's, payloads are identical across scanners). The extra
+            # half window over plain stale means the owner must miss two
+            # reception opportunities, not one, before roaming; a single
+            # miss is a per-scanner duty-cycle lottery, not evidence the
+            # device moved. Anything else waits for durably-gone above.
+            # The episode ends either way; it also cleans up after an
             # active-scan need unregistered mid-episode (defense in depth,
             # the unregister itself clears it too).
             self._end_rescue_episode(new.address, record_demotion)
-            comparable_or_stronger = new_rssi >= old_rssi - ADV_RSSI_SWITCH_THRESHOLD
-            owner_strong = old_rssi >= _STRONG_OWNER_STALE_RSSI
-            if comparable_or_stronger and not owner_strong:
+            if (
+                elapsed > stale_seconds * _STALE_ROAM_FACTOR
+                and new_rssi >= old_rssi - ADV_RSSI_SWITCH_THRESHOLD
+                and old_rssi < _STRONG_OWNER_STALE_RSSI
+            ):
                 if self._debug:
                     _LOGGER.debug(
                         "%s (%s): Switching from %s to %s (time elapsed:%s >"
-                        " stale seconds:%s; passive roaming, comparable"
+                        " roam threshold:%s; passive roaming, comparable"
                         " challenger of a weak owner)",
                         new.name,
                         new.address,
                         self._async_describe_source(old),
                         self._async_describe_source(new),
                         elapsed,
-                        stale_seconds,
+                        stale_seconds * _STALE_ROAM_FACTOR,
                     )
                 return True
             return False
@@ -784,12 +795,13 @@ class BluetoothManager:
             # Connectable re-check: connection routing cares about
             # liveness, not scan-response freshness, so the ordinary
             # roaming rule applies here exactly as it does for a passive
-            # device; the connectable history must repoint away from a
-            # silent scanner at the stale window rather than route a
-            # connect attempt at a dead radio until durably-gone. Only
-            # the all-history decision drives episode state.
+            # device (same STALE_ROAM_FACTOR gate); the connectable
+            # history must repoint away from a silent scanner well before
+            # durably-gone rather than route a connect attempt at a dead
+            # radio. Only the all-history decision drives episode state.
             return (
-                new_rssi >= old_rssi - ADV_RSSI_SWITCH_THRESHOLD
+                elapsed > stale_seconds * _STALE_ROAM_FACTOR
+                and new_rssi >= old_rssi - ADV_RSSI_SWITCH_THRESHOLD
                 and old_rssi < _STRONG_OWNER_STALE_RSSI
             )
         # Active-need all-history decision: never take the roaming
