@@ -147,14 +147,15 @@ cdef class AutoScanScheduler:
         self, str address, str challenger_source, str owner_source
     )
 
-    cpdef void _record_rescue_accept(self, str address, double accept_after)
+    @cython.locals(accept_after=double)
+    cpdef void _record_rescue_accept(self, str address, double coverage_time)
 
     cpdef void _record_window_dispatch(
         self,
         str address,
         double dispatch_now,
         str source,
-        double accept_after,
+        double coverage_time,
     )
 
     @cython.locals(address=str)
@@ -164,10 +165,10 @@ cdef class AutoScanScheduler:
         list addresses,
         double dispatch_now,
         double duration,
-        double accept_after,
+        double coverage_time,
     )
 
-    @cython.locals(accept_after=double)
+    @cython.locals(coverage_time=double)
     cpdef void _record_rescue_accepts(self, list due_buckets)
 
     cpdef void _rescue_owner_side(
@@ -183,7 +184,7 @@ cdef class AutoScanScheduler:
     cpdef void _rescue_challenger_side(
         self,
         str address,
-        str challenger_source,
+        object challenger,
         set requests,
         object loop,
         double now,

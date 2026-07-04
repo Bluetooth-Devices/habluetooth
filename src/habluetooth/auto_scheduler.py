@@ -138,14 +138,16 @@ gone — issue #591), it calls
 owner side is served through the normal
 schedule (due times clamped to now, worker woken, connecting
 fallback included); the challenger side gets a directly delegated
-window so its next capture carries a fresh scan response. Every
-dispatch site records the window's accept time in
-``_rescue_accept_after`` (dispatch + RESCUE_SCAN_ACCEPT_SECONDS,
-coarse monotonic so it compares with advertisement times); once a
-window has been actively scanning that long, a capture cannot be a
-delayed passive one, so the manager hands the device off on the
-first challenger advertisement that postdates the accept time while
-the owner stayed silent, without waiting for the window to close.
+window so its next capture carries a fresh scan response; sides
+that are already ACTIVE and scanning need no window and just record
+coverage, and an ACTIVE owner counts as covered. Every dispatch or
+coverage site records the accept time in ``_rescue_accept_after``
+(coverage + RESCUE_SCAN_ACCEPT_SECONDS, coarse monotonic so it
+compares with advertisement times); once a window has been actively
+scanning that long, a capture cannot be a delayed passive one, so
+the manager hands the device off on the first challenger
+advertisement that postdates the accept time while the owner stayed
+silent, without waiting for the window to close.
 
 
 Invariants
@@ -612,9 +614,10 @@ class _ScannerWorker:
             had_any_progress = True
             if fallback is None:
                 # Covered by another ACTIVE scanner: no later dispatch
-                # here, so the tick time is the window start and captures
-                # are accepted immediately. Delegated addresses are
-                # recorded below at their dispatch time.
+                # here, so the tick time is the window start; the accept
+                # keeps the standard grace so the owner gets one re-hear
+                # window. Delegated addresses are recorded below at their
+                # dispatch time.
                 self._scheduler._record_window_dispatch(address, now, None, coarse_now)
                 continue
             existing = fallback_groups.get(fallback.source)
@@ -669,7 +672,7 @@ class _ScannerWorker:
                 [request.address for request in fb_due],
                 dispatch_now,
                 duration,
-                monotonic_time_coarse() + _RESCUE_SCAN_ACCEPT_SECONDS,
+                monotonic_time_coarse(),
             )
             try:
                 await fb.async_request_active_window(duration)
@@ -812,9 +815,10 @@ class AutoScanScheduler:
         # Diagnostics-only; pruned with requests.
         self._last_window_by_address: dict[str, tuple[float, str | None]] = {}
         # address -> coarse-monotonic time after which a capture from the
-        # scanning side is trusted as an active capture (dispatch time +
-        # RESCUE_SCAN_ACCEPT_SECONDS; "already ACTIVE and scanning" counts
-        # as now). Written at every dispatch site plus trigger_rescue;
+        # scanning side is trusted as an active capture (coverage time +
+        # RESCUE_SCAN_ACCEPT_SECONDS at every site, so the owner always
+        # gets one re-hear window). Written at every dispatch site plus
+        # trigger_rescue;
         # read by the manager's stale-handoff deferral, which hands a
         # device off on the first challenger advertisement that postdates
         # this (issue #591). Coarse monotonic on purpose so it compares
@@ -989,6 +993,12 @@ class AutoScanScheduler:
                 del self._requests_by_address[request.address]
                 self._last_window_by_address.pop(request.address, None)
                 self._rescue_accept_after.pop(request.address, None)
+                # A rescue episode's lifetime is bounded by the active-scan
+                # need. Without this upward pop, a device that never goes
+                # stale again would keep an orphaned episode alive forever,
+                # disabling the no-episode fast path for every dispatch
+                # (the manager cannot observe the unregister itself).
+                self._manager._rescue_triggered.pop(request.address, None)
         self._schedule.drop(request.address, request)
 
     def on_advertisement(self, service_info: BluetoothServiceInfoBleak) -> None:
@@ -1029,19 +1039,22 @@ class AutoScanScheduler:
         self, address: str, challenger_source: str, owner_source: str
     ) -> None:
         """
-        Run an active window on both sides of a deferred stale handoff.
+        Serve a deferred stale handoff; scans start only on AUTO scanners.
 
         Called synchronously by the manager's advertisement arbitration
         (issue #591) when the stale handoff for a device that needs
-        active scans is deferred instead of taken. The owner side gets
-        an immediate window: its per-address due times are clamped to
-        now and its worker woken, so the normal tick path (including
-        the connecting fallback) dispatches it and records the accept
-        time. The challenger side gets a delegated window so its next
-        capture carries a fresh scan response (an ACTIVE-and-scanning
-        challenger never reaches here; the manager hands off to it
-        immediately). An owner that is already ACTIVE and scanning
-        counts as covered now. The accept time lands in
+        active scans is deferred instead of taken. The owner side is
+        always served: an AUTO owner gets an immediate window (due times
+        clamped to now, worker woken, so the normal tick path including
+        the connecting fallback dispatches it and its next retained
+        capture is a fresh scan response) and an ACTIVE owner counts as
+        covered. On the challenger side a scanner that is already ACTIVE
+        and scanning needs no window (its captures already carry the
+        scan response; coverage is recorded so the accept grace starts),
+        while an AUTO challenger gets a delegated window so its next
+        capture carries a fresh scan response. Every
+        accept time keeps the standard grace so the owner always gets
+        one re-hear window before any handoff, and lands in
         ``_rescue_accept_after`` (coarse monotonic, comparable with
         advertisement times); the manager hands off on the first
         challenger advertisement that postdates it. A passive or
@@ -1063,12 +1076,31 @@ class AutoScanScheduler:
         now = loop.time()
         coarse_now = monotonic_time_coarse()
         self._rescue_owner_side(address, owner_source, requests, now, coarse_now)
+        if (challenger := self._manager._sources.get(challenger_source)) is None:
+            return
+        if (
+            challenger.requested_mode is BluetoothScanningMode.ACTIVE
+            and challenger.scanning
+        ):
+            # The challenger is already actively scanning: its captures
+            # already carry the scan response, so no window is needed on
+            # its side; record coverage now so the accept grace starts.
+            self._record_rescue_accept(address, coarse_now)
+            return
         self._rescue_challenger_side(
-            address, challenger_source, requests, loop, now, coarse_now
+            address, challenger, requests, loop, now, coarse_now
         )
 
-    def _record_rescue_accept(self, address: str, accept_after: float) -> None:
-        """Record a rescue accept time, keeping any later pre-existing one."""
+    def _record_rescue_accept(self, address: str, coverage_time: float) -> None:
+        """
+        Record a rescue accept time from a coverage time.
+
+        The accept always sits ``RESCUE_SCAN_ACCEPT_SECONDS`` after the
+        moment coverage was confirmed; folding the grace in here (rather
+        than at the call sites) makes that invariant single-sourced.
+        Keeps any later pre-existing accept (keep-max).
+        """
+        accept_after = coverage_time + _RESCUE_SCAN_ACCEPT_SECONDS
         if self._rescue_accept_after.get(address, 0.0) < accept_after:
             self._rescue_accept_after[address] = accept_after
 
@@ -1083,16 +1115,16 @@ class AutoScanScheduler:
             # No rescue episode anywhere: nothing will read the accept
             # times, so the ordinary active-scan cadence pays nothing.
             return
-        accept_after = monotonic_time_coarse() + _RESCUE_SCAN_ACCEPT_SECONDS
+        coverage_time = monotonic_time_coarse()
         for bucket_address, _entries, _due in due_buckets:
-            self._record_rescue_accept(bucket_address, accept_after)
+            self._record_rescue_accept(bucket_address, coverage_time)
 
     def _record_window_dispatch(
         self,
         address: str,
         dispatch_now: float,
         source: str | None,
-        accept_after: float,
+        coverage_time: float,
     ) -> None:
         """
         Record one window dispatch covering ``address``.
@@ -1108,7 +1140,7 @@ class AutoScanScheduler:
         """
         self._last_window_by_address[address] = (dispatch_now, source)
         if self._manager._rescue_triggered:
-            self._record_rescue_accept(address, accept_after)
+            self._record_rescue_accept(address, coverage_time)
 
     def _mark_delegated_dispatch(
         self,
@@ -1116,7 +1148,7 @@ class AutoScanScheduler:
         addresses: list[str],
         dispatch_now: float,
         duration: float,
-        accept_after: float,
+        coverage_time: float,
     ) -> None:
         """
         Record a window delegated to ``source`` covering ``addresses``.
@@ -1128,7 +1160,7 @@ class AutoScanScheduler:
         the call site (awaited there vs fire-and-forget here).
         """
         for address in addresses:
-            self._record_window_dispatch(address, dispatch_now, source, accept_after)
+            self._record_window_dispatch(address, dispatch_now, source, coverage_time)
         if (worker := self._workers.get(source)) is not None:
             worker.note_window_dispatched(dispatch_now + duration, dispatch_now)
 
@@ -1155,14 +1187,15 @@ class AutoScanScheduler:
             owner_scanner.requested_mode is BluetoothScanningMode.ACTIVE
             and owner_scanner.scanning
         ):
-            # Already actively scanning: the owner's silence is
-            # already meaningful; count its side as covered now.
+            # Already actively scanning: its side is covered, with the
+            # standard accept grace so the owner still gets one re-hear
+            # window before any handoff.
             self._record_rescue_accept(address, coarse_now)
 
     def _rescue_challenger_side(
         self,
         address: str,
-        challenger_source: str,
+        challenger: BaseHaScanner,
         requests: set[ActiveScanRequest],
         loop: asyncio.AbstractEventLoop,
         now: float,
@@ -1171,13 +1204,11 @@ class AutoScanScheduler:
         """
         Delegate a rescue window to the challenger's scanner.
 
-        Only an AUTO challenger needs (and can take) a window: the manager
-        hands off immediately for an ACTIVE-and-scanning challenger before
-        ever triggering a rescue, and a passive or mid-connect challenger
-        cannot produce an active capture right now.
+        Only an AUTO challenger needs (and can take) a window; a passive
+        or mid-connect challenger cannot produce an active capture right
+        now (an ACTIVE-and-scanning challenger short-circuited the rescue
+        in ``trigger_rescue`` before either side was served).
         """
-        if (challenger := self._manager._sources.get(challenger_source)) is None:
-            return
         if (
             challenger.requested_mode is not BluetoothScanningMode.AUTO
             or challenger._connections_in_progress() > 0
@@ -1187,11 +1218,7 @@ class AutoScanScheduler:
         # schedule's owner, so the tick path will not serve it).
         duration = self._coalesce_duration(requests)
         self._mark_delegated_dispatch(
-            challenger_source,
-            [address],
-            now,
-            duration,
-            coarse_now + _RESCUE_SCAN_ACCEPT_SECONDS,
+            challenger.source, [address], now, duration, coarse_now
         )
         task = loop.create_task(challenger.async_request_active_window(duration))
         self._rescue_tasks.add(task)

@@ -32,6 +32,7 @@ from habluetooth import (
     set_manager,
 )
 from habluetooth.central_manager import CentralBluetoothManager
+from habluetooth.const import RESCUE_SCAN_ACCEPT_SECONDS
 
 from . import (
     HCI0_SOURCE_ADDRESS,
@@ -1191,20 +1192,24 @@ async def test_stale_switches_to_weaker_scanner_once_durably_gone(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+@pytest.mark.parametrize("debug", [True, False])
 async def test_stale_switches_to_comparable_scanner_at_normal_window(
     register_hci0_scanner: None,
     register_hci1_scanner: None,
+    debug: bool,
 ) -> None:
     """
-    A comparable scanner takes over a weak owner at the normal stale window.
+    A comparable scanner takes over a weak passive owner at the stale window.
 
     The owner is weak (below STRONG_OWNER_STALE_RSSI), so its silence is
     treated as the device possibly being gone and a comparable scanner is
     allowed to take over at the normal window. A strong owner is protected
-    (see test_stale_keeps_strong_owner_against_comparable_scanner).
+    (see test_stale_keeps_strong_owner_against_comparable_scanner). Runs
+    with debug logging both on and off to cover the log branches.
     """
     address = "44:44:33:11:23:44"
     start = 50.0
+    get_manager()._debug = debug
     owner = generate_ble_device(address, "owner_hci0")
     owner_adv = generate_advertisement_data(
         local_name="owner_hci0", service_uuids=[], rssi=-90
@@ -1342,17 +1347,16 @@ async def test_stale_strong_owner_yields_to_stronger_scanner(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
-async def test_stale_passive_device_switches_to_weaker_scanner(
+async def test_stale_passive_weaker_scanner_waits_for_durably_gone(
     register_hci0_scanner: None,
     register_hci1_scanner: None,
 ) -> None:
     """
-    A passive device hands off on stale to any challenger with a newer adv.
+    A far weaker challenger cannot steal a passive device on one missed interval.
 
-    No active-scan need is registered, so the challenger's newer capture is
-    genuinely fresh data regardless of signal strength; the stale damping
-    (strong owner / durably-gone wait) only applies to devices that need
-    active scans.
+    A hair-past-stale capture by a materially weaker scanner would flap
+    ownership right back on the owner's next advertisement, so it waits
+    for the durably-gone handoff instead.
     """
     address = "44:44:33:11:23:60"
     start = 50.0
@@ -1366,30 +1370,42 @@ async def test_stale_passive_device_switches_to_weaker_scanner(
     inject_advertisement_with_time_and_source(
         strong, strong_adv, start, HCI0_SOURCE_ADDRESS
     )
-    get_manager().async_set_fallback_availability_interval(address, 10)  # stale=15
+    # stale_seconds = 15, durably-gone = 37.5
+    get_manager().async_set_fallback_availability_interval(address, 10)
 
     weak = generate_ble_device(address, "weak_hci1")
     weak_adv = generate_advertisement_data(
         local_name="weak_hci1", service_uuids=[], rssi=-90
     )
-    # Just past the normal stale window: the far weaker scanner has the only
-    # fresh data, so it takes over immediately.
+    # Just past the normal stale window: the far weaker scanner must NOT
+    # steal ownership on a single missed interval.
     inject_advertisement_with_time_and_source(
         weak,
         weak_adv,
         start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
         HCI1_SOURCE_ADDRESS,
     )
+    assert get_manager().async_ble_device_from_address(address, True) is strong
+    # Past durably-gone: the weak scanner finally takes over.
+    inject_advertisement_with_time_and_source(
+        weak, weak_adv, start + 40, HCI1_SOURCE_ADDRESS
+    )
     assert get_manager().async_ble_device_from_address(address, True) is weak
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
-async def test_stale_passive_strong_owner_yields_to_comparable_scanner(
+async def test_stale_passive_strong_owner_keeps_comparable_until_durably_gone(
     register_hci0_scanner: None,
     register_hci1_scanner: None,
 ) -> None:
-    """A passive strong owner yields to a comparable scanner at the stale window."""
+    """
+    A comparable challenger cannot steal a passive strong owner on one miss.
+
+    A comparable pair cannot reclaim on the RSSI path, so a stale steal
+    would ping-pong on alternating missed intervals (issue #580); the
+    challenger waits for the durably-gone handoff instead.
+    """
     address = "44:44:33:11:23:61"
     start = 50.0
     strong = generate_ble_device(address, "strong_hci0")
@@ -1399,7 +1415,8 @@ async def test_stale_passive_strong_owner_yields_to_comparable_scanner(
     inject_advertisement_with_time_and_source(
         strong, strong_adv, start, HCI0_SOURCE_ADDRESS
     )
-    get_manager().async_set_fallback_availability_interval(address, 10)  # stale=15
+    # stale_seconds = 15, durably-gone = 37.5
+    get_manager().async_set_fallback_availability_interval(address, 10)
 
     comparable = generate_ble_device(address, "comparable_hci1")
     comparable_adv = generate_advertisement_data(
@@ -1410,6 +1427,11 @@ async def test_stale_passive_strong_owner_yields_to_comparable_scanner(
         comparable_adv,
         start + 10 + TRACKER_BUFFERING_WOBBLE_SECONDS + 1,
         HCI1_SOURCE_ADDRESS,
+    )
+    assert get_manager().async_ble_device_from_address(address, True) is strong
+    # Past durably-gone: the comparable scanner takes over.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 40, HCI1_SOURCE_ADDRESS
     )
     assert get_manager().async_ble_device_from_address(address, True) is comparable
 
@@ -1465,9 +1487,65 @@ async def test_stale_active_need_defers_then_switches_after_rescue_window(
         comparable, comparable_adv, start + 19, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is strong
-    # First challenger adv past the completed window: hand off.
+    # Past the accept time but within one advertising interval of the
+    # trigger: still deferred (the owner gets a full re-hear cycle).
     inject_advertisement_with_time_and_source(
         comparable, comparable_adv, start + 25, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
+    # Past the accept time and one full interval past the trigger: hand off.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 27, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is comparable
+    assert address not in manager._rescue_triggered
+    cancel_active()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_active_need_no_roaming_shortcut_for_weak_owner(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    An active-need device never takes the roaming shortcut.
+
+    A comparable challenger of a weak owner switches instantly for a
+    passive device, but for an active-need device the challenger may not
+    have actively scanned recently, so the handoff defers through the
+    rescue and lands only past the accept time.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:77"
+    start = 50.0
+    cancel_active = manager.async_register_active_scan(address)
+    weak_owner = generate_ble_device(address, "weak_owner_hci0")
+    weak_owner_adv = generate_advertisement_data(
+        local_name="weak_owner_hci0", service_uuids=[], rssi=-90
+    )
+    inject_advertisement_with_time_and_source(
+        weak_owner, weak_owner_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    # stale_seconds = 15, durably-gone = 37.5
+    manager.async_set_fallback_availability_interval(address, 10)
+
+    comparable = generate_ble_device(address, "comparable_hci1")
+    comparable_adv = generate_advertisement_data(
+        local_name="comparable_hci1", service_uuids=[], rssi=-95
+    )
+    # Comparable challenger of a weak owner just past stale: deferred,
+    # episode started (no instant roaming handoff).
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 16, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is weak_owner
+    assert manager._rescue_triggered[address] == start + 16
+    # A rescue window covered the address; the handoff needs the accept
+    # time passed and one full advertising interval since the trigger.
+    manager._auto_scheduler._rescue_accept_after[address] = start + 21
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 27, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is comparable
     assert address not in manager._rescue_triggered
@@ -1594,22 +1672,21 @@ async def test_stale_active_need_retriggers_when_window_never_ran(
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("debug", [True, False])
-async def test_stale_active_need_active_challenger_switches_immediately(
+async def test_stale_active_need_comparable_active_challenger_defers(
     register_hci0_scanner: None,
     debug: bool,
 ) -> None:
     """
-    A challenger on a continuously ACTIVE scanner hands off without a rescue.
+    A comparable ACTIVE challenger of a strong owner defers with grace.
 
-    Its capture already carries the device's scan response, so there is
-    nothing for a rescue window to add; the stale handoff proceeds
-    immediately, like a passive device. Runs with debug logging both on
-    and off to cover both sides of the logging branch.
+    Its side of the rescue is covered immediately but the accept time
+    keeps the standard grace, so the owner gets one re-hear window; only
+    a challenger advertisement past the accept time takes ownership.
+    Runs with debug logging both on and off to cover the log branches.
     """
     manager = get_manager()
     manager._debug = debug
     address = "44:44:33:11:23:67"
-    start = 50.0
     cancel_active = manager.async_register_active_scan(address)
     active_scanner = FakeScanner(
         "AA:BB:CC:DD:EE:22",
@@ -1618,12 +1695,13 @@ async def test_stale_active_need_active_challenger_switches_immediately(
     )
     active_scanner.connectable = True
     cancel_scanner = manager.async_register_scanner(active_scanner, connection_slots=5)
+    now = monotonic_time_coarse()
     strong = generate_ble_device(address, "strong_hci0")
     strong_adv = generate_advertisement_data(
         local_name="strong_hci0", service_uuids=[], rssi=-50
     )
     inject_advertisement_with_time_and_source(
-        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+        strong, strong_adv, now - 16, HCI0_SOURCE_ADDRESS
     )
     # stale_seconds = 15, durably-gone = 37.5
     manager.async_set_fallback_availability_interval(address, 10)
@@ -1632,20 +1710,96 @@ async def test_stale_active_need_active_challenger_switches_immediately(
     comparable_adv = generate_advertisement_data(
         local_name="comparable_hci2", service_uuids=[], rssi=-60
     )
-    # A leftover episode from another challenger must be ended by the
-    # immediate handoff; the debug=False run exercises the no-episode
-    # branch.
-    if debug:
-        manager._rescue_triggered[address] = start
-    # Just past the stale window and far before durably-gone: the ACTIVE
-    # challenger wins right away, no rescue deferral.
+    # Just past the stale window: deferred, the challenger's side of the
+    # rescue is covered with the accept grace.
     inject_advertisement_with_time_and_source(
-        comparable, comparable_adv, start + 16, "AA:BB:CC:DD:EE:22"
+        comparable, comparable_adv, now, "AA:BB:CC:DD:EE:22"
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
+    assert manager._rescue_triggered[address] == now
+    accept = manager._auto_scheduler._rescue_accept_after[address]
+    assert accept >= now + RESCUE_SCAN_ACCEPT_SECONDS - 1
+    # Within the grace window: still the owner.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, now + 2, "AA:BB:CC:DD:EE:22"
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
+    # Past the accept but within one advertising interval: still deferred.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, accept + 1, "AA:BB:CC:DD:EE:22"
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
+    # Past the accept and one full interval past the trigger: hand off.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, max(accept + 1, now + 11), "AA:BB:CC:DD:EE:22"
     )
     assert manager.async_ble_device_from_address(address, True) is comparable
     assert address not in manager._rescue_triggered
     cancel_active()
     cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_active_need_weaker_active_challenger_defers() -> None:
+    """
+    A materially weaker ACTIVE challenger defers instead of stealing.
+
+    Its side of the rescue counts as covered immediately, so it wins on
+    its next advertisement only if the owner stays silent; the owner being
+    heard again keeps the device where it is.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:75"
+    cancel_active = manager.async_register_active_scan(address)
+    owner_scanner = FakeScanner("AA:BB:CC:DD:EE:99", "hci9")
+    owner_scanner.connectable = True
+    active_scanner = FakeScanner(
+        "AA:BB:CC:DD:EE:AA",
+        "hci10",
+        requested_mode=BluetoothScanningMode.ACTIVE,
+    )
+    active_scanner.connectable = True
+    cancel_owner = manager.async_register_scanner(owner_scanner, connection_slots=5)
+    cancel_challenger = manager.async_register_scanner(
+        active_scanner, connection_slots=5
+    )
+    now = monotonic_time_coarse()
+    strong = generate_ble_device(address, "strong_hci9")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci9", service_uuids=[], rssi=-50
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, now - 16, "AA:BB:CC:DD:EE:99"
+    )
+    # stale_seconds = 15, durably-gone = 37.5
+    manager.async_set_fallback_availability_interval(address, 10)
+
+    weak = generate_ble_device(address, "weak_hci10")
+    weak_adv = generate_advertisement_data(
+        local_name="weak_hci10", service_uuids=[], rssi=-90
+    )
+    # Far weaker ACTIVE challenger just past the stale window: deferred,
+    # its rescue side counts as covered with the accept grace.
+    inject_advertisement_with_time_and_source(weak, weak_adv, now, "AA:BB:CC:DD:EE:AA")
+    assert manager.async_ble_device_from_address(address, True) is strong
+    assert manager._rescue_triggered[address] == now
+    accept = manager._auto_scheduler._rescue_accept_after[address]
+    assert accept >= now + RESCUE_SCAN_ACCEPT_SECONDS - 1
+    # Within the grace window: still the owner.
+    inject_advertisement_with_time_and_source(
+        weak, weak_adv, now + 2, "AA:BB:CC:DD:EE:AA"
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
+    # Past the accept and one full interval past the trigger: hand off.
+    inject_advertisement_with_time_and_source(
+        weak, weak_adv, max(accept + 1, now + 11), "AA:BB:CC:DD:EE:AA"
+    )
+    assert manager.async_ble_device_from_address(address, True) is weak
+    assert address not in manager._rescue_triggered
+    cancel_active()
+    cancel_owner()
+    cancel_challenger()
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
@@ -1693,6 +1847,63 @@ async def test_owner_paused_for_connection_hands_off_immediately(
         assert address not in manager._rescue_triggered
     cancel_active()
     cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_stale_active_need_retry_does_not_clobber_matured_accept(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    The retry never restarts an episode whose window already ran.
+
+    Once an accept time is recorded, the episode is only waiting out the
+    accept and interval gates; restarting it would push the trigger time
+    forward and make the gates unreachable for slow advertisers.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:79"
+    start = 50.0
+    strong = generate_ble_device(address, "strong_hci0")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci0", service_uuids=[], rssi=-50
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    # stale_seconds = 35, durably-gone = 87.5
+    manager.async_set_fallback_availability_interval(address, 30)
+
+    comparable = generate_ble_device(address, "comparable_hci1")
+    comparable_adv = generate_advertisement_data(
+        local_name="comparable_hci1", service_uuids=[], rssi=-60
+    )
+    real_scheduler = manager._auto_scheduler
+    mock_scheduler = Mock()
+    mock_scheduler._requests_by_address = {address: {Mock()}}
+    mock_scheduler._rescue_accept_after = {}
+    manager._auto_scheduler = mock_scheduler
+    try:
+        # Episode starts.
+        inject_advertisement_with_time_and_source(
+            comparable, comparable_adv, start + 36, HCI1_SOURCE_ADDRESS
+        )
+        assert mock_scheduler.trigger_rescue.call_count == 1
+        assert manager._rescue_triggered[address] == start + 36
+        # A window ran; its accept time is still in the future.
+        mock_scheduler._rescue_accept_after[address] = start + 80
+        # Past the retry wait, but the accept exists: no restart, the
+        # trigger time is preserved so the gates can mature.
+        inject_advertisement_with_time_and_source(
+            comparable, comparable_adv, start + 70, HCI1_SOURCE_ADDRESS
+        )
+        assert mock_scheduler.trigger_rescue.call_count == 1
+        assert manager._rescue_triggered[address] == start + 36
+        assert manager.async_ble_device_from_address(address, True) is strong
+    finally:
+        manager._auto_scheduler = real_scheduler
+        manager._rescue_triggered.pop(address, None)
 
 
 @pytest.mark.usefixtures("enable_bluetooth")
@@ -1815,9 +2026,10 @@ async def test_rescue_end_to_end_owner_mid_connect_fallback_window() -> None:
         assert fallback.active_window_calls
         accept = sched._rescue_accept_after[address]
         assert accept >= now
-        # First challenger adv past the accept time: hand off.
+        # First challenger adv past the accept time and one advertising
+        # interval past the trigger: hand off.
         inject_advertisement_with_time_and_source(
-            weak, weak_adv, accept + 1, challenger.source
+            weak, weak_adv, max(accept + 1, now + 11), challenger.source
         )
         assert manager.async_ble_device_from_address(address, True) is weak
         assert address not in manager._rescue_triggered
@@ -1870,7 +2082,7 @@ async def test_rescue_episode_is_per_address_any_challenger_completes(
         local_name="challenger_hci8", service_uuids=[], rssi=-62
     )
     inject_advertisement_with_time_and_source(
-        challenger_b, challenger_b_adv, start + 25, "AA:BB:CC:DD:EE:88"
+        challenger_b, challenger_b_adv, start + 27, "AA:BB:CC:DD:EE:88"
     )
     assert manager.async_ble_device_from_address(address, True) is challenger_b
     assert address not in manager._rescue_triggered
@@ -1927,6 +2139,58 @@ async def test_connectable_recheck_does_not_drive_rescue_episode(
     )
     assert manager.async_ble_device_from_address(address, False) is nc_device
     assert manager.async_ble_device_from_address(address, True) is connectable_owner
+    assert address not in manager._rescue_triggered
+    cancel_active()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_connectable_recheck_roams_active_need_device_at_stale(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+    register_non_connectable_scanner: None,
+) -> None:
+    """
+    The connectable re-check keeps the roaming rule for active-need devices.
+
+    Connection routing cares about liveness, not scan-response freshness:
+    when the weak connectable owner goes silent, the connectable history
+    must repoint to a comparable live challenger at the stale window
+    instead of routing connect attempts at a dead radio until durably
+    gone, and it must not drive rescue episode state.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:78"
+    start = 50.0
+    cancel_active = manager.async_register_active_scan(address)
+    connectable_owner = generate_ble_device(address, "conn_hci0")
+    connectable_owner_adv = generate_advertisement_data(
+        local_name="conn_hci0", service_uuids=[], rssi=-80
+    )
+    inject_advertisement_with_time_and_source(
+        connectable_owner, connectable_owner_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    manager.async_set_fallback_availability_interval(address, 10)
+    # A much stronger non-connectable source takes all-history on the
+    # RSSI path; the connectable history stays with hci0.
+    nc_device = generate_ble_device(address, "nc")
+    nc_adv = generate_advertisement_data(local_name="nc", service_uuids=[], rssi=-30)
+    inject_advertisement_with_time_and_source_connectable(
+        nc_device, nc_adv, start + 10, NON_CONNECTABLE_REMOTE_SOURCE_ADDRESS, False
+    )
+    assert manager.async_ble_device_from_address(address, True) is connectable_owner
+    # A comparable connectable challenger of the weak, now-stale owner:
+    # all-history keeps (fresh strong NC owner), but the connectable
+    # re-check roams to the live challenger.
+    challenger = generate_ble_device(address, "challenger_hci1")
+    challenger_adv = generate_advertisement_data(
+        local_name="challenger_hci1", service_uuids=[], rssi=-85
+    )
+    inject_advertisement_with_time_and_source(
+        challenger, challenger_adv, start + 17, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, False) is nc_device
+    assert manager.async_ble_device_from_address(address, True) is challenger
     assert address not in manager._rescue_triggered
     cancel_active()
 
@@ -2005,6 +2269,12 @@ async def test_rescue_accept_time_boundaries(
         comparable, comparable_adv, start + 20, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is strong
+    # Past the accept but within one advertising interval of the trigger:
+    # still deferred.
+    inject_advertisement_with_time_and_source(
+        comparable, comparable_adv, start + 24, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
     cancel_a()
 
     # Part 2: an accept time equal to the trigger time counts.
@@ -2027,10 +2297,49 @@ async def test_rescue_accept_time_boundaries(
     )
     manager_sched._rescue_accept_after[address] = start + 16
     inject_advertisement_with_time_and_source(
-        comparable2, comparable2_adv, start + 17, HCI1_SOURCE_ADDRESS
+        comparable2, comparable2_adv, start + 27, HCI1_SOURCE_ADDRESS
     )
     assert manager.async_ble_device_from_address(address, True) is comparable2
     cancel_b()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_passive_stale_arbitration_clears_orphaned_episode(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """
+    A device that lost its active-scan need drops its episode on arbitration.
+
+    The orphaned entry must not linger; it would keep the scheduler's
+    no-episode fast path off for every window dispatch.
+    """
+    manager = get_manager()
+    address = "44:44:33:11:23:76"
+    start = 50.0
+    strong = generate_ble_device(address, "strong_hci0")
+    strong_adv = generate_advertisement_data(
+        local_name="strong_hci0", service_uuids=[], rssi=-50
+    )
+    inject_advertisement_with_time_and_source(
+        strong, strong_adv, start, HCI0_SOURCE_ADDRESS
+    )
+    manager.async_set_fallback_availability_interval(address, 10)
+    # Episode left behind by an active-scan need that was since unregistered.
+    manager._rescue_triggered[address] = start
+
+    weak = generate_ble_device(address, "weak_hci1")
+    weak_adv = generate_advertisement_data(
+        local_name="weak_hci1", service_uuids=[], rssi=-90
+    )
+    # Weaker passive challenger past stale: kept, and the orphaned
+    # episode is cleaned up.
+    inject_advertisement_with_time_and_source(
+        weak, weak_adv, start + 16, HCI1_SOURCE_ADDRESS
+    )
+    assert manager.async_ble_device_from_address(address, True) is strong
+    assert address not in manager._rescue_triggered
 
 
 @pytest.mark.usefixtures("enable_bluetooth")

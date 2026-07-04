@@ -6552,8 +6552,8 @@ async def test_trigger_rescue_auto_owner_and_auto_challenger() -> None:
 
 
 @pytest.mark.asyncio
-async def test_trigger_rescue_active_challenger_not_delegated() -> None:
-    """An ACTIVE challenger gets no window; the manager hands off before this."""
+async def test_trigger_rescue_active_challenger_counts_covered() -> None:
+    """A weaker ACTIVE challenger gets no window; its side is covered now."""
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:66:02"
@@ -6568,12 +6568,23 @@ async def test_trigger_rescue_active_challenger_not_delegated() -> None:
     c_challenger = manager.async_register_scanner(challenger)
     try:
         _inject_with_rssi(owner, address, rssi=-50)
+        before = monotonic_time_coarse()
         sched.trigger_rescue(address, challenger.source, owner.source)
+        after = monotonic_time_coarse()
+        # Already actively scanning: no window, no task, covered with
+        # the standard accept grace.
         assert challenger.active_window_calls == []
+        assert owner.active_window_calls == []
         assert not sched._rescue_tasks
-        # The AUTO owner side is served through the schedule; the accept
-        # time only lands when its worker tick dispatches the window.
-        assert address not in sched._rescue_accept_after
+        assert (
+            before + RESCUE_SCAN_ACCEPT_SECONDS
+            <= sched._rescue_accept_after[address]
+            <= after + RESCUE_SCAN_ACCEPT_SECONDS
+        )
+        # The owner side is still served: its scheduled due times are
+        # clamped to now so its worker fires a window on the next tick.
+        loop_now = asyncio.get_running_loop().time()
+        assert all(due <= loop_now for due in sched._schedule._due_at[address].values())
     finally:
         cancel()
         c_owner()
@@ -6601,10 +6612,15 @@ async def test_trigger_rescue_active_owner_counts_covered() -> None:
         before = monotonic_time_coarse()
         sched.trigger_rescue(address, challenger.source, owner.source)
         after = monotonic_time_coarse()
-        # PASSIVE challenger gets no window; the owner side still covered.
+        # PASSIVE challenger gets no window; the owner side is covered
+        # with the standard accept grace.
         assert challenger.active_window_calls == []
         assert owner.active_window_calls == []
-        assert before <= sched._rescue_accept_after[address] <= after
+        assert (
+            before + RESCUE_SCAN_ACCEPT_SECONDS
+            <= sched._rescue_accept_after[address]
+            <= after + RESCUE_SCAN_ACCEPT_SECONDS
+        )
     finally:
         cancel()
         c_owner()
@@ -6656,14 +6672,18 @@ async def test_trigger_rescue_noop_untracked_or_not_started() -> None:
 
 @pytest.mark.asyncio
 async def test_remove_request_prunes_rescue_accept_after() -> None:
-    """The last request for an address prunes its rescue accept time."""
+    """The last request for an address prunes all rescue state."""
     manager = get_manager()
     sched = manager._auto_scheduler
     address = "11:22:33:44:66:05"
     cancel = manager.async_register_active_scan(address, scan_interval=120.0)
     sched._rescue_accept_after[address] = 1.0
+    manager._rescue_triggered[address] = 1.0
     cancel()
     assert address not in sched._rescue_accept_after
+    # The episode's lifetime is bounded by the need: a device that never
+    # goes stale again must not keep an orphaned episode alive.
+    assert address not in manager._rescue_triggered
 
 
 @pytest.mark.asyncio
@@ -6770,7 +6790,11 @@ async def test_covered_by_active_records_rescue_accept_after() -> None:
         await _run_worker_tick(sched, owner.source)
         after = monotonic_time_coarse()
         assert active.active_window_calls == []
-        assert before <= sched._rescue_accept_after[address] <= after
+        assert (
+            before + RESCUE_SCAN_ACCEPT_SECONDS
+            <= sched._rescue_accept_after[address]
+            <= after + RESCUE_SCAN_ACCEPT_SECONDS
+        )
     finally:
         owner._finished_connecting(address, connected=False)
         cancel()
@@ -6796,14 +6820,15 @@ async def test_trigger_rescue_unregistered_sides_are_skipped() -> None:
         before = monotonic_time_coarse()
         sched.trigger_rescue(address, "AA:00:00:00:9A:99", owner.source)
         assert sched._rescue_accept_after[address] >= before
-        # Owner never registered: the owner side is skipped and an ACTIVE
-        # challenger is never delegated a window, so nothing is recorded.
+        # Neither side registered: nothing is recorded and the owner
+        # side's unregistered guard is exercised.
         recorded = sched._rescue_accept_after[address] + 1000.0
         sched._rescue_accept_after[address] = recorded
-        sched.trigger_rescue(address, owner.source, "AA:00:00:00:9A:99")
+        sched.trigger_rescue(address, "AA:00:00:00:9A:99", "AA:00:00:00:9A:98")
         assert sched._rescue_accept_after[address] == recorded
         # A later accept time is never rolled back by an earlier one: the
-        # ACTIVE owner side records "now", which loses to the later value.
+        # ACTIVE owner side records coverage plus the accept grace, which
+        # loses to the later value.
         sched.trigger_rescue(address, "AA:00:00:00:9A:99", owner.source)
         assert sched._rescue_accept_after[address] == recorded
     finally:
