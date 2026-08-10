@@ -43,7 +43,7 @@ class BuildExt(build_ext):
             self.parallel = os.cpu_count() or 1
         try:
             super().build_extensions()
-        except Exception as ex:  # nosec  # noqa: BLE001
+        except Exception as ex:  # nosec
             # Cython is optional; any compile failure (missing C compiler,
             # platform mismatch, etc.) should fall back to the pure-Python
             # install rather than break the build.
