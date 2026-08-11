@@ -163,6 +163,7 @@ class BluetoothManager:
         "_mgmt_ctl",
         "_name_cache",
         "_non_connectable_scanners",
+        "_pinned_sources",
         "_recovery_lock",
         "_rescue_triggered",
         "_scanner_mode_change_callbacks",
@@ -245,6 +246,7 @@ class BluetoothManager:
         self._adapter_sources: dict[str, str] = {}
         self._allocations: dict[str, HaBluetoothSlotAllocations] = {}
         self._sources: dict[str, BaseHaScanner] = {}
+        self._pinned_sources: dict[str, str] = {}
         self._bluetooth_adapters = bluetooth_adapters or get_adapters()
         self.slot_manager = slot_manager or BleakSlotManager()
         self._cancel_allocation_callbacks = (
@@ -352,6 +354,23 @@ class BluetoothManager:
     def async_scanner_by_source(self, source: str) -> BaseHaScanner | None:
         """Return the scanner for a source."""
         return self._sources.get(source)
+
+    def async_set_pinned_source(self, address: str, source: str | None) -> None:
+        """
+        Pin connections to ``address`` to a preferred scanner ``source``.
+
+        Pass ``None`` to remove the pin. The pin is a preference, not an
+        exclusion: the pinned scanner is tried first whenever it currently
+        sees the device, and the usual scoring order is used as fallback.
+        """
+        if source is None:
+            self._pinned_sources.pop(address, None)
+        else:
+            self._pinned_sources[address] = source
+
+    def async_get_pinned_source(self, address: str) -> str | None:
+        """Return the scanner source pinned to ``address``, if any."""
+        return self._pinned_sources.get(address)
 
     def async_register_disappeared_callback(
         self, callback: Callable[[str], None]
