@@ -2851,7 +2851,7 @@ async def test_connect_no_scanners_raises_no_backend() -> None:
 
 def _connected_interface(client: bleak.BleakClient) -> str:
     """Return the adapter interface the wrapper actually connected through."""
-    return client._backend._device.details["path"].split("/")[3]  # type: ignore[union-attr]
+    return client._backend._device.details["path"].split("/")[3]
 
 
 @pytest.mark.asyncio
@@ -2931,9 +2931,7 @@ async def test_pinned_source_falls_back_when_out_of_slots(
     def _allocate_slot_mock(ble_device: BLEDevice) -> bool:
         return "hci0" in ble_device.details["path"]
 
-    with patch.object(  # type: ignore[assignment]
-        manager.slot_manager, "allocate_slot", _allocate_slot_mock
-    ):
+    with patch.object(manager.slot_manager, "allocate_slot", _allocate_slot_mock):
         client = bleak.BleakClient(ble_device)
         await client.connect()
         assert _connected_interface(client) == "hci0"
