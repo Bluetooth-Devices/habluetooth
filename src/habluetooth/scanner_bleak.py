@@ -401,6 +401,7 @@ class HaScanner(BaseHaScanner):
             IS_LINUX
             and attempt == START_ATTEMPTS
             and radio_mode is BluetoothScanningMode.ACTIVE
+            and self._manager.supports_passive_scan
         ):
             _LOGGER.debug(
                 "%s: Falling back to passive scanning mode "
