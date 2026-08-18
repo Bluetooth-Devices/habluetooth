@@ -122,7 +122,14 @@ def _dispatch_bleak_callback(
 
 
 def _zeroed_allocations(source: str) -> HaBluetoothSlotAllocations:
-    """Return an empty allocations snapshot for a source."""
+    """
+    Return an empty allocations snapshot for a source.
+
+    ``slots=0`` is the established sentinel for "no slot information
+    reported": non-connectable scanners have always been seeded with it,
+    and every consumer that reasons about exhaustion filters on
+    ``slots > 0``.
+    """
     return HaBluetoothSlotAllocations(source=source, slots=0, free=0, allocated=[])
 
 
@@ -1892,7 +1899,13 @@ class BluetoothManager:
     def async_current_allocations(
         self, source: str | None = None
     ) -> list[HaBluetoothSlotAllocations] | None:
-        """Return the current allocations."""
+        """
+        Return the current allocations.
+
+        An entry with ``slots=0`` means the source has not reported slot
+        information (yet), not that its slots are exhausted; consumers
+        should filter on ``slots > 0`` before reasoning about exhaustion.
+        """
         if source:
             if allocations := self._allocations.get(source):
                 return [allocations]
