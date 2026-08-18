@@ -1834,10 +1834,12 @@ class BluetoothManager:
         Drop stored allocations for a source and notify subscribers.
 
         Dispatches a zeroed allocation so subscribers stop rendering the
-        removed source's stale addresses. Every registered scanner has an
-        entry (seeded at registration), so there is always one to drop.
+        removed source's stale addresses. Tolerates a missing entry (two
+        scanners sharing a source, the first unregister already cleared
+        it) so teardown is never aborted midway; the zeroed dispatch is
+        still sent so subscribers converge either way.
         """
-        del self._allocations[source]
+        self._allocations.pop(source, None)
         self._dispatch_source_callbacks(
             self._allocations_callbacks,
             source,

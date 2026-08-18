@@ -751,6 +751,36 @@ async def test_async_reregister_scanner_reseeds_zeroed_allocations() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_unregister_duplicate_source_completes_teardown() -> None:
+    """
+    Unregistering the second of two scanners sharing a source must not abort.
+
+    The first unregister already cleared the shared allocations entry; the
+    second must still run the rest of the teardown, including the REMOVED
+    registration event, rather than raising midway.
+    """
+    manager = get_manager()
+    scanner_a = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    scanner_a.connectable = True
+    scanner_b = FakeScanner("AA:BB:CC:DD:EE:33", "hci4")
+    scanner_b.connectable = True
+    cancel_a = manager.async_register_scanner(scanner_a)
+    cancel_b = manager.async_register_scanner(scanner_b)
+    events: list[HaScannerRegistration] = []
+    cancel_callback = manager.async_register_scanner_registration_callback(
+        events.append, None
+    )
+    cancel_a()
+    cancel_b()
+    assert [event.event for event in events] == [
+        HaScannerRegistrationEvent.REMOVED,
+        HaScannerRegistrationEvent.REMOVED,
+    ]
+    assert manager.async_current_allocations(scanner_a.source) == []
+    cancel_callback()
+
+
+@pytest.mark.asyncio
 async def test_async_unregister_scanner_notifies_zeroed_allocations() -> None:
     """Unregistering a scanner notifies subscribers with zeroed allocations."""
     manager = get_manager()
