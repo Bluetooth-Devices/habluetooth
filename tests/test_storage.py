@@ -340,6 +340,112 @@ def test_expire_future_discovered_device_advertisement_data(
     )
 
 
+def test_expire_stale_scanner_with_divergent_dicts():
+    """
+    Expire a timestamp with no matching ad/raw entry without raising KeyError.
+
+    The timestamps dict drives expiry; if a corrupt blob has an address there
+    that is missing from the companion dicts, expiry must drop the entry rather
+    than abort the whole load.
+    """
+    now = time.time()
+    data = {
+        "myscanner": DiscoveredDeviceAdvertisementDataDict(
+            {
+                "connectable": True,
+                "discovered_device_advertisement_datas": {
+                    "AA:BB:CC:DD:EE:FF": {
+                        "advertisement_data": {
+                            "local_name": "Test Device",
+                            "manufacturer_data": {"76": "0215aabbccddeeff"},
+                            "rssi": -50,
+                            "service_data": {
+                                "0000180d-0000-1000-8000-00805f9b34fb": "00000000"
+                            },
+                            "service_uuids": ["0000180d-0000-1000-8000-00805f9b34fb"],
+                            "tx_power": 50,
+                            "platform_data": ["Test Device", ""],
+                        },
+                        "device": {
+                            "address": "AA:BB:CC:DD:EE:FF",
+                            "details": {"details": "test"},
+                            "name": "Test Device",
+                        },  # type: ignore[typeddict-item]
+                    },
+                },
+                "discovered_device_raw": {},
+                # "CC:DD:EE:FF:AA:BB" is stale and present only in timestamps —
+                # the ad-datas dict above has no matching entry.
+                "discovered_device_timestamps": {
+                    "AA:BB:CC:DD:EE:FF": now,
+                    "CC:DD:EE:FF:AA:BB": now - 101,
+                },
+                "expire_seconds": 100,
+            }
+        ),
+    }
+    # Must not raise KeyError despite the divergent dicts.
+    expire_stale_scanner_discovered_device_advertisement_data(data)
+    assert "myscanner" in data
+    timestamps = data["myscanner"]["discovered_device_timestamps"]
+    assert "CC:DD:EE:FF:AA:BB" not in timestamps
+    assert "AA:BB:CC:DD:EE:FF" in timestamps
+    assert len(data["myscanner"]["discovered_device_advertisement_datas"]) == 1
+
+
+def test_expire_stale_scanner_with_missing_keys(caplog):
+    """
+    A scanner blob missing required top-level keys is dropped, not fatal.
+
+    ``expire_stale...`` runs across every scanner before the cache is handed
+    to ``..._from_dict``. A single corrupt/partial scanner blob (missing
+    ``expire_seconds``/``timestamps``/``ad-datas``) must not raise ``KeyError``
+    and abort expiry for the healthy scanners; the bad scanner is discarded
+    and the good one survives.
+    """
+    now = time.time()
+    good_scanner = DiscoveredDeviceAdvertisementDataDict(
+        {
+            "connectable": True,
+            "discovered_device_advertisement_datas": {
+                "AA:BB:CC:DD:EE:FF": {
+                    "advertisement_data": {
+                        "local_name": "Test Device",
+                        "manufacturer_data": {"76": "0215aabbccddeeff"},
+                        "rssi": -50,
+                        "service_data": {
+                            "0000180d-0000-1000-8000-00805f9b34fb": "00000000"
+                        },
+                        "service_uuids": ["0000180d-0000-1000-8000-00805f9b34fb"],
+                        "tx_power": 50,
+                        "platform_data": ["Test Device", ""],
+                    },
+                    "device": {
+                        "address": "AA:BB:CC:DD:EE:FF",
+                        "details": {"details": "test"},
+                        "name": "Test Device",
+                    },  # type: ignore[typeddict-item]
+                },
+            },
+            "discovered_device_raw": {},
+            "discovered_device_timestamps": {"AA:BB:CC:DD:EE:FF": now},
+            "expire_seconds": 100,
+        }
+    )
+    data: dict[str, DiscoveredDeviceAdvertisementDataDict] = {
+        # Missing "discovered_device_timestamps" (and others) entirely.
+        "badscanner": {"connectable": True},  # type: ignore[typeddict-item]
+        "goodscanner": good_scanner,
+    }
+    # Must not raise despite the malformed scanner blob.
+    expire_stale_scanner_discovered_device_advertisement_data(data)
+    # The malformed scanner is dropped, the healthy one is preserved intact.
+    assert "badscanner" not in data
+    assert "goodscanner" in data
+    assert "AA:BB:CC:DD:EE:FF" in data["goodscanner"]["discovered_device_timestamps"]
+    assert "Discarding malformed discovery cache for scanner badscanner" in caplog.text
+
+
 def test_discovered_device_advertisement_data_from_dict_corrupt(caplog):
     """Shape mismatches log a WARNING and discard the cache without a traceback."""
     now = time.time()
