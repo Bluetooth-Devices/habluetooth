@@ -121,6 +121,11 @@ def _dispatch_bleak_callback(
         _LOGGER.exception("Error in callback: %s", bleak_callback.callback)
 
 
+def _zeroed_allocations(source: str) -> HaBluetoothSlotAllocations:
+    """Return an empty allocations snapshot for a source."""
+    return HaBluetoothSlotAllocations(source=source, slots=0, free=0, allocated=[])
+
+
 class BleakCallback:
     """Bleak callback."""
 
@@ -1627,7 +1632,7 @@ class BluetoothManager:
         for address in emptied_demoted:
             del self._demoted_sources[address]
         self._adapter_sources.pop(scanner.adapter, None)
-        self._allocations.pop(scanner.source, None)
+        self._async_clear_allocations(source)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
         if (idx := scanner.adapter_idx) is not None:
@@ -1646,9 +1651,10 @@ class BluetoothManager:
             scanners = self._connectable_scanners
         else:
             scanners = self._non_connectable_scanners
-            self._allocations[scanner.source] = HaBluetoothSlotAllocations(
-                source=scanner.source, slots=0, free=0, allocated=[]
-            )
+        # Seed zeroed allocations so the source is visible immediately,
+        # unless an allocation push already arrived before registration.
+        if scanner.source not in self._allocations:
+            self._allocations[scanner.source] = _zeroed_allocations(scanner.source)
         scanners.add(scanner)
         scanner._clear_connection_history()
         self._sources[scanner.source] = scanner
@@ -1823,6 +1829,22 @@ class BluetoothManager:
                 except Exception:  # pylint: disable=broad-except
                     _LOGGER.exception("Error in %s", label)
 
+    def _async_clear_allocations(self, source: str) -> None:
+        """
+        Drop stored allocations for a source and notify subscribers.
+
+        Dispatches a zeroed allocation so subscribers stop rendering the
+        removed source's stale addresses.
+        """
+        if self._allocations.pop(source, None) is None:
+            return
+        self._dispatch_source_callbacks(
+            self._allocations_callbacks,
+            source,
+            _zeroed_allocations(source),
+            "allocation callback",
+        )
+
     def async_on_allocation_changed(self, allocations: Allocations) -> None:
         """Call allocation callbacks."""
         source = self._adapter_sources.get(allocations.adapter, allocations.adapter)
@@ -1866,7 +1888,16 @@ class BluetoothManager:
         callback: Callable[[HaBluetoothSlotAllocations], None],
         source: str | None = None,
     ) -> CALLBACK_TYPE:
-        """Register a callback to be called when an allocations change."""
+        """
+        Register a callback to be called when an allocations change.
+
+        When a source's scanner is unregistered, a zeroed
+        ``HaBluetoothSlotAllocations`` (slots=0, free=0, allocated=[]) is
+        dispatched so subscribers stop rendering its stale addresses;
+        ``HaScannerRegistrationEvent.REMOVED`` on
+        ``async_register_scanner_registration_callback`` disambiguates
+        removal from an empty but present scanner.
+        """
         self._allocations_callbacks.setdefault(source, set()).add(callback)
         return partial(
             self._unregister_source_callback,

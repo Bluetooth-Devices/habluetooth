@@ -701,6 +701,55 @@ async def test_async_register_scanner_with_connection_slots() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_register_connectable_scanner_seeds_allocations() -> None:
+    """Registering a connectable scanner seeds a zeroed allocations entry."""
+    manager = get_manager()
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    cancel = manager.async_register_scanner(hci3_scanner)
+    assert manager.async_current_allocations(hci3_scanner.source) == [
+        HaBluetoothSlotAllocations(hci3_scanner.source, 0, 0, [])
+    ]
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_register_scanner_preserves_pre_registration_allocations() -> None:
+    """An allocation push that arrives before registration is preserved."""
+    manager = get_manager()
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    manager.async_on_allocation_changed(
+        Allocations("AA:BB:CC:DD:EE:33", 3, 2, ["44:44:33:11:23:12"])
+    )
+    cancel = manager.async_register_scanner(hci3_scanner)
+    assert manager.async_current_allocations(hci3_scanner.source) == [
+        HaBluetoothSlotAllocations("AA:BB:CC:DD:EE:33", 3, 2, ["44:44:33:11:23:12"])
+    ]
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_unregister_scanner_notifies_zeroed_allocations() -> None:
+    """Unregistering a scanner notifies subscribers with zeroed allocations."""
+    manager = get_manager()
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    cancel = manager.async_register_scanner(hci3_scanner)
+    manager.async_on_allocation_changed(
+        Allocations("AA:BB:CC:DD:EE:33", 3, 2, ["44:44:33:11:23:12"])
+    )
+    allocations: list[HaBluetoothSlotAllocations] = []
+    cancel_callback = manager.async_register_allocation_callback(
+        allocations.append, hci3_scanner.source
+    )
+    cancel()
+    assert allocations == [HaBluetoothSlotAllocations(hci3_scanner.source, 0, 0, [])]
+    assert manager.async_current_allocations(hci3_scanner.source) == []
+    cancel_callback()
+
+
+@pytest.mark.asyncio
 async def test_async_unregister_scanner_is_idempotent(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
