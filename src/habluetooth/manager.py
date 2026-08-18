@@ -1925,7 +1925,10 @@ class BluetoothManager:
         dispatched so subscribers stop rendering its stale addresses;
         ``HaScannerRegistrationEvent.REMOVED`` on
         ``async_register_scanner_registration_callback`` disambiguates
-        removal from an empty but present scanner.
+        removal from an empty but present scanner. Registration seeds a
+        zeroed entry without dispatching: it is visible immediately via
+        ``async_current_allocations`` and the first callback fires when
+        slot information is actually reported.
         """
         self._allocations_callbacks.setdefault(source, set()).add(callback)
         return partial(
