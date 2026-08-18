@@ -449,7 +449,7 @@ class BluetoothMGMTProtocol:
                 continue
             address = header[parse_offset : parse_offset + 6]
             rssi = header[parse_offset + 7]
-            if rssi > 128:
+            if rssi > 127:
                 rssi -= 256
 
             # Skip address_type (+6), flags (+8..+11) and AD_Data_Length
