@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.26.6 (2026-08-18)
+
+### Bug fixes
+
+
+- Decode mgmt rssi byte 0x80 as signed int8 -128 ([`adbc852`](https://github.com/Bluetooth-Devices/habluetooth/commit/adbc852b8de300500c7122f7cbf51708e6f9ea51))
+
+
 ## v6.26.5 (2026-07-04)
 
 ### Bug fixes
