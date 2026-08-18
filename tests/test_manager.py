@@ -730,6 +730,19 @@ async def test_async_register_scanner_preserves_pre_registration_allocations() -
 
 
 @pytest.mark.asyncio
+async def test_async_clear_allocations_without_entry_is_noop() -> None:
+    """Clearing a source with no stored allocations dispatches nothing."""
+    manager = get_manager()
+    allocations: list[HaBluetoothSlotAllocations] = []
+    cancel_callback = manager.async_register_allocation_callback(
+        allocations.append, "not-a-real-source"
+    )
+    manager._async_clear_allocations("not-a-real-source")
+    assert allocations == []
+    cancel_callback()
+
+
+@pytest.mark.asyncio
 async def test_async_unregister_scanner_notifies_zeroed_allocations() -> None:
     """Unregistering a scanner notifies subscribers with zeroed allocations."""
     manager = get_manager()
