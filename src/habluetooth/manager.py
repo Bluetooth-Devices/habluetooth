@@ -1647,6 +1647,20 @@ class BluetoothManager:
     ) -> CALLBACK_TYPE:
         """Register a new scanner."""
         _LOGGER.debug("Registering scanner %s", scanner.name)
+        if (existing := self._sources.get(scanner.source)) is not None:
+            # Always a caller bug: the source map is last writer wins and
+            # the first unregister removes the live scanner, so the two
+            # cannot coexist. Log loudly rather than raise so a scanner
+            # setup path is not aborted in production for it.
+            _LOGGER.error(
+                "Scanner %s is being registered with source %s which is "
+                "already registered by scanner %s; a source must be unique "
+                "per registered scanner and the previous registration "
+                "should be cancelled first",
+                scanner.name,
+                scanner.source,
+                existing.name,
+            )
         if scanner.connectable:
             scanners = self._connectable_scanners
         else:

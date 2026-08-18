@@ -730,7 +730,9 @@ async def test_async_register_scanner_preserves_pre_registration_allocations() -
 
 
 @pytest.mark.asyncio
-async def test_async_reregister_scanner_reseeds_zeroed_allocations() -> None:
+async def test_async_reregister_scanner_reseeds_zeroed_allocations(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A register, unregister, re-register round-trip clears stale allocations."""
     manager = get_manager()
     hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
@@ -742,8 +744,12 @@ async def test_async_reregister_scanner_reseeds_zeroed_allocations() -> None:
     cancel()
     assert manager.async_current_allocations(hci3_scanner.source) == []
     # A reconnecting proxy re-registers under the same source and must
-    # start from a clean slate rather than the previous session's list.
-    cancel = manager.async_register_scanner(hci3_scanner)
+    # start from a clean slate rather than the previous session's list;
+    # since the previous registration was cancelled first this is not a
+    # duplicate and must not log the duplicate source error.
+    with caplog.at_level(logging.ERROR):
+        cancel = manager.async_register_scanner(hci3_scanner)
+    assert "already registered" not in caplog.text
     assert manager.async_current_allocations(hci3_scanner.source) == [
         HaBluetoothSlotAllocations(hci3_scanner.source, 0, 0, [])
     ]
@@ -751,21 +757,27 @@ async def test_async_reregister_scanner_reseeds_zeroed_allocations() -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_unregister_duplicate_source_completes_teardown() -> None:
+async def test_async_unregister_duplicate_source_completes_teardown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """
-    Unregistering the second of two scanners sharing a source must not abort.
+    Registering a duplicate source is a caller bug and is logged loudly.
 
-    The first unregister already cleared the shared allocations entry; the
-    second must still run the rest of the teardown, including the REMOVED
-    registration event, rather than raising midway.
+    Unregistering the second of two scanners sharing a source must still
+    not abort: the first unregister already cleared the shared allocations
+    entry, so the second must run the rest of the teardown, including the
+    REMOVED registration event, rather than raising midway.
     """
     manager = get_manager()
     scanner_a = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
     scanner_a.connectable = True
     scanner_b = FakeScanner("AA:BB:CC:DD:EE:33", "hci4")
     scanner_b.connectable = True
-    cancel_a = manager.async_register_scanner(scanner_a)
-    cancel_b = manager.async_register_scanner(scanner_b)
+    with caplog.at_level(logging.ERROR):
+        cancel_a = manager.async_register_scanner(scanner_a)
+        assert "already registered" not in caplog.text
+        cancel_b = manager.async_register_scanner(scanner_b)
+    assert "already registered by scanner hci3" in caplog.text
     events: list[HaScannerRegistration] = []
     cancel_callback = manager.async_register_scanner_registration_callback(
         events.append, None
