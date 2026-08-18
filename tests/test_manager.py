@@ -730,16 +730,24 @@ async def test_async_register_scanner_preserves_pre_registration_allocations() -
 
 
 @pytest.mark.asyncio
-async def test_async_clear_allocations_without_entry_is_noop() -> None:
-    """Clearing a source with no stored allocations dispatches nothing."""
+async def test_async_reregister_scanner_reseeds_zeroed_allocations() -> None:
+    """A register, unregister, re-register round-trip clears stale allocations."""
     manager = get_manager()
-    allocations: list[HaBluetoothSlotAllocations] = []
-    cancel_callback = manager.async_register_allocation_callback(
-        allocations.append, "not-a-real-source"
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    cancel = manager.async_register_scanner(hci3_scanner)
+    manager.async_on_allocation_changed(
+        Allocations("AA:BB:CC:DD:EE:33", 3, 2, ["44:44:33:11:23:12"])
     )
-    manager._async_clear_allocations("not-a-real-source")
-    assert allocations == []
-    cancel_callback()
+    cancel()
+    assert manager.async_current_allocations(hci3_scanner.source) == []
+    # A reconnecting proxy re-registers under the same source and must
+    # start from a clean slate rather than the previous session's list.
+    cancel = manager.async_register_scanner(hci3_scanner)
+    assert manager.async_current_allocations(hci3_scanner.source) == [
+        HaBluetoothSlotAllocations(hci3_scanner.source, 0, 0, [])
+    ]
+    cancel()
 
 
 @pytest.mark.asyncio
@@ -756,10 +764,19 @@ async def test_async_unregister_scanner_notifies_zeroed_allocations() -> None:
     cancel_callback = manager.async_register_allocation_callback(
         allocations.append, hci3_scanner.source
     )
+    # Home Assistant's websocket subscribes globally (source=None) by
+    # default; it must receive the zeroed payload as well.
+    global_allocations: list[HaBluetoothSlotAllocations] = []
+    cancel_global_callback = manager.async_register_allocation_callback(
+        global_allocations.append
+    )
     cancel()
-    assert allocations == [HaBluetoothSlotAllocations(hci3_scanner.source, 0, 0, [])]
+    zeroed = HaBluetoothSlotAllocations(hci3_scanner.source, 0, 0, [])
+    assert allocations == [zeroed]
+    assert global_allocations == [zeroed]
     assert manager.async_current_allocations(hci3_scanner.source) == []
     cancel_callback()
+    cancel_global_callback()
 
 
 @pytest.mark.asyncio
