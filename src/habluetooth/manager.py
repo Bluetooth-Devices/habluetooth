@@ -121,6 +121,18 @@ def _dispatch_bleak_callback(
         _LOGGER.exception("Error in callback: %s", bleak_callback.callback)
 
 
+def _zeroed_allocations(source: str) -> HaBluetoothSlotAllocations:
+    """
+    Return an empty allocations snapshot for a source.
+
+    ``slots=0`` is the established sentinel for "no slot information
+    reported": non-connectable scanners have always been seeded with it,
+    and every consumer that reasons about exhaustion filters on
+    ``slots > 0``.
+    """
+    return HaBluetoothSlotAllocations(source=source, slots=0, free=0, allocated=[])
+
+
 class BleakCallback:
     """Bleak callback."""
 
@@ -1627,7 +1639,7 @@ class BluetoothManager:
         for address in emptied_demoted:
             del self._demoted_sources[address]
         self._adapter_sources.pop(scanner.adapter, None)
-        self._allocations.pop(scanner.source, None)
+        self._async_clear_allocations(source)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
         if (idx := scanner.adapter_idx) is not None:
@@ -1642,13 +1654,28 @@ class BluetoothManager:
     ) -> CALLBACK_TYPE:
         """Register a new scanner."""
         _LOGGER.debug("Registering scanner %s", scanner.name)
+        if (existing := self._sources.get(scanner.source)) is not None:
+            # Always a caller bug: the source map is last writer wins and
+            # the first unregister removes the live scanner, so the two
+            # cannot coexist. Log loudly rather than raise so a scanner
+            # setup path is not aborted in production for it.
+            _LOGGER.error(
+                "Scanner %s is being registered with source %s which is "
+                "already registered by scanner %s; a source must be unique "
+                "per registered scanner and the previous registration "
+                "should be cancelled first",
+                scanner.name,
+                scanner.source,
+                existing.name,
+            )
         if scanner.connectable:
             scanners = self._connectable_scanners
         else:
             scanners = self._non_connectable_scanners
-            self._allocations[scanner.source] = HaBluetoothSlotAllocations(
-                source=scanner.source, slots=0, free=0, allocated=[]
-            )
+        # Seed zeroed allocations so the source is visible immediately,
+        # unless an allocation push already arrived before registration.
+        if scanner.source not in self._allocations:
+            self._allocations[scanner.source] = _zeroed_allocations(scanner.source)
         scanners.add(scanner)
         scanner._clear_connection_history()
         self._sources[scanner.source] = scanner
@@ -1823,6 +1850,24 @@ class BluetoothManager:
                 except Exception:  # pylint: disable=broad-except
                     _LOGGER.exception("Error in %s", label)
 
+    def _async_clear_allocations(self, source: str) -> None:
+        """
+        Drop stored allocations for a source and notify subscribers.
+
+        Dispatches a zeroed allocation so subscribers stop rendering the
+        removed source's stale addresses. Tolerates a missing entry (two
+        scanners sharing a source, the first unregister already cleared
+        it) so teardown is never aborted midway; the zeroed dispatch is
+        still sent so subscribers converge either way.
+        """
+        self._allocations.pop(source, None)
+        self._dispatch_source_callbacks(
+            self._allocations_callbacks,
+            source,
+            _zeroed_allocations(source),
+            "allocation callback",
+        )
+
     def async_on_allocation_changed(self, allocations: Allocations) -> None:
         """Call allocation callbacks."""
         source = self._adapter_sources.get(allocations.adapter, allocations.adapter)
@@ -1854,7 +1899,13 @@ class BluetoothManager:
     def async_current_allocations(
         self, source: str | None = None
     ) -> list[HaBluetoothSlotAllocations] | None:
-        """Return the current allocations."""
+        """
+        Return the current allocations.
+
+        An entry with ``slots=0`` means the source has not reported slot
+        information (yet), not that its slots are exhausted; consumers
+        should filter on ``slots > 0`` before reasoning about exhaustion.
+        """
         if source:
             if allocations := self._allocations.get(source):
                 return [allocations]
@@ -1866,7 +1917,19 @@ class BluetoothManager:
         callback: Callable[[HaBluetoothSlotAllocations], None],
         source: str | None = None,
     ) -> CALLBACK_TYPE:
-        """Register a callback to be called when an allocations change."""
+        """
+        Register a callback to be called when an allocations change.
+
+        When a source's scanner is unregistered, a zeroed
+        ``HaBluetoothSlotAllocations`` (slots=0, free=0, allocated=[]) is
+        dispatched so subscribers stop rendering its stale addresses;
+        ``HaScannerRegistrationEvent.REMOVED`` on
+        ``async_register_scanner_registration_callback`` disambiguates
+        removal from an empty but present scanner. Registration seeds a
+        zeroed entry without dispatching: it is visible immediately via
+        ``async_current_allocations`` and the first callback fires when
+        slot information is actually reported.
+        """
         self._allocations_callbacks.setdefault(source, set()).add(callback)
         return partial(
             self._unregister_source_callback,

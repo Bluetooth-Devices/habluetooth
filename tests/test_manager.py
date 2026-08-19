@@ -701,6 +701,127 @@ async def test_async_register_scanner_with_connection_slots() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_register_connectable_scanner_seeds_allocations() -> None:
+    """Registering a connectable scanner seeds a zeroed allocations entry."""
+    manager = get_manager()
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    cancel = manager.async_register_scanner(hci3_scanner)
+    assert manager.async_current_allocations(hci3_scanner.source) == [
+        HaBluetoothSlotAllocations(hci3_scanner.source, 0, 0, [])
+    ]
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_register_scanner_preserves_pre_registration_allocations() -> None:
+    """An allocation push that arrives before registration is preserved."""
+    manager = get_manager()
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    manager.async_on_allocation_changed(
+        Allocations("AA:BB:CC:DD:EE:33", 3, 2, ["44:44:33:11:23:12"])
+    )
+    cancel = manager.async_register_scanner(hci3_scanner)
+    assert manager.async_current_allocations(hci3_scanner.source) == [
+        HaBluetoothSlotAllocations("AA:BB:CC:DD:EE:33", 3, 2, ["44:44:33:11:23:12"])
+    ]
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_reregister_scanner_reseeds_zeroed_allocations(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A register, unregister, re-register round-trip clears stale allocations."""
+    manager = get_manager()
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    cancel = manager.async_register_scanner(hci3_scanner)
+    manager.async_on_allocation_changed(
+        Allocations("AA:BB:CC:DD:EE:33", 3, 2, ["44:44:33:11:23:12"])
+    )
+    cancel()
+    assert manager.async_current_allocations(hci3_scanner.source) == []
+    # A reconnecting proxy re-registers under the same source and must
+    # start from a clean slate rather than the previous session's list;
+    # since the previous registration was cancelled first this is not a
+    # duplicate and must not log the duplicate source error.
+    with caplog.at_level(logging.ERROR):
+        cancel = manager.async_register_scanner(hci3_scanner)
+    assert "already registered" not in caplog.text
+    assert manager.async_current_allocations(hci3_scanner.source) == [
+        HaBluetoothSlotAllocations(hci3_scanner.source, 0, 0, [])
+    ]
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_unregister_duplicate_source_completes_teardown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Registering a duplicate source is a caller bug and is logged loudly.
+
+    Unregistering the second of two scanners sharing a source must still
+    not abort: the first unregister already cleared the shared allocations
+    entry, so the second must run the rest of the teardown, including the
+    REMOVED registration event, rather than raising midway.
+    """
+    manager = get_manager()
+    scanner_a = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    scanner_a.connectable = True
+    scanner_b = FakeScanner("AA:BB:CC:DD:EE:33", "hci4")
+    scanner_b.connectable = True
+    with caplog.at_level(logging.ERROR):
+        cancel_a = manager.async_register_scanner(scanner_a)
+        assert "already registered" not in caplog.text
+        cancel_b = manager.async_register_scanner(scanner_b)
+    assert "already registered by scanner hci3" in caplog.text
+    events: list[HaScannerRegistration] = []
+    cancel_callback = manager.async_register_scanner_registration_callback(
+        events.append, None
+    )
+    cancel_a()
+    cancel_b()
+    assert [event.event for event in events] == [
+        HaScannerRegistrationEvent.REMOVED,
+        HaScannerRegistrationEvent.REMOVED,
+    ]
+    assert manager.async_current_allocations(scanner_a.source) == []
+    cancel_callback()
+
+
+@pytest.mark.asyncio
+async def test_async_unregister_scanner_notifies_zeroed_allocations() -> None:
+    """Unregistering a scanner notifies subscribers with zeroed allocations."""
+    manager = get_manager()
+    hci3_scanner = FakeScanner("AA:BB:CC:DD:EE:33", "hci3")
+    hci3_scanner.connectable = True
+    cancel = manager.async_register_scanner(hci3_scanner)
+    manager.async_on_allocation_changed(
+        Allocations("AA:BB:CC:DD:EE:33", 3, 2, ["44:44:33:11:23:12"])
+    )
+    allocations: list[HaBluetoothSlotAllocations] = []
+    cancel_callback = manager.async_register_allocation_callback(
+        allocations.append, hci3_scanner.source
+    )
+    # Home Assistant's websocket subscribes globally (source=None) by
+    # default; it must receive the zeroed payload as well.
+    global_allocations: list[HaBluetoothSlotAllocations] = []
+    cancel_global_callback = manager.async_register_allocation_callback(
+        global_allocations.append
+    )
+    cancel()
+    zeroed = HaBluetoothSlotAllocations(hci3_scanner.source, 0, 0, [])
+    assert allocations == [zeroed]
+    assert global_allocations == [zeroed]
+    assert manager.async_current_allocations(hci3_scanner.source) == []
+    cancel_callback()
+    cancel_global_callback()
+
+
+@pytest.mark.asyncio
 async def test_async_unregister_scanner_is_idempotent(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
