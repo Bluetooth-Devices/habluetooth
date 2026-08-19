@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.26.7 (2026-08-19)
+
+### Bug fixes
+
+
+- Notify allocation callbacks when a scanner is unregistered ([`450450a`](https://github.com/Bluetooth-Devices/habluetooth/commit/450450a65c819ad1d0f7d2059a25fb921c2f74ba))
+
+
 ## v6.26.6 (2026-08-18)
 
 ### Bug fixes
