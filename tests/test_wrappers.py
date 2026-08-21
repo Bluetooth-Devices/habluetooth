@@ -362,6 +362,69 @@ async def test_client_tracking_does_not_keep_client_alive(
 
 
 @pytest.mark.asyncio
+async def test_disconnect_error_on_unregister_is_logged_not_raised(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A client that fails to disconnect must not break scanner teardown."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+    with patch.object(FakeBleakClient, "is_connected", return_value=True):
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+
+        with patch.object(
+            FakeBleakClient,
+            "disconnect",
+            new_callable=AsyncMock,
+            side_effect=BleakError("nope"),
+        ):
+            cancel_hci0()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+    assert "Error disconnecting client from removed scanner" in caplog.text
+
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_unregister_client_keeps_source_with_other_clients(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Untracking one client leaves the source's other clients tracked."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    with patch.object(FakeBleakClient, "is_connected", return_value=True):
+        first = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
+        await first.connect()
+        second = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:02"][0])
+        await second.connect()
+        source = first._connected_scanner.source
+        assert len(manager._clients[source]) == 2
+
+        await first.disconnect()
+        # The source must survive: the second client is still connected.
+        assert source in manager._clients
+        assert len(manager._clients[source]) == 1
+
+        # A client that never recorded a scanner is passed straight through.
+        manager.async_unregister_client(None, second)
+        assert len(manager._clients[source]) == 1
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
 async def test_test_switch_adapters_when_out_of_slots(
     two_adapters: None,
     enable_bluetooth: None,

@@ -1663,7 +1663,9 @@ class BluetoothManager:
         self._auto_scheduler.remove_scanner(scanner)
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.REMOVED)
 
-    def async_register_client(self, source: str, client: HaBleakClientWrapper) -> None:
+    def async_register_client(
+        self, scanner: BaseHaScanner, client: HaBleakClientWrapper
+    ) -> None:
         """
         Track a connected client so it can be torn down with its scanner.
 
@@ -1672,26 +1674,35 @@ class BluetoothManager:
         it alive, and a stale entry is harmless because disconnecting an
         already-disconnected client is a no-op.
         """
+        source = scanner.source
         if (clients := self._clients.get(source)) is None:
             clients = self._clients[source] = WeakSet()
         clients.add(client)
 
     def async_unregister_client(
-        self, source: str, client: HaBleakClientWrapper
+        self, scanner: BaseHaScanner | None, client: HaBleakClientWrapper
     ) -> None:
-        """Stop tracking a client that has disconnected."""
-        if (clients := self._clients.get(source)) is not None:
+        """
+        Stop tracking a client that has disconnected.
+
+        Takes the scanner rather than a source so a client that never finished
+        connecting -- and so never recorded one -- can be passed straight
+        through without the caller having to test for it.
+        """
+        if scanner is None:
+            return
+        if (clients := self._clients.get(scanner.source)) is not None:
             clients.discard(client)
             if not clients:
-                del self._clients[source]
+                del self._clients[scanner.source]
 
     def _async_disconnect_clients(self, source: str) -> None:
         """Disconnect every client still connected through source."""
         if not (clients := self._clients.pop(source, None)):
             return
-        if (loop := self._loop) is None:
-            # Never set up, so nothing can have connected through it.
-            return
+        if TYPE_CHECKING:
+            assert self._loop is not None
+        loop = self._loop
         for client in list(clients):
             if not client.is_connected:
                 continue
@@ -1706,9 +1717,12 @@ class BluetoothManager:
         try:
             await client.disconnect()
         except Exception:  # pylint: disable=broad-except
+            # Deliberately does not log client.address: that resolves through
+            # the backend, which is exactly what just failed, so reading it
+            # here could raise inside the error handler. exc_info carries the
+            # detail instead.
             _LOGGER.warning(
-                "%s: Error disconnecting client from removed scanner %s",
-                client.address,
+                "Error disconnecting client from removed scanner %s",
                 source,
                 exc_info=True,
             )
