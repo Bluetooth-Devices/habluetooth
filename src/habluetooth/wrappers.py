@@ -609,6 +609,10 @@ class HaBleakClientWrapper(BleakClient):
                 key=lambda device: device.score_connection_path(rssi_diff),
                 reverse=True,
             )
+            if (pinned := manager.async_get_pinned_source(address)) is not None:
+                # Stable sort: the pinned source moves to the front and the
+                # remaining paths keep their scored order as fallback.
+                sorted_devices.sort(key=lambda device: device.scanner.source != pinned)
 
         if sorted_devices and _LOGGER.isEnabledFor(logging.INFO):
             _LOGGER.info(

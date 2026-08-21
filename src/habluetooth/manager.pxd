@@ -62,6 +62,7 @@ cdef class BluetoothManager:
     cdef public set _connectable_scanners
     cdef public dict _adapters
     cdef public dict _sources
+    cdef public dict _pinned_sources
     cdef public object _bluetooth_adapters
     cdef public object slot_manager
     cdef public bint _debug
