@@ -509,6 +509,10 @@ class HaBleakClientWrapper(BleakClient):
         if connected:
             self._connected_scanner = scanner
             self._connected_device = device
+            # Let the manager tear this connection down if the scanner it was
+            # made through is unregistered; otherwise the link outlives the
+            # adapter that owns it.
+            manager.async_register_client(scanner.source, self)
             self._load_conn_params(
                 scanner,
                 device,
@@ -675,4 +679,6 @@ class HaBleakClientWrapper(BleakClient):
         """Disconnect from the device."""
         if self._backend is None:
             return
+        if (scanner := self._connected_scanner) is not None:
+            self.__manager.async_unregister_client(scanner.source, self)
         await self._backend.disconnect()

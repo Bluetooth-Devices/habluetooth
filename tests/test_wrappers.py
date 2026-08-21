@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import sys
 from contextlib import contextmanager, suppress
@@ -249,6 +250,115 @@ def _generate_scanners_with_fake_devices():
     cancel_hci1 = manager.async_register_scanner(scanner_hci1, connection_slots=1)
 
     return hci0_device_advs, cancel_hci0, cancel_hci1
+
+
+@pytest.mark.asyncio
+async def test_unregister_scanner_disconnects_its_clients(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """A scanner going away takes the connections made through it with it."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+    with patch.object(FakeBleakClient, "is_connected", return_value=True):
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+
+        with patch.object(
+            FakeBleakClient, "disconnect", new_callable=AsyncMock
+        ) as disconnect_mock:
+            cancel_hci0()
+            # The disconnect is scheduled on the loop, not awaited inline.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert disconnect_mock.call_count == 1
+
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_unregister_scanner_leaves_other_sources_connected(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Removing one scanner must not disconnect clients of another."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+    with patch.object(FakeBleakClient, "is_connected", return_value=True):
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+
+        with patch.object(
+            FakeBleakClient, "disconnect", new_callable=AsyncMock
+        ) as disconnect_mock:
+            cancel_hci1()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert disconnect_mock.call_count == 0
+
+    cancel_hci0()
+
+
+@pytest.mark.asyncio
+async def test_disconnected_client_is_not_disconnected_again(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """A client that already disconnected is not tracked any more."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+    with patch.object(FakeBleakClient, "is_connected", return_value=True):
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+        source = client._connected_scanner.source
+        await client.disconnect()
+        assert source not in manager._clients
+
+        with patch.object(
+            FakeBleakClient, "disconnect", new_callable=AsyncMock
+        ) as disconnect_mock:
+            cancel_hci0()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert disconnect_mock.call_count == 0
+
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_client_tracking_does_not_keep_client_alive(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Tracked clients are held weakly so a dropped client cannot leak."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+    with patch.object(FakeBleakClient, "is_connected", return_value=True):
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+        source = client._connected_scanner.source
+        assert len(manager._clients[source]) == 1
+
+        del client
+        gc.collect()
+        assert len(manager._clients[source]) == 0
+
+    cancel_hci0()
+    cancel_hci1()
 
 
 @pytest.mark.asyncio
