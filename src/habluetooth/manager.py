@@ -1352,6 +1352,10 @@ class BluetoothManager:
         data, bypassing both the advertisement-merging logic in scanners and
         the change-detection guard. Intended for devices that encode state in
         mutually-exclusive service UUIDs.
+
+        Each scanner keeps the advertisement it last reported for the address,
+        since that record is also what it hands out as a connection path; only
+        the merging of the next advertisement into it is suppressed.
         """
         self._all_history.pop(address, None)
         self._connectable_history.pop(address, None)
@@ -1360,7 +1364,7 @@ class BluetoothManager:
         self._demoted_sources.pop(address, None)
         self._rescue_triggered.pop(address, None)
         for scanner in self._sources.values():
-            scanner._previous_service_info.pop(address, None)
+            scanner._clear_advertisement_merge_history(address)
 
     def _discover_service_info(self, service_info: BluetoothServiceInfoBleak) -> None:
         """
