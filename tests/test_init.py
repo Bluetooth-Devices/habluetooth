@@ -3,6 +3,7 @@ from unittest.mock import ANY, MagicMock
 import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from bluetooth_data_tools import monotonic_time_coarse
 
 from habluetooth import (
     BaseHaRemoteScanner,
@@ -624,7 +625,8 @@ async def test_async_clear_advertisement_history_expiry_drops_marker():
     cancel = manager.async_register_scanner(scanner)
 
     address = "AA:BB:CC:DD:EE:FF"
-    _advertise_state_uuid(scanner, address, STATE_A_UUID, 1.0)
+    stale = monotonic_time_coarse() - scanner._expire_seconds - 1
+    _advertise_state_uuid(scanner, address, STATE_A_UUID, stale)
     manager.async_clear_advertisement_history(address)
     assert scanner._merge_reset_addresses == {address}
 
