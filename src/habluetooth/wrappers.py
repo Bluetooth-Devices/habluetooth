@@ -749,11 +749,10 @@ class HaBleakClientWrapper(BleakClient):
                 scanner.name,
             )
         except Exception:  # pylint: disable=broad-except
-            _LOGGER.warning(
+            _LOGGER.exception(
                 "%s: error disconnecting after scanner %s was unregistered mid connect",
                 self.__address,
                 scanner.name,
-                exc_info=True,
             )
         finally:
             # On every exit, including cancellation, the wrapper must not

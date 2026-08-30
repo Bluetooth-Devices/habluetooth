@@ -439,6 +439,28 @@ async def test_stop_cancels_pending_disconnects(
 
 
 @pytest.mark.asyncio
+async def test_failed_disconnect_with_link_down_untracks(
+    connected_client: ConnectedClient,
+) -> None:
+    """A raising disconnect still untracks when the link actually dropped."""
+    client, _, _ = connected_client
+    scanner = client._connected_scanner
+    with (
+        patch.object(FakeBleakClient, "is_connected", False),
+        patch.object(
+            FakeBleakClient,
+            "disconnect",
+            new_callable=AsyncMock,
+            side_effect=BleakError("nope"),
+        ),
+        pytest.raises(BleakError),
+    ):
+        await client.disconnect()
+    assert client not in scanner._clients
+    assert client._connected_scanner is None
+
+
+@pytest.mark.asyncio
 async def test_failed_disconnect_keeps_client_tracked(
     connected_client: ConnectedClient,
 ) -> None:
