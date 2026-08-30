@@ -1767,7 +1767,9 @@ class BluetoothManager:
             async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT) as timed_out:
                 await client.disconnect()
         except Exception as exc:  # pylint: disable=broad-except
-            client._give_up(notify=True)
+            if client._connected_scanner is scanner:
+                # Not given up if it reconnected elsewhere while this hung.
+                client._give_up(notify=True)
             if isinstance(exc, TimeoutError) and timed_out.expired():
                 # The expected shape for a proxy that went away; no traceback.
                 _LOGGER.warning(

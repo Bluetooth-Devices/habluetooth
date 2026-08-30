@@ -345,21 +345,34 @@ async def test_client_tracking_does_not_keep_client_alive(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reconnected_elsewhere", [False, True])
 async def test_disconnect_error_on_unregister_is_logged_not_raised(
-    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
+    connected_client: ConnectedClient,
+    caplog: pytest.LogCaptureFixture,
+    reconnected_elsewhere: bool,
 ) -> None:
-    """A client that fails to disconnect must not break scanner teardown."""
+    """A failed disconnect is logged; give up re-checks identity first."""
     client, _, cancel = connected_client
+
+    async def _fail_mid_disconnect(*args: Any, **kwargs: Any) -> None:
+        if reconnected_elsewhere:
+            # The client moves on while its disconnect is failing; the
+            # handler must not give up the fresh backend.
+            client._connected_scanner = MagicMock()
+        msg = "nope"
+        raise BleakError(msg)
+
     with patch.object(
         FakeBleakClient,
         "disconnect",
         new_callable=AsyncMock,
-        side_effect=BleakError("nope"),
+        side_effect=_fail_mid_disconnect,
     ):
         cancel["hci0"]()
         await _settle_disconnects()
-        assert client._backend is None
-        assert client._connected_scanner is None
+        assert (client._backend is None) is not reconnected_elsewhere
+        if not reconnected_elsewhere:
+            assert client._connected_scanner is None
     assert "from removed scanner" in caplog.text
 
 
