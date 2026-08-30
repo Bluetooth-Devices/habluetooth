@@ -878,9 +878,11 @@ class HaScanner(BaseHaScanner):
         Stops the live ``self.scanner``, mutates its private
         ``_backend._scanning_mode`` to the value from
         ``_effective_mode()``, restarts the same instance. Skips the
-        new dbus client + ``restore_discoveries`` cost of a fresh
-        construction; bleak's device cache survives same-instance
-        stop+start so ``BleakClient(address)`` keeps working.
+        new dbus client cost of a fresh construction. bleak clears
+        ``seen_devices`` on every ``start()``, so the discovered map is
+        re-seeded from BlueZ with ``restore_discoveries`` afterwards,
+        the same as a full start; otherwise every flip would empty the
+        map the connect path reads.
 
         Linux/BlueZ only — callers must check ``IS_LINUX``. Returns
         False if the scanner is gone or stop/start raised (caller
@@ -938,6 +940,7 @@ class HaScanner(BaseHaScanner):
             return False
         self.scanning = True
         self.set_current_mode(radio_mode)
+        await restore_discoveries(self.scanner, self.adapter)
         return True
 
     async def _async_stop_scanner(self) -> None:

@@ -1875,6 +1875,31 @@ async def test_async_toggle_active_window_mode_marks_not_scanning_on_start_error
 
 @pytest.mark.usefixtures("force_linux_scanner_mode")
 @pytest.mark.asyncio
+async def test_async_toggle_active_window_mode_restores_discoveries() -> None:
+    """
+    A successful in place toggle re-seeds bleak's discovered map.
+
+    bleak clears ``seen_devices`` on every ``start()``, so the toggle must
+    call ``restore_discoveries`` like a full start does or the connect path
+    loses every device until it is rediscovered.
+    """
+    with (
+        patch_bleak_scanner_factory(MockBleakScanner),
+        patch("habluetooth.scanner_bleak.restore_discoveries", AsyncMock()) as restore,
+    ):
+        scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner_obj.async_setup()
+        await scanner_obj.async_start()
+        assert restore.await_count == 1
+        scanner_obj._scan_mode_override = BluetoothScanningMode.ACTIVE
+        assert await scanner_obj._async_toggle_active_window_mode() is True
+        assert restore.await_count == 2
+        restore.assert_awaited_with(scanner_obj.scanner, "hci0")
+        await scanner_obj.async_stop()
+
+
+@pytest.mark.usefixtures("force_linux_scanner_mode")
+@pytest.mark.asyncio
 async def test_async_toggle_active_window_mode_attribute_error_marks_not_scanning() -> (
     None
 ):
