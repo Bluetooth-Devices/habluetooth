@@ -589,7 +589,7 @@ async def test_track_moves_client_between_scanners(
 
 @pytest.mark.asyncio
 async def test_no_disconnects_scheduled_after_stop(
-    connected_client: ConnectedClient,
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A scanner unregistering after async_stop schedules nothing."""
     _, _, cancel = connected_client
@@ -597,6 +597,7 @@ async def test_no_disconnects_scheduled_after_stop(
     manager.async_stop()
     cancel["hci0"]()
     assert not manager._background_tasks
+    assert "Shutdown; not disconnecting 1 client(s)" in caplog.text
 
 
 @pytest.mark.asyncio

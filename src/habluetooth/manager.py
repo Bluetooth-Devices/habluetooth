@@ -1687,7 +1687,16 @@ class BluetoothManager:
 
     def _async_disconnect_clients(self, scanner: BaseHaScanner) -> None:
         """Disconnect the clients still connected through a removed scanner."""
-        if self.shutdown or not scanner._clients:
+        if not scanner._clients:
+            return
+        if self.shutdown:
+            # Abandoned to BlueZ/the kernel; scheduling after stop would
+            # leak tasks past the loop's lifetime.
+            _LOGGER.debug(
+                "Shutdown; not disconnecting %d client(s) of removed scanner %s",
+                len(scanner._clients),
+                scanner.source,
+            )
             return
         clients = list(scanner._clients)
         self._async_add_background_task(

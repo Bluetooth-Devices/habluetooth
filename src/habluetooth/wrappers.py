@@ -528,7 +528,6 @@ class HaBleakClientWrapper(BleakClient):
                     async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
                         await self.disconnect()
                 except TimeoutError:
-                    self._backend = None
                     _LOGGER.warning(
                         "%s: timed out disconnecting after scanner %s was"
                         " unregistered mid connect",
@@ -536,7 +535,6 @@ class HaBleakClientWrapper(BleakClient):
                         scanner.name,
                     )
                 except Exception:  # pylint: disable=broad-except
-                    self._backend = None
                     _LOGGER.warning(
                         "%s: error disconnecting after scanner %s was"
                         " unregistered mid connect",
@@ -544,6 +542,10 @@ class HaBleakClientWrapper(BleakClient):
                         scanner.name,
                         exc_info=True,
                     )
+                finally:
+                    # On every exit, including cancellation, the wrapper
+                    # must not keep a handle to the doomed link.
+                    self._backend = None
                 msg = (
                     f"{self.__address}: scanner {scanner.name} was"
                     " unregistered during connect"
