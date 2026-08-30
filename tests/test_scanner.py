@@ -882,14 +882,7 @@ async def test_setup_and_stop_macos() -> None:
 async def test_no_passive_fallback_when_passive_unsupported(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """
-    Test we do not fall back to passive when the adapter cannot do it.
-
-    BlueZ only exposes org.bluez.AdvertisementMonitorManager1, and therefore
-    passive scanning, when bluetoothd runs with --experimental. Falling back
-    to passive on such a host makes the final start attempt fail with
-    ScannerStartError, leaving the adapter unusable until the host reboots.
-    """
+    """No passive fallback when the adapter cannot scan passively."""
     called_start = 0
 
     class _AlwaysFailingScanner(MockBleakScanner):
@@ -922,8 +915,6 @@ async def test_no_passive_fallback_when_passive_unsupported(
             await scanner.async_start()
 
     assert called_start == 4
-    # The last attempt must stay active instead of requesting a mode the
-    # adapter cannot provide.
     assert scanner.current_mode is BluetoothScanningMode.ACTIVE
     assert "Falling back to passive scanning mode" not in caplog.text
 
@@ -932,14 +923,7 @@ async def test_no_passive_fallback_when_passive_unsupported(
 async def test_passive_fallback_uses_own_adapter_capability(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """
-    Test the fallback checks the scanner's own adapter, not any adapter.
-
-    supports_passive_scan is system-wide: on a mixed-capability host
-    (hci0 without passive support, hci1 with it), hci0 must not fall
-    back to a mode it cannot provide just because hci1 reports the
-    capability.
-    """
+    """The fallback checks the scanner's own adapter, not any adapter."""
 
     class _AlwaysFailingScanner(MockBleakScanner):
         async def start(self, *args: object, **kwargs: object) -> None:
@@ -969,10 +953,7 @@ async def test_passive_fallback_uses_own_adapter_capability(
         with pytest.raises(ScannerStartError):
             await incapable.async_start()
 
-        # The incapable adapter must finish its last attempt in active
-        # mode even though hci1 on the same host supports passive
-        # scanning. Assert before hci1 runs so its legitimate fallback
-        # log cannot pollute the absence check.
+        # Assert before hci1 runs so its fallback log cannot mask this.
         assert incapable.current_mode is BluetoothScanningMode.ACTIVE
         assert "Falling back to passive scanning mode" not in caplog.text
 
@@ -991,8 +972,6 @@ async def test_adapter_init_fails_fallback_to_passive(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test we fallback to passive when adapter init fails."""
-    # The fallback is only taken when the adapter can actually scan
-    # passively, so the adapter has to advertise that capability.
     get_manager()._adapters = {"hci0": {ADAPTER_PASSIVE_SCAN: True}}
     called_start = 0
     called_stop = 0
