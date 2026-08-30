@@ -36,6 +36,7 @@ from .const import (
     ADV_RSSI_SWITCH_DEADBAND,
     ADV_RSSI_SWITCH_THRESHOLD,
     CALLBACK_TYPE,
+    CLIENT_DISCONNECT_TIMEOUT,
     DEFAULT_ACTIVE_SCAN_DURATION,
     DEFAULT_ACTIVE_SCAN_INTERVAL,
     DEFAULT_ON_DEMAND_SWEEP_DURATION,
@@ -81,10 +82,6 @@ IS_LINUX = SYSTEM == "Linux"
 FILTER_UUIDS = "UUIDs"
 
 APPLE_MFR_ID = 76
-
-# Bound for disconnecting a removed scanner's clients; a proxy that is gone
-# may never answer, and a pending task would strongly reference the client.
-CLIENT_DISCONNECT_TIMEOUT = 10.0
 APPLE_IBEACON_START_BYTE = 0x02  # iBeacon (tilt_ble)
 APPLE_HOMEKIT_START_BYTE = 0x06  # homekit_controller
 APPLE_DEVICE_ID_START_BYTE = 0x10  # bluetooth_le_tracker
@@ -1687,10 +1684,10 @@ class BluetoothManager:
 
     def _async_disconnect_clients(self, scanner: BaseHaScanner) -> None:
         """Disconnect the clients still connected through a removed scanner."""
+        if not scanner._clients:
+            return
         clients = list(scanner._clients)
         scanner._clients.clear()
-        if not clients:
-            return
         self.async_add_background_task(self._async_disconnect_all(clients, scanner))
 
     async def _async_disconnect_all(
@@ -1714,6 +1711,8 @@ class BluetoothManager:
         self, client: HaBleakClientWrapper, scanner: BaseHaScanner
     ) -> None:
         """Disconnect one client, logging failures instead of raising."""
+        device = client._connected_device
+        address = device.address if device else "unknown"
         try:
             if client._connected_scanner is not scanner or not client.is_connected:
                 # Reconnected through another scanner since this was scheduled.
@@ -1722,17 +1721,15 @@ class BluetoothManager:
                 await client.disconnect()
         except TimeoutError:
             # The expected shape for a proxy that went away; no traceback.
-            device = client._connected_device
             _LOGGER.warning(
                 "Timed out disconnecting client %s from removed scanner %s",
-                device.address if device else "unknown",
+                address,
                 scanner.source,
             )
         except Exception:  # pylint: disable=broad-except
-            device = client._connected_device
             _LOGGER.exception(
                 "Error disconnecting client %s from removed scanner %s",
-                device.address if device else "unknown",
+                address,
                 scanner.source,
             )
 

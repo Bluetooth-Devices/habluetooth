@@ -276,8 +276,13 @@ async def connected_client(
 
 
 async def _settle_disconnects() -> None:
-    """Wait for the manager's scheduled disconnects."""
-    await asyncio.gather(*_get_manager()._background_tasks)
+    """Wait for the manager's background tasks to finish."""
+    await asyncio.gather(*_get_manager()._background_tasks, return_exceptions=True)
+    await asyncio.sleep(0)
+
+
+async def _hang() -> None:
+    await asyncio.Event().wait()
 
 
 @pytest.mark.asyncio
@@ -395,9 +400,6 @@ async def test_disconnect_timeout_on_unregister_is_logged(
     """A hanging disconnect is bounded and logged, not pending forever."""
     _, _, cancel = connected_client
 
-    async def _hang() -> None:
-        await asyncio.Event().wait()
-
     with (
         patch("habluetooth.manager.CLIENT_DISCONNECT_TIMEOUT", 0.0),
         patch.object(FakeBleakClient, "disconnect", side_effect=_hang),
@@ -414,9 +416,6 @@ async def test_stop_cancels_pending_disconnects(
     """async_stop cancels disconnect tasks still in flight."""
     _, _, cancel = connected_client
     manager = _get_manager()
-
-    async def _hang() -> None:
-        await asyncio.Event().wait()
 
     with patch.object(FakeBleakClient, "disconnect", side_effect=_hang):
         cancel["hci0"]()
@@ -497,8 +496,7 @@ async def test_background_task_exception_is_logged(
         raise ValueError(msg)
 
     manager.async_add_background_task(_boom())
-    await asyncio.gather(*manager._background_tasks, return_exceptions=True)
-    await asyncio.sleep(0)
+    await _settle_disconnects()
     assert "Background task failed" in caplog.text
 
 
