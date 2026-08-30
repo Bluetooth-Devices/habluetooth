@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.26.9 (2026-08-30)
+
+### Bug fixes
+
+
+- Restore discoveries after an active window flip ([`8fab61c`](https://github.com/Bluetooth-Devices/habluetooth/commit/8fab61c39ea81e24b70023b760b4de6dcb01c89c))
+
+
+- Say when a device is in history but cached by no scanner ([`c741414`](https://github.com/Bluetooth-Devices/habluetooth/commit/c741414edb6d0d899481ebf7d18c890b9444736b))
+
+
+- Passive scanning misses devices whose flags are not general discoverable ([`c960fac`](https://github.com/Bluetooth-Devices/habluetooth/commit/c960facefbdd512d8164b4910a7f20f968db9d73))
+
+
 ## v6.26.8 (2026-08-30)
 
 ### Bug fixes
