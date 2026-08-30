@@ -151,7 +151,7 @@ def test_create_bleak_scanner_linux_no_adapter_active() -> None:
 
 @pytest.mark.skipif(platform.system() != "Linux", reason="Linux only")
 def test_passive_scan_flags_fit_one_monitor() -> None:
-    """The FLAGS list stays within the 16 pattern monitor limit and unique."""
+    """The FLAGS list fits one monitor and covers the observed values."""
     flags = scanner.PASSIVE_SCAN_FLAGS
     assert len(flags) <= 16
     assert len(set(flags)) == len(flags)

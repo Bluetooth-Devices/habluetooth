@@ -3999,8 +3999,7 @@ async def test_address_reachability_diagnostics_connection_in_history_no_scanner
     address = "44:44:33:11:23:4d"
     device = generate_ble_device(address, "wohand")
     adv = generate_advertisement_data(local_name="wohand", rssi=-70)
-    # History is fed (raw channel, or a scanner that has since dropped the
-    # device) but no scanner has it cached, so there is no connect path.
+    # In history but cached by no scanner: no connect path.
     inject_advertisement_with_source(device, adv, "ghost")
 
     diag = manager.async_address_reachability_diagnostics(

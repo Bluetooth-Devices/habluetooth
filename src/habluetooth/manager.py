@@ -1554,10 +1554,8 @@ class BluetoothManager:
         else:
             parts.append("unknown (never seen by any scanner)")
 
-        # A local scanner can keep feeding history through the raw
-        # advertisement channel while its bleak discovered map never sees
-        # the device (passive or_patterns), so say so instead of letting
-        # the message read as an out of slots condition.
+        # History is fed but no scanner has the device cached (passive
+        # or_patterns miss); not an out of slots condition.
         if not devices and address in self._all_history:
             parts.append(
                 "in history but no scanner currently has it in its discovered devices"

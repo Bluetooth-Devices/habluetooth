@@ -48,15 +48,9 @@ if IS_LINUX:
     from dbus_fast import InvalidMessageError
     from dbus_fast.service import method
 
-    # BlueZ passive scanning only creates and updates a Device1 object for
-    # advertisements that match a registered or_pattern, and the only AD
-    # structure common to connectable advertisements is FLAGS, so the
-    # monitor lists FLAGS values. A monitor holds at most 16 patterns
-    # (kernel HCI_MAX_ADV_MONITOR_NUM_PATTERNS) and BlueZ releases a
-    # monitor with more instead of truncating it. These are the values
-    # observed on real networks: 0x02 android beacons (#31), 0x04 and
-    # 0x18 non discoverable connectable devices, 0x05 limited discoverable
-    # (SwitchBot bots), 0x06 and 0x1a general discoverable (#615).
+    # Passive scanning only reports devices matching an or_pattern; a
+    # monitor holds at most 16 (BlueZ releases larger ones). FLAGS values
+    # seen in the wild: #31 (0x02) and #615.
     PASSIVE_SCAN_FLAGS = (0x02, 0x04, 0x05, 0x06, 0x18, 0x1A)
     PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
         or_patterns=[
