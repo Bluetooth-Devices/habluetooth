@@ -11,9 +11,10 @@ first, export the object second) and records which devices each monitor
 reports through DeviceFound, then prints a table answering:
 
 1. which FLAGS byte values the devices in range actually advertise;
-2. whether a single monitor silently drops patterns past the kernel limit
-   (HCI_MAX_ADV_MONITOR_NUM_PATTERNS, 16 on mainline);
-3. whether two monitors of 16 patterns each cover everything;
+2. whether two monitors of 16 patterns each cover everything
+   (HCI_MAX_ADV_MONITOR_NUM_PATTERNS is 16 on mainline);
+3. with --test-overflow, what BlueZ does with a monitor of 32 patterns
+   (observed: never activated and released, so it is off by default);
 4. how much the legacy three value list (0x02, 0x06, 0x1a) misses.
 
 It only registers monitors; it never starts discovery or connects.
@@ -135,16 +136,22 @@ class Probe:
         for mon in monitors:
             self._counter += 1
             path = f"/org/habluetooth/probe/{self._counter}"
-            await self.call(
-                self.adapter_path, MANAGER_IFACE, "RegisterMonitor", "o", [path]
-            )
+            try:
+                await self.call(
+                    self.adapter_path, MANAGER_IFACE, "RegisterMonitor", "o", [path]
+                )
+            except RuntimeError as err:
+                print(f"  {mon.label}: RegisterMonitor failed: {err}", file=sys.stderr)
+                mon.released = True
+                continue
             # bleak exports after registering; BlueZ ignores the monitor otherwise.
             self.bus.export(path, mon)
             paths.append(path)
         return paths
 
     async def unregister(self, monitors: list[Monitor], paths: list[str]) -> None:
-        for mon, path in zip(monitors, paths, strict=True):
+        registered = [mon for mon in monitors if not mon.released or mon.activated]
+        for mon, path in zip(registered, paths, strict=True):
             self.bus.unexport(path, mon)
             try:
                 await self.call(
@@ -199,6 +206,12 @@ async def main() -> int:
         action="store_true",
         help="skip the per value census (4 phases)",
     )
+    parser.add_argument(
+        "--test-overflow",
+        action="store_true",
+        help="also register one monitor with 32 patterns; BlueZ releases it and "
+        "may drop the bus connection, so this runs last and is off by default",
+    )
     args = parser.parse_args()
 
     try:
@@ -237,9 +250,6 @@ async def main() -> int:
 
     # Put the common values last so a 16 pattern cap would drop them.
     ordered = [v for v in ALL_FLAGS if v not in LEGACY_FLAGS] + LEGACY_FLAGS
-    single = Monitor("32 patterns in one monitor", ordered)
-    await probe.run_phase("truncation test", [single], args.duration)
-
     pair = [
         Monitor("monitor A (16 patterns)", ordered[:16]),
         Monitor("monitor B (16 patterns)", ordered[16:]),
@@ -248,46 +258,37 @@ async def main() -> int:
     two = set(pair[0].found) | set(pair[1].found)
 
     names = await probe.device_names()
-    all_devices = (
-        set().union(*census.values()) | set(legacy.found) | set(single.found) | two
-    )
+    all_devices = set().union(*census.values()) | set(legacy.found) | two
 
     print(
         "\n== per FLAGS value (census: devices seen by a monitor with only that value)"
     )
-    print(f"{'flags':>6} {'census':>6} {'legacy':>6} {'32in1':>6} {'2x16':>6}  devices")
+    print(f"{'flags':>6} {'census':>6} {'legacy':>6} {'2x16':>6}  devices")
     for value in ALL_FLAGS:
         devs = census[value]
         if not devs and args.skip_census:
             continue
         in_legacy = len(devs & set(legacy.found))
-        in_single = len(devs & set(single.found))
         in_two = len(devs & two)
         listing = "; ".join(names.get(p, p) for p in sorted(devs))
-        print(
-            f"{value:#06x} {len(devs):>6} {in_legacy:>6} {in_single:>6} {in_two:>6}  {listing}"
-        )
+        print(f"{value:#06x} {len(devs):>6} {in_legacy:>6} {in_two:>6}  {listing}")
 
     print("\n== totals")
     print(f"  distinct devices in any phase: {len(all_devices)}")
     print(f"  legacy list:        {len(legacy.found)}")
-    print(f"  32 in one monitor:  {len(single.found)}")
     print(f"  two monitors of 16: {len(two)}")
-    only_two = two - set(single.found)
-    if only_two:
-        print(
-            f"  found by two monitors but not by the single 32 pattern monitor ({len(only_two)}):"
-        )
-        for path in sorted(only_two):
-            print(f"    {names.get(path, path)}")
-        print(
-            "  => the single monitor is truncated; a second monitor is needed for full coverage"
-        )
     missed = all_devices - set(legacy.found)
     if missed:
         print(f"  missed by the legacy list ({len(missed)}):")
         for path in sorted(missed):
             print(f"    {names.get(path, path)}")
+
+    if args.test_overflow:
+        # Observed on BlueZ 5.7x: a monitor with more than 16 patterns is not
+        # truncated, it is never activated and released, and the bus
+        # connection dropped right after. Last, so the results above survive.
+        single = Monitor("32 patterns in one monitor", ordered)
+        await probe.run_phase("overflow test (32 patterns)", [single], args.duration)
 
     bus.disconnect()
     return 0
