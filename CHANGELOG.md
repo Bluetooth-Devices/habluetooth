@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.26.10 (2026-08-30)
+
+### Bug fixes
+
+
+- Only fall back to passive when the adapter supports it ([`a913449`](https://github.com/Bluetooth-Devices/habluetooth/commit/a913449f1d0eb258f8b49b8dfa7ebfeb81e2bb94))
+
+
 ## v6.26.9 (2026-08-30)
 
 ### Bug fixes
