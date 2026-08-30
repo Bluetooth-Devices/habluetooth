@@ -57,23 +57,9 @@ ADV_MONITOR_DEVICE_FOUND = 0x002F
 IS_WINDOWS = 'os.name == "nt"'
 IS_POSIX = 'os.name == "posix"'
 NOT_POSIX = 'os.name != "posix"'
-# Passive scanning needs at least one or_pattern; production lists FLAGS
-# values, one pattern each (see scanner_bleak.PASSIVE_SCAN_FLAGS).
-if platform.system() == "Linux":
-    # On Linux, use the real BlueZScannerArgs to avoid mocking issues
-    from bleak.args.bluez import BlueZScannerArgs, OrPattern
-    from bleak.assigned_numbers import AdvertisementDataType
-
-    scanner.PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
-        or_patterns=[
-            OrPattern(0, AdvertisementDataType.FLAGS, bytes([flags]))
-            for flags in scanner.PASSIVE_SCAN_FLAGS
-        ]
-    )
-else:
-    # On other platforms ``bleak.args.bluez`` may not be importable. Use a
-    # non-empty real mapping that mimics the Linux shape so the production
-    # code's ``if bluez_args:`` truthy check still adds the ``bluez`` kwarg.
+if platform.system() != "Linux":
+    # ``bleak.args.bluez`` may not be importable off Linux; mimic the shape
+    # so the production ``if bluez_args:`` truthy check still fires.
     scanner.PASSIVE_SCANNER_ARGS = {"or_patterns": [(0, 0x01, b"\x06")]}
 # If the adapter is in a stuck state the following errors are raised:
 NEED_RESET_ERRORS = [
