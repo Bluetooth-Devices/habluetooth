@@ -405,25 +405,22 @@ class HaScanner(BaseHaScanner):
             IS_LINUX
             and attempt == START_ATTEMPTS
             and radio_mode is BluetoothScanningMode.ACTIVE
-            and self._manager.supports_passive_scan_for(self.adapter)
         ):
-            _LOGGER.debug(
-                "%s: Falling back to passive scanning mode "
-                "after active scanning failed (%s/%s)",
-                self.name,
-                attempt,
-                START_ATTEMPTS,
-            )
-            self.set_current_mode(BluetoothScanningMode.PASSIVE)
-        elif (
-            IS_LINUX
-            and attempt == START_ATTEMPTS
-            and radio_mode is BluetoothScanningMode.ACTIVE
-        ):
-            _LOGGER.debug(
-                "%s: Not falling back to passive scanning; adapter does not support it",
-                self.name,
-            )
+            if self._manager.supports_passive_scan_for(self.adapter):
+                _LOGGER.debug(
+                    "%s: Falling back to passive scanning mode "
+                    "after active scanning failed (%s/%s)",
+                    self.name,
+                    attempt,
+                    START_ATTEMPTS,
+                )
+                self.set_current_mode(BluetoothScanningMode.PASSIVE)
+            else:
+                _LOGGER.debug(
+                    "%s: Not falling back to passive scanning; "
+                    "adapter does not support it",
+                    self.name,
+                )
 
         assert self.current_mode is not None  # noqa: S101
         self.scanner = create_bleak_scanner(

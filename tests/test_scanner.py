@@ -917,6 +917,7 @@ async def test_no_passive_fallback_when_passive_unsupported(
     assert called_start == 4
     assert scanner.current_mode is BluetoothScanningMode.ACTIVE
     assert "Falling back to passive scanning mode" not in caplog.text
+    assert "Not falling back to passive scanning" in caplog.text
 
 
 @pytest.mark.asyncio
