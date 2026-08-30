@@ -708,15 +708,20 @@ async def test_base_exception_from_disconnect_gives_up_client(
 ) -> None:
     """A BaseException escaping a child is logged; give up re-checks identity."""
     client, _, cancel = connected_client
+
+    async def _cancel_mid_disconnect(*args: Any, **kwargs: Any) -> None:
+        if reconnected_elsewhere:
+            # The client moves on while the gather is still settling; the
+            # late results pass must not give it up.
+            client._connected_scanner = MagicMock()
+        raise asyncio.CancelledError
+
     with patch.object(
         FakeBleakClient,
         "disconnect",
         new_callable=AsyncMock,
-        side_effect=asyncio.CancelledError,
+        side_effect=_cancel_mid_disconnect,
     ):
-        if reconnected_elsewhere:
-            # The late results pass must not give up a client that moved on.
-            client._connected_scanner = MagicMock()
         cancel["hci0"]()
         await _settle_disconnects()
         assert (client._backend is None) is not reconnected_elsewhere
