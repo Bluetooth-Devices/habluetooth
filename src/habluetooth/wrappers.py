@@ -357,17 +357,18 @@ class HaBleakClientWrapper(BleakClient):
         timeout: int,
     ) -> None:
         """Set BLE connection parameters on a connected device."""
+        if self._backend is not None and hasattr(
+            self._backend, "set_connection_params"
+        ):
+            # The backend owns its own not-connected handling.
+            await self._backend.set_connection_params(
+                min_interval, max_interval, latency, timeout
+            )
+            return
         if not self.is_connected:
             _LOGGER.debug(
                 "%s: not setting connection params; client is not connected",
                 self.__address,
-            )
-            return
-        if self._backend is not None and hasattr(
-            self._backend, "set_connection_params"
-        ):
-            await self._backend.set_connection_params(
-                min_interval, max_interval, latency, timeout
             )
             return
         # BlueZ local path - use mgmt API
