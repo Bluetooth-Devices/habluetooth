@@ -92,6 +92,7 @@ def disable_stop_discovery():
     with (
         patch("habluetooth.scanner_bleak.stop_discovery"),
         patch("habluetooth.scanner_bleak.restore_discoveries"),
+        patch("habluetooth.scanner_bleak.restore_discoveries_sync"),
     ):
         yield
 
@@ -1880,6 +1881,7 @@ async def test_async_toggle_active_window_mode_restores_discoveries() -> None:
     with (
         patch_bleak_scanner_factory(MockBleakScanner),
         patch("habluetooth.scanner_bleak.restore_discoveries", AsyncMock()) as restore,
+        patch("habluetooth.scanner_bleak.restore_discoveries_sync") as restore_sync,
     ):
         scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
         scanner_obj.async_setup()
@@ -1887,8 +1889,8 @@ async def test_async_toggle_active_window_mode_restores_discoveries() -> None:
         assert restore.await_count == 1
         scanner_obj._scan_mode_override = BluetoothScanningMode.ACTIVE
         assert await scanner_obj._async_toggle_active_window_mode() is True
-        assert restore.await_count == 2
-        restore.assert_awaited_with(scanner_obj.scanner, "hci0")
+        assert restore.await_count == 1
+        restore_sync.assert_called_once_with(scanner_obj.scanner, "hci0")
         await scanner_obj.async_stop()
 
 

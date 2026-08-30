@@ -13,7 +13,11 @@ import async_interrupt
 import bleak
 from bleak import BleakError
 from bleak.assigned_numbers import AdvertisementDataType
-from bleak_retry_connector import Allocations, restore_discoveries
+from bleak_retry_connector import (
+    Allocations,
+    restore_discoveries,
+    restore_discoveries_sync,
+)
 from bleak_retry_connector.bluez import stop_discovery
 from bluetooth_adapters import DEFAULT_ADDRESS
 from bluetooth_data_tools import monotonic_time_coarse
@@ -879,7 +883,7 @@ class HaScanner(BaseHaScanner):
         ``_backend._scanning_mode`` to the value from
         ``_effective_mode()``, restarts the same instance. bleak clears
         ``seen_devices`` on ``start()``, so re-seed with
-        ``restore_discoveries`` like a full start.
+        ``restore_discoveries_sync`` like a full start.
 
         Linux/BlueZ only — callers must check ``IS_LINUX``. Returns
         False if the scanner is gone or stop/start raised (caller
@@ -937,7 +941,7 @@ class HaScanner(BaseHaScanner):
             return False
         self.scanning = True
         self.set_current_mode(radio_mode)
-        await restore_discoveries(self.scanner, self.adapter)
+        restore_discoveries_sync(self.scanner, self.adapter)
         return True
 
     async def _async_stop_scanner(self) -> None:
