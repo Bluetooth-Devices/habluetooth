@@ -513,15 +513,24 @@ class HaBleakClientWrapper(BleakClient):
 
         # Load medium connection parameters after successful connection
         if connected:
-            self._track(scanner, device)
             if manager.async_scanner_by_source(scanner.source) is not scanner:
                 # The scanner was unregistered while this connect was in
-                # flight; tear the link down inline so the wrapper reports
-                # disconnected and the caller can retry elsewhere.
+                # flight; tear the link down inline, without ever tracking
+                # it, so the wrapper reports disconnected and the caller
+                # can retry elsewhere.
                 try:
                     async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
                         await self.disconnect()
+                except TimeoutError:
+                    self._backend = None
+                    _LOGGER.warning(
+                        "%s: timed out disconnecting after scanner %s was"
+                        " unregistered mid connect",
+                        self.__address,
+                        scanner.name,
+                    )
                 except Exception:  # pylint: disable=broad-except
+                    self._backend = None
                     _LOGGER.warning(
                         "%s: error disconnecting after scanner %s was"
                         " unregistered mid connect",
@@ -534,6 +543,7 @@ class HaBleakClientWrapper(BleakClient):
                     " unregistered during connect"
                 )
                 raise BleakError(msg)
+            self._track(scanner, device)
             self._load_conn_params(
                 scanner,
                 device,

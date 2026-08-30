@@ -513,7 +513,40 @@ async def test_connect_in_flight_unregister_teardown_failure_is_logged(
         client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
         with pytest.raises(BleakError, match="unregistered during connect"):
             await client.connect()
-    assert "unregistered mid connect" in caplog.text
+        assert client._backend is None
+    assert "error disconnecting after scanner" in caplog.text
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_connect_in_flight_unregister_teardown_timeout_is_logged(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A hanging inline teardown is bounded, logged without a traceback."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    original_connect = FakeBleakClient.connect
+
+    async def _connect_and_unregister(
+        self: FakeBleakClient, *args: Any, **kwargs: Any
+    ) -> None:
+        await original_connect(self, *args, **kwargs)
+        cancel_hci0()
+
+    with (
+        patch("habluetooth.wrappers.CLIENT_DISCONNECT_TIMEOUT", 0.0),
+        patch.object(FakeBleakClient, "is_connected", return_value=True),
+        patch.object(FakeBleakClient, "connect", _connect_and_unregister),
+        patch.object(FakeBleakClient, "disconnect", side_effect=_hang),
+    ):
+        client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
+        with pytest.raises(BleakError, match="unregistered during connect"):
+            await client.connect()
+        assert client._backend is None
+    assert "timed out disconnecting after scanner" in caplog.text
     cancel_hci1()
 
 
@@ -574,7 +607,7 @@ async def test_background_task_exception_is_logged(
         msg = "boom"
         raise ValueError(msg)
 
-    manager.async_add_background_task(_boom())
+    manager.async_add_background_task(_boom(), "boom task")
     await _settle_disconnects()
     assert "Background task" in caplog.text
     assert "failed" in caplog.text

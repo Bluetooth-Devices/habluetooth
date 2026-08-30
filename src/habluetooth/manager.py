@@ -1669,11 +1669,13 @@ class BluetoothManager:
         # just cleared has forgotten them.
         self._async_disconnect_clients(scanner)
 
-    def async_add_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
+    def async_add_background_task(
+        self, coro: Coroutine[Any, Any, None], name: str
+    ) -> None:
         """Run a coroutine as a background task that is cancelled on stop."""
         if TYPE_CHECKING:
             assert self._loop is not None
-        task = self._loop.create_task(coro)
+        task = self._loop.create_task(coro, name=name)
         self._background_tasks.add(task)
         task.add_done_callback(self._on_background_task_done)
 
@@ -1689,7 +1691,10 @@ class BluetoothManager:
             return
         clients = list(scanner._clients)
         scanner._clients.clear()
-        self.async_add_background_task(self._async_disconnect_all(clients, scanner))
+        self.async_add_background_task(
+            self._async_disconnect_all(clients, scanner),
+            f"disconnect clients of {scanner.source}",
+        )
 
     async def _async_disconnect_all(
         self, clients: list[HaBleakClientWrapper], scanner: BaseHaScanner
