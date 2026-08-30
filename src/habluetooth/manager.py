@@ -1693,7 +1693,7 @@ class BluetoothManager:
             # Abandoned to BlueZ/the kernel; scheduling after stop would
             # leak tasks past the loop's lifetime.
             _LOGGER.debug(
-                "Shutdown; not disconnecting %d client(s) of removed scanner %s",
+                "Shutdown; not disconnecting %d client(s) from removed scanner %s",
                 len(scanner._clients),
                 scanner.source,
             )
@@ -1720,7 +1720,7 @@ class BluetoothManager:
             for client, result in zip(clients, results, strict=True):
                 if isinstance(result, BaseException):
                     # Only a BaseException can escape the child's handlers.
-                    self._async_give_up_client(client)
+                    client._give_up()
                     _LOGGER.error(
                         "Unexpected error disconnecting client from removed scanner %s",
                         scanner.source,
@@ -1739,50 +1739,37 @@ class BluetoothManager:
         self, client: HaBleakClientWrapper, scanner: BaseHaScanner
     ) -> None:
         """Disconnect one client, logging failures instead of raising."""
+        if client._connected_scanner is not scanner:
+            # Reconnected through another scanner since this was scheduled.
+            return
         device = client._connected_device
         address = device.address if device else "unknown"
+        if not client.is_connected:
+            _LOGGER.debug(
+                "Client %s already down; not disconnecting from removed scanner %s",
+                address,
+                scanner.source,
+            )
+            client._untrack()
+            return
         try:
-            if client._connected_scanner is not scanner:
-                # Reconnected through another scanner since this was scheduled.
-                return
-            if not client.is_connected:
-                _LOGGER.debug(
-                    "Client %s already down; not disconnecting from removed scanner %s",
-                    address,
-                    scanner.source,
-                )
-                client._untrack()
-                return
             async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
                 await client.disconnect()
         except TimeoutError:
             # The expected shape for a proxy that went away; no traceback.
-            self._async_give_up_client(client)
+            client._give_up()
             _LOGGER.warning(
                 "Timed out disconnecting client %s from removed scanner %s",
                 address,
                 scanner.source,
             )
         except Exception:  # pylint: disable=broad-except
-            self._async_give_up_client(client)
+            client._give_up()
             _LOGGER.exception(
                 "Error disconnecting client %s from removed scanner %s",
                 address,
                 scanner.source,
             )
-
-    def _async_give_up_client(self, client: HaBleakClientWrapper) -> None:
-        """
-        Drop a client whose teardown failed.
-
-        The link leaks to BlueZ (logged by the caller), but the wrapper must
-        not keep reporting connected: the scanner is gone and will never be
-        unregistered again, so nothing else would ever tear it down, and the
-        next establish_connection retry must re-resolve a backend instead of
-        short circuiting on is_connected.
-        """
-        client._backend = None
-        client._untrack()
 
     def async_register_scanner(
         self,

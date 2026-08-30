@@ -19,7 +19,11 @@ from bleak_retry_connector import Allocations
 
 from habluetooth import HaBluetoothConnector
 from habluetooth import get_manager as _get_manager
-from habluetooth.const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM
+from habluetooth.const import (
+    BDADDR_LE_PUBLIC,
+    BDADDR_LE_RANDOM,
+    CLIENT_DISCONNECT_TIMEOUT,
+)
 from habluetooth.usage import (
     install_multiple_bleak_catcher,
     uninstall_multiple_bleak_catcher,
@@ -455,11 +459,31 @@ async def test_failed_disconnect_keeps_client_tracked(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("disconnect_effect", "zero_timeout", "expected_exc", "log_fragment"),
+    [
+        (None, False, BleakError, None),
+        (BleakError("nope"), False, BleakError, "error disconnecting after scanner"),
+        (
+            asyncio.CancelledError,
+            False,
+            asyncio.CancelledError,
+            "cancelled disconnecting after scanner",
+        ),
+        (_hang, True, BleakError, "timed out disconnecting after scanner"),
+    ],
+    ids=["clean", "error", "cancelled", "timeout"],
+)
 async def test_connect_in_flight_when_scanner_unregisters(
     two_adapters: None,
     enable_bluetooth: None,
     install_bleak_catcher: None,
     mock_platform_client: None,
+    caplog: pytest.LogCaptureFixture,
+    disconnect_effect: Any,
+    zero_timeout: bool,
+    expected_exc: type[BaseException],
+    log_fragment: str | None,
 ) -> None:
     """A connect that finishes after its scanner unregistered is torn down."""
     hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
@@ -472,122 +496,25 @@ async def test_connect_in_flight_when_scanner_unregisters(
         # The scanner goes away while the connect is still in flight.
         cancel_hci0()
 
+    timeout = 0.0 if zero_timeout else CLIENT_DISCONNECT_TIMEOUT
     with (
-        patch.object(FakeBleakClient, "is_connected", return_value=True),
-        patch.object(FakeBleakClient, "connect", _connect_and_unregister),
-    ):
-        client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
-        with patch.object(
-            FakeBleakClient, "disconnect", new_callable=AsyncMock
-        ) as disconnect_mock:
-            with pytest.raises(BleakError, match="unregistered during connect"):
-                await client.connect()
-            await _settle_disconnects()
-        assert disconnect_mock.call_count == 1
-    cancel_hci1()
-
-
-@pytest.mark.asyncio
-async def test_connect_in_flight_unregister_teardown_failure_is_logged(
-    two_adapters: None,
-    enable_bluetooth: None,
-    install_bleak_catcher: None,
-    mock_platform_client: None,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A failing inline teardown is logged and the connect still fails."""
-    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
-    original_connect = FakeBleakClient.connect
-
-    async def _connect_and_unregister(
-        self: FakeBleakClient, *args: Any, **kwargs: Any
-    ) -> None:
-        await original_connect(self, *args, **kwargs)
-        cancel_hci0()
-
-    with (
+        patch("habluetooth.wrappers.CLIENT_DISCONNECT_TIMEOUT", timeout),
         patch.object(FakeBleakClient, "is_connected", return_value=True),
         patch.object(FakeBleakClient, "connect", _connect_and_unregister),
         patch.object(
             FakeBleakClient,
             "disconnect",
             new_callable=AsyncMock,
-            side_effect=BleakError("nope"),
-        ),
+            side_effect=disconnect_effect,
+        ) as disconnect_mock,
     ):
         client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
-        with pytest.raises(BleakError, match="unregistered during connect"):
+        with pytest.raises(expected_exc):
             await client.connect()
         assert client._backend is None
-    assert "error disconnecting after scanner" in caplog.text
-    cancel_hci1()
-
-
-@pytest.mark.asyncio
-async def test_connect_in_flight_unregister_teardown_cancelled_is_logged(
-    two_adapters: None,
-    enable_bluetooth: None,
-    install_bleak_catcher: None,
-    mock_platform_client: None,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Cancellation during the inline teardown is logged and propagates."""
-    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
-    original_connect = FakeBleakClient.connect
-
-    async def _connect_and_unregister(
-        self: FakeBleakClient, *args: Any, **kwargs: Any
-    ) -> None:
-        await original_connect(self, *args, **kwargs)
-        cancel_hci0()
-
-    with (
-        patch.object(FakeBleakClient, "is_connected", return_value=True),
-        patch.object(FakeBleakClient, "connect", _connect_and_unregister),
-        patch.object(
-            FakeBleakClient,
-            "disconnect",
-            new_callable=AsyncMock,
-            side_effect=asyncio.CancelledError,
-        ),
-    ):
-        client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
-        with pytest.raises(asyncio.CancelledError):
-            await client.connect()
-        assert client._backend is None
-    assert "cancelled disconnecting after scanner" in caplog.text
-    cancel_hci1()
-
-
-@pytest.mark.asyncio
-async def test_connect_in_flight_unregister_teardown_timeout_is_logged(
-    two_adapters: None,
-    enable_bluetooth: None,
-    install_bleak_catcher: None,
-    mock_platform_client: None,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A hanging inline teardown is bounded, logged without a traceback."""
-    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
-    original_connect = FakeBleakClient.connect
-
-    async def _connect_and_unregister(
-        self: FakeBleakClient, *args: Any, **kwargs: Any
-    ) -> None:
-        await original_connect(self, *args, **kwargs)
-        cancel_hci0()
-
-    with (
-        patch("habluetooth.wrappers.CLIENT_DISCONNECT_TIMEOUT", 0.0),
-        patch.object(FakeBleakClient, "is_connected", return_value=True),
-        patch.object(FakeBleakClient, "connect", _connect_and_unregister),
-        patch.object(FakeBleakClient, "disconnect", side_effect=_hang),
-    ):
-        client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
-        with pytest.raises(BleakError, match="unregistered during connect"):
-            await client.connect()
-        assert client._backend is None
-    assert "timed out disconnecting after scanner" in caplog.text
+    assert disconnect_mock.call_count == 1
+    if log_fragment is not None:
+        assert log_fragment in caplog.text
     cancel_hci1()
 
 

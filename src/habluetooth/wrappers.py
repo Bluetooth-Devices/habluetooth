@@ -9,7 +9,7 @@ import logging
 import warnings
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final, Literal, Self, overload
+from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, Self, overload
 
 from bleak import BleakClient, BleakError, normalize_uuid_str
 from bleak.backends.client import BaseBleakClient, get_platform_client_backend_type
@@ -521,45 +521,7 @@ class HaBleakClientWrapper(BleakClient):
         # Load medium connection parameters after successful connection
         if connected:
             if manager.async_scanner_by_source(scanner.source) is not scanner:
-                # The scanner was unregistered while this connect was in
-                # flight; tear the link down inline, without ever tracking
-                # it, so the wrapper reports disconnected and the caller
-                # can retry elsewhere.
-                try:
-                    async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
-                        await self.disconnect()
-                except asyncio.CancelledError:
-                    _LOGGER.debug(
-                        "%s: cancelled disconnecting after scanner %s was"
-                        " unregistered mid connect",
-                        self.__address,
-                        scanner.name,
-                    )
-                    raise
-                except TimeoutError:
-                    _LOGGER.warning(
-                        "%s: timed out disconnecting after scanner %s was"
-                        " unregistered mid connect",
-                        self.__address,
-                        scanner.name,
-                    )
-                except Exception:  # pylint: disable=broad-except
-                    _LOGGER.warning(
-                        "%s: error disconnecting after scanner %s was"
-                        " unregistered mid connect",
-                        self.__address,
-                        scanner.name,
-                        exc_info=True,
-                    )
-                finally:
-                    # On every exit, including cancellation, the wrapper
-                    # must not keep a handle to the doomed link.
-                    self._backend = None
-                msg = (
-                    f"{self.__address}: scanner {scanner.name} was"
-                    " unregistered during connect"
-                )
-                raise BleakError(msg)
+                await self._async_abort_unregistered_mid_connect(scanner)
             self._track(scanner, device)
             self._load_conn_params(
                 scanner,
@@ -747,12 +709,67 @@ class HaBleakClientWrapper(BleakClient):
         if not self.is_connected:
             self._untrack()
 
+    def _give_up(self) -> None:
+        """
+        Drop the backend and tracking for a link nothing can tear down.
+
+        The link leaks to BlueZ (logged by the caller), but the wrapper
+        must not keep reporting connected: nothing else would ever tear it
+        down, and the next establish_connection retry must re-resolve a
+        backend instead of short circuiting on is_connected.
+        """
+        self._backend = None
+        self._untrack()
+
+    async def _async_abort_unregistered_mid_connect(
+        self, scanner: BaseHaScanner
+    ) -> NoReturn:
+        """
+        Fail a connect whose scanner was unregistered while in flight.
+
+        Tears the link down inline, without ever tracking it, so the
+        wrapper reports disconnected and the caller can retry elsewhere.
+        """
+        try:
+            async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
+                await self.disconnect()
+        except asyncio.CancelledError:
+            _LOGGER.debug(
+                "%s: cancelled disconnecting after scanner %s was"
+                " unregistered mid connect",
+                self.__address,
+                scanner.name,
+            )
+            raise
+        except TimeoutError:
+            _LOGGER.warning(
+                "%s: timed out disconnecting after scanner %s was"
+                " unregistered mid connect",
+                self.__address,
+                scanner.name,
+            )
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "%s: error disconnecting after scanner %s was unregistered mid connect",
+                self.__address,
+                scanner.name,
+                exc_info=True,
+            )
+        finally:
+            # On every exit, including cancellation, the wrapper must not
+            # keep a handle to the doomed link.
+            self._give_up()
+        msg = (
+            f"{self.__address}: scanner {scanner.name} was unregistered during connect"
+        )
+        raise BleakError(msg)
+
     async def disconnect(self) -> None:
         """Disconnect from the device."""
         if self._backend is None:
-            # No backend, but pointers from an earlier failed teardown may
-            # remain.
-            self._untrack_if_down()
+            # No backend means not connected; drop any pointers left by an
+            # earlier failed teardown.
+            self._untrack()
             return
         try:
             await self._backend.disconnect()
