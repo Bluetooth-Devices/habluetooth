@@ -1556,12 +1556,10 @@ class BluetoothManager:
         else:
             parts.append("unknown (never seen by any scanner)")
 
-        # History is fed but no scanner has the device cached (passive
-        # or_patterns miss); not an out of slots condition.
+        # History outlives any scanner's discovered cache (scanner churn,
+        # cache expiry, passive or_patterns miss); not an out of slots case.
         if not devices and address in self._all_history:
-            parts.append(
-                "in history but no scanner currently has it in its discovered devices"
-            )
+            parts.append("no scanner currently has it in its discovered devices")
             return
 
         connectable_devices = [d for d in devices if d.scanner.connectable]
