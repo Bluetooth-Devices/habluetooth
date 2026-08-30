@@ -9,7 +9,7 @@ import math
 import platform
 from dataclasses import asdict
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
 from bleak_retry_connector import (
     NO_RSSI_VALUE,
@@ -75,14 +75,16 @@ if TYPE_CHECKING:
 SYSTEM = platform.system()
 IS_LINUX = SYSTEM == "Linux"
 
-FILTER_UUIDS: Final = "UUIDs"
+# No Final on globals declared in the .pxd; Cython 3.3 crashes on it
+# (cython/cython#7942).
+FILTER_UUIDS = "UUIDs"
 
-APPLE_MFR_ID: Final = 76
-APPLE_IBEACON_START_BYTE: Final = 0x02  # iBeacon (tilt_ble)
-APPLE_HOMEKIT_START_BYTE: Final = 0x06  # homekit_controller
-APPLE_DEVICE_ID_START_BYTE: Final = 0x10  # bluetooth_le_tracker
-APPLE_HOMEKIT_NOTIFY_START_BYTE: Final = 0x11  # homekit_controller
-APPLE_FINDMY_START_BYTE: Final = 0x12  # FindMy network advertisements
+APPLE_MFR_ID = 76
+APPLE_IBEACON_START_BYTE = 0x02  # iBeacon (tilt_ble)
+APPLE_HOMEKIT_START_BYTE = 0x06  # homekit_controller
+APPLE_DEVICE_ID_START_BYTE = 0x10  # bluetooth_le_tracker
+APPLE_HOMEKIT_NOTIFY_START_BYTE = 0x11  # homekit_controller
+APPLE_FINDMY_START_BYTE = 0x12  # FindMy network advertisements
 
 
 _str = str
@@ -597,7 +599,7 @@ class BluetoothManager:
         self,
         old_info: BluetoothServiceInfoBleak,
         new_info: BluetoothServiceInfoBleak,
-        smoothed: dict[str, float] | None,
+        smoothed: dict[_str, float] | None,
         new_rssi: float,
         record_demotion: bool,
     ) -> bool:
@@ -631,7 +633,7 @@ class BluetoothManager:
         self,
         old: BluetoothServiceInfoBleak,
         new: BluetoothServiceInfoBleak,
-        smoothed: dict[str, float],
+        smoothed: dict[_str, float],
         new_rssi: float,
         record_demotion: bool,
     ) -> bool:
