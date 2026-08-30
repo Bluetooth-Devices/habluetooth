@@ -34,6 +34,7 @@ cdef class BaseHaScanner:
     cdef public object _cancel_track
     cdef public dict _connect_failures
     cdef public dict _connect_in_progress
+    cdef public object _clients
     cdef public unsigned int _connect_completed_total
     cdef public unsigned int _connect_failed_total
     cdef public double _last_connect_completed_time

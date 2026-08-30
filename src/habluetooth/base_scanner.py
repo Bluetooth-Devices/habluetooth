@@ -7,6 +7,7 @@ import logging
 import warnings
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Final, final
+from weakref import WeakSet
 
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import NO_RSSI_VALUE, Allocations
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from bleak.backends.scanner import AdvertisementData
 
     from .scanner_device import BluetoothScannerDevice
+    from .wrappers import HaBleakClientWrapper
 
 SCANNER_WATCHDOG_INTERVAL_SECONDS: Final = SCANNER_WATCHDOG_INTERVAL.total_seconds()
 _LOGGER = logging.getLogger(__name__)
@@ -52,6 +54,7 @@ class BaseHaScanner:
     __slots__ = (
         "_cancel_track",
         "_cancel_watchdog",
+        "_clients",
         "_connect_completed_total",
         "_connect_failed_total",
         "_connect_failures",
@@ -129,6 +132,8 @@ class BaseHaScanner:
         self._cancel_track: asyncio.TimerHandle | None = None
         self._connect_failures: dict[str, int] = {}
         self._connect_in_progress: dict[str, int] = {}
+        # Clients connected through this scanner; weak so a dropped one cannot leak.
+        self._clients: WeakSet[HaBleakClientWrapper] = WeakSet()
         self._connect_completed_total: int = 0
         self._connect_failed_total: int = 0
         self._last_connect_completed_time: float = 0.0

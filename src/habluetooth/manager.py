@@ -10,7 +10,6 @@ import platform
 from dataclasses import asdict
 from functools import partial
 from typing import TYPE_CHECKING, Any
-from weakref import WeakSet
 
 from bleak_retry_connector import (
     NO_RSSI_VALUE,
@@ -162,11 +161,11 @@ class BluetoothManager:
         "_allocations",
         "_allocations_callbacks",
         "_auto_scheduler",
+        "_background_tasks",
         "_bleak_callbacks",
         "_bluetooth_adapters",
         "_cancel_allocation_callbacks",
         "_cancel_unavailable_tracking",
-        "_clients",
         "_connectable_history",
         "_connectable_scanners",
         "_connectable_unavailable_callbacks",
@@ -174,7 +173,6 @@ class BluetoothManager:
         "_debug",
         "_demoted_sources",
         "_disappeared_callbacks",
-        "_disconnect_tasks",
         "_fallback_intervals",
         "_intervals",
         "_loop",
@@ -203,9 +201,7 @@ class BluetoothManager:
     ) -> None:
         """Init bluetooth manager."""
         self._cancel_unavailable_tracking: asyncio.TimerHandle | None = None
-        # Connected clients per source; weak so a dropped client cannot leak.
-        self._clients: dict[str, WeakSet[HaBleakClientWrapper]] = {}
-        self._disconnect_tasks: set[asyncio.Task[None]] = set()
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
         self._advertisement_tracker = AdvertisementTracker()
         self._fallback_intervals = self._advertisement_tracker.fallback_intervals
@@ -1655,9 +1651,9 @@ class BluetoothManager:
             del self._demoted_sources[address]
         self._adapter_sources.pop(scanner.adapter, None)
         self._async_clear_allocations(source)
-        # Nothing else disconnects clients of a removed scanner; BlueZ keeps
-        # the link up and the slot bookkeeping just cleared forgets it.
-        self._async_disconnect_clients(source)
+        # BlueZ keeps a removed adapter's links up and the slot bookkeeping
+        # just cleared has forgotten them.
+        self._async_disconnect_clients(scanner)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
         if (idx := scanner.adapter_idx) is not None:
@@ -1665,53 +1661,35 @@ class BluetoothManager:
         self._auto_scheduler.remove_scanner(scanner)
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.REMOVED)
 
-    def async_register_client(
-        self, scanner: BaseHaScanner, client: HaBleakClientWrapper
-    ) -> None:
-        """Track a connected client so it is torn down with its scanner."""
-        source = scanner.source
-        if (clients := self._clients.get(source)) is None:
-            clients = self._clients[source] = WeakSet()
-        clients.add(client)
-
-    def async_unregister_client(
-        self, scanner: BaseHaScanner | None, client: HaBleakClientWrapper
-    ) -> None:
-        """Stop tracking a client; scanner is None if it never connected."""
-        if scanner is None:
-            return
-        if (clients := self._clients.get(scanner.source)) is not None:
-            clients.discard(client)
-            if not clients:
-                del self._clients[scanner.source]
-
-    def _async_disconnect_clients(self, source: str) -> None:
-        """Disconnect every client still connected through source."""
-        if not (clients := self._clients.pop(source, None)):
+    def _async_disconnect_clients(self, scanner: BaseHaScanner) -> None:
+        """Disconnect the clients still connected through a removed scanner."""
+        clients = [client for client in scanner._clients if client.is_connected]
+        scanner._clients.clear()
+        if not clients:
             return
         if TYPE_CHECKING:
             assert self._loop is not None
-        loop = self._loop
-        for client in list(clients):
-            if not client.is_connected:
-                continue
-            task = loop.create_task(self._async_disconnect_client(client, source))
-            self._disconnect_tasks.add(task)
-            task.add_done_callback(self._disconnect_tasks.discard)
+        task = self._loop.create_task(
+            self._async_disconnect_all(clients, scanner.source)
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
-    async def _async_disconnect_client(
-        self, client: HaBleakClientWrapper, source: str
+    async def _async_disconnect_all(
+        self, clients: list[HaBleakClientWrapper], source: str
     ) -> None:
-        """Disconnect one client, logging rather than raising on failure."""
-        try:
-            await client.disconnect()
-        except Exception:  # pylint: disable=broad-except
-            # client.address resolves through the failed backend; do not read it.
-            _LOGGER.warning(
-                "Error disconnecting client from removed scanner %s",
-                source,
-                exc_info=True,
-            )
+        """Disconnect clients, logging failures instead of raising."""
+        results = await asyncio.gather(
+            *(client.disconnect() for client in clients), return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                # client.address resolves through the failed backend; do not read it.
+                _LOGGER.warning(
+                    "Error disconnecting client from removed scanner %s",
+                    source,
+                    exc_info=result,
+                )
 
     def async_register_scanner(
         self,
