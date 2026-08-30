@@ -412,11 +412,9 @@ async def test_unregister_client_keeps_source_with_other_clients(
         assert len(manager._clients[source]) == 2
 
         await first.disconnect()
-        # The source must survive: the second client is still connected.
         assert source in manager._clients
         assert len(manager._clients[source]) == 1
 
-        # A client that never recorded a scanner is passed straight through.
         manager.async_unregister_client(None, second)
         assert len(manager._clients[source]) == 1
 

@@ -203,9 +203,7 @@ class BluetoothManager:
     ) -> None:
         """Init bluetooth manager."""
         self._cancel_unavailable_tracking: asyncio.TimerHandle | None = None
-        # Clients connected through each source, so a scanner going away can
-        # take its connections with it. Weak so a client that is dropped
-        # without an explicit disconnect cannot leak.
+        # Connected clients per source; weak so a dropped client cannot leak.
         self._clients: dict[str, WeakSet[HaBleakClientWrapper]] = {}
         self._disconnect_tasks: set[asyncio.Task[None]] = set()
 
@@ -1657,12 +1655,8 @@ class BluetoothManager:
             del self._demoted_sources[address]
         self._adapter_sources.pop(scanner.adapter, None)
         self._async_clear_allocations(source)
-        # The scanner is going away, so the transport its clients connected
-        # through is going away too, and nothing else will ever disconnect
-        # them: for a local adapter the kernel keeps the link up and BlueZ is
-        # happy to hold it. Without this the device keeps working through an
-        # adapter the user removed, and the allocation bookkeeping just
-        # cleared forgets a connection that still occupies a real slot.
+        # Nothing else disconnects clients of a removed scanner; BlueZ keeps
+        # the link up and the slot bookkeeping just cleared forgets it.
         self._async_disconnect_clients(source)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
@@ -1674,14 +1668,7 @@ class BluetoothManager:
     def async_register_client(
         self, scanner: BaseHaScanner, client: HaBleakClientWrapper
     ) -> None:
-        """
-        Track a connected client so it can be torn down with its scanner.
-
-        Called by the client wrapper once a connection is established. The
-        client is held weakly: dropping it without disconnecting must not keep
-        it alive, and a stale entry is harmless because disconnecting an
-        already-disconnected client is a no-op.
-        """
+        """Track a connected client so it is torn down with its scanner."""
         source = scanner.source
         if (clients := self._clients.get(source)) is None:
             clients = self._clients[source] = WeakSet()
@@ -1690,13 +1677,7 @@ class BluetoothManager:
     def async_unregister_client(
         self, scanner: BaseHaScanner | None, client: HaBleakClientWrapper
     ) -> None:
-        """
-        Stop tracking a client that has disconnected.
-
-        Takes the scanner rather than a source so a client that never finished
-        connecting -- and so never recorded one -- can be passed straight
-        through without the caller having to test for it.
-        """
+        """Stop tracking a client; scanner is None if it never connected."""
         if scanner is None:
             return
         if (clients := self._clients.get(scanner.source)) is not None:
@@ -1725,10 +1706,7 @@ class BluetoothManager:
         try:
             await client.disconnect()
         except Exception:  # pylint: disable=broad-except
-            # Deliberately does not log client.address: that resolves through
-            # the backend, which is exactly what just failed, so reading it
-            # here could raise inside the error handler. exc_info carries the
-            # detail instead.
+            # client.address resolves through the failed backend; do not read it.
             _LOGGER.warning(
                 "Error disconnecting client from removed scanner %s",
                 source,
