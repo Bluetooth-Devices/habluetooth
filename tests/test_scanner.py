@@ -14,6 +14,7 @@ from bleak import BleakError
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 from bleak_retry_connector import Allocations, BleakSlotManager
+from bluetooth_adapters import ADAPTER_PASSIVE_SCAN
 
 import habluetooth.scanner as scanner_shim
 from habluetooth import (
@@ -904,7 +905,9 @@ async def test_no_passive_fallback_when_passive_unsupported(
     mock_scanner = _AlwaysFailingScanner()
 
     with (
-        patch.object(get_manager(), "_adapters", {"hci0": {"passive_scan": False}}),
+        patch.object(
+            get_manager(), "_adapters", {"hci0": {ADAPTER_PASSIVE_SCAN: False}}
+        ),
         patch("habluetooth.scanner_bleak.IS_LINUX", True),
         patch("habluetooth.scanner_bleak.ADAPTER_INIT_TIME", 0),
         patch(
@@ -947,8 +950,8 @@ async def test_passive_fallback_uses_own_adapter_capability(
             """Stop scanning."""
 
     mixed_adapters = {
-        "hci0": {"passive_scan": False},
-        "hci1": {"passive_scan": True},
+        "hci0": {ADAPTER_PASSIVE_SCAN: False},
+        "hci1": {ADAPTER_PASSIVE_SCAN: True},
     }
 
     with (
@@ -990,7 +993,7 @@ async def test_adapter_init_fails_fallback_to_passive(
     """Test we fallback to passive when adapter init fails."""
     # The fallback is only taken when the adapter can actually scan
     # passively, so the adapter has to advertise that capability.
-    get_manager()._adapters = {"hci0": {"passive_scan": True}}
+    get_manager()._adapters = {"hci0": {ADAPTER_PASSIVE_SCAN: True}}
     called_start = 0
     called_stop = 0
     _callback = None
