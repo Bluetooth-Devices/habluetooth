@@ -149,6 +149,7 @@ def test_create_bleak_scanner_linux_no_adapter_active() -> None:
     assert "adapter" not in kwargs
 
 
+@pytest.mark.skipif(platform.system() != "Linux", reason="Linux only")
 def test_passive_scan_flags_fit_one_monitor() -> None:
     """The FLAGS list stays within the 16 pattern monitor limit and unique."""
     flags = scanner.PASSIVE_SCAN_FLAGS
@@ -160,7 +161,6 @@ def test_passive_scan_flags_fit_one_monitor() -> None:
     assert len(scanner.PASSIVE_SCANNER_ARGS["or_patterns"]) == len(flags)
 
 
-@pytest.mark.skipif(platform.system() != "Linux", reason="Linux only")
 def test_create_bleak_scanner_linux_no_adapter_passive() -> None:
     """Linux + no adapter + passive: ``bluez`` carries passive args only."""
     with (
