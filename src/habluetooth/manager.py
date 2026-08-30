@@ -1658,15 +1658,16 @@ class BluetoothManager:
             del self._demoted_sources[address]
         self._adapter_sources.pop(scanner.adapter, None)
         self._async_clear_allocations(source)
-        # BlueZ keeps a removed adapter's links up and the slot bookkeeping
-        # just cleared has forgotten them.
-        self._async_disconnect_clients(scanner)
         if connection_slots:
             self.slot_manager.remove_adapter(scanner.adapter)
         if (idx := scanner.adapter_idx) is not None:
             self._side_channel_scanners.pop(idx, None)
         self._auto_scheduler.remove_scanner(scanner)
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.REMOVED)
+        # Last so a failure to schedule cannot strand the teardown above.
+        # BlueZ keeps a removed adapter's links up and the slot bookkeeping
+        # just cleared has forgotten them.
+        self._async_disconnect_clients(scanner)
 
     def async_add_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Run a coroutine as a background task that is cancelled on stop."""
@@ -1695,8 +1696,11 @@ class BluetoothManager:
     ) -> None:
         """Disconnect clients concurrently."""
         try:
+            # Each child logs its own failures; return_exceptions keeps one
+            # misbehaving client from abandoning its siblings mid gather.
             await asyncio.gather(
-                *(self._async_disconnect_client(client, scanner) for client in clients)
+                *(self._async_disconnect_client(client, scanner) for client in clients),
+                return_exceptions=True,
             )
         except asyncio.CancelledError:
             # Shutdown; the links are abandoned to BlueZ/the kernel.
