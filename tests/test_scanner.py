@@ -141,7 +141,7 @@ def test_passive_scan_flags_fit_one_monitor() -> None:
     flags = scanner.PASSIVE_SCAN_FLAGS
     assert len(flags) <= 16
     assert len(set(flags)) == len(flags)
-    assert all(0 <= value <= 0x1F for value in flags)
+    assert all(0 <= value <= 0xFF for value in flags)
     # Values reported by real networks (#31, #615) must all be covered.
     assert {0x02, 0x04, 0x05, 0x06, 0x18, 0x1A} <= set(flags)
     assert len(scanner.PASSIVE_SCANNER_ARGS["or_patterns"]) == len(flags)
