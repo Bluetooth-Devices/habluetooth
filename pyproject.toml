@@ -187,6 +187,8 @@ select = [
 "docs/conf.py" = ["D100", "A001", "INP001"]
 # Example scripts intentionally use print and aren't a package
 "examples/*" = ["INP001", "T201"]
+# Standalone diagnostic scripts run by hand on a Bluetooth host
+"scripts/*" = ["INP001", "T201", "D102", "D103", "C901", "BLE001", "EM102", "E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["habluetooth", "tests"]
