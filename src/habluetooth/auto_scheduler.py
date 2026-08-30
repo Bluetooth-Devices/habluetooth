@@ -256,6 +256,13 @@ class ActiveScanRequest:
         self.scan_duration = scan_duration
 
 
+# Aliases Cython cannot resolve, so these annotations degrade to the plain
+# containers declared in the .pxd instead of being rejected by Cython 3.3.
+_str = str
+_ActiveScanRequest = ActiveScanRequest
+_DueBucket = tuple[str, dict[_ActiveScanRequest, float], list[_ActiveScanRequest]]
+
+
 class _ScannerWorker:
     """One persistent task per AUTO scanner; sleeps until next due event."""
 
@@ -326,7 +333,7 @@ class _ScannerWorker:
         self._wake.set()
 
     def _attach_owned(
-        self, address: str, entries: dict[ActiveScanRequest, float]
+        self, address: str, entries: dict[_ActiveScanRequest, float]
     ) -> None:
         """Attach an owned ``_due_at`` bucket; called only by _ScanSchedule."""
         self._owned_due_at[address] = entries
@@ -426,7 +433,7 @@ class _ScannerWorker:
     def _collect_due_buckets(
         self, now: float
     ) -> tuple[
-        list[tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]],
+        list[_DueBucket],
         list[ActiveScanRequest],
         bool,
     ]:
@@ -440,9 +447,7 @@ class _ScannerWorker:
         source = self._scanner.source
         last_service_info = self._manager.async_last_service_info
         threshold = now + _AUTO_COALESCE_LOOKAHEAD
-        due_buckets: list[
-            tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]
-        ] = []
+        due_buckets: list[_DueBucket] = []
         all_due: list[ActiveScanRequest] = []
         any_immediate = False
         for address, entries in self._owned_due_at.copy().items():
@@ -467,9 +472,7 @@ class _ScannerWorker:
 
     def _advance_due(
         self,
-        due_buckets: list[
-            tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]
-        ],
+        due_buckets: list[_DueBucket],
         from_time: float,
     ) -> None:
         """
@@ -573,9 +576,7 @@ class _ScannerWorker:
 
     async def _dispatch_to_fallback(  # noqa: C901
         self,
-        due_buckets: list[
-            tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]
-        ],
+        due_buckets: list[_DueBucket],
         sweep_due: bool,
         now: float,
     ) -> None:
@@ -1023,7 +1024,7 @@ class AutoScanScheduler:
     def _seed_requests(
         self,
         address: str,
-        requests: set[ActiveScanRequest],
+        requests: set[_ActiveScanRequest],
         now: float,
     ) -> None:
         """
@@ -1108,9 +1109,7 @@ class AutoScanScheduler:
 
     def _record_rescue_accepts(
         self,
-        due_buckets: list[
-            tuple[str, dict[ActiveScanRequest, float], list[ActiveScanRequest]]
-        ],
+        due_buckets: list[_DueBucket],
     ) -> None:
         """Record a dispatched window's accept time for the addresses it covers."""
         if not due_buckets or not self._manager._rescue_triggered:
@@ -1147,7 +1146,7 @@ class AutoScanScheduler:
     def _mark_delegated_dispatch(
         self,
         source: str,
-        addresses: list[str],
+        addresses: list[_str],
         dispatch_now: float,
         duration: float,
         coverage_time: float,
@@ -1170,7 +1169,7 @@ class AutoScanScheduler:
         self,
         address: str,
         owner_source: str,
-        requests: set[ActiveScanRequest],
+        requests: set[_ActiveScanRequest],
         now: float,
         coarse_now: float,
     ) -> None:
@@ -1198,7 +1197,7 @@ class AutoScanScheduler:
         self,
         address: str,
         challenger: BaseHaScanner,
-        requests: set[ActiveScanRequest],
+        requests: set[_ActiveScanRequest],
         loop: asyncio.AbstractEventLoop,
         now: float,
         coarse_now: float,
