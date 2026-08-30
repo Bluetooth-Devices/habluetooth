@@ -48,14 +48,14 @@ if IS_LINUX:
     from dbus_fast import InvalidMessageError
     from dbus_fast.service import method
 
-    # or_patterns is a workaround for the fact that passive scanning
-    # needs at least one matcher to be set. The below matcher
-    # will match all devices.
+    # Passive scanning only reports devices matching an or_pattern; a
+    # monitor holds at most 16 (BlueZ releases larger ones). FLAGS values
+    # seen in the wild: #31 (0x02) and #615.
+    PASSIVE_SCAN_FLAGS = (0x02, 0x04, 0x05, 0x06, 0x18, 0x1A)
     PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
         or_patterns=[
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
+            OrPattern(0, AdvertisementDataType.FLAGS, bytes([flags]))
+            for flags in PASSIVE_SCAN_FLAGS
         ]
     )
 
