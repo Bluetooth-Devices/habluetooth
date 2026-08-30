@@ -680,6 +680,13 @@ class HaBleakClientWrapper(BleakClient):
         """Disconnect from the device."""
         if self._backend is None:
             return
-        await self._backend.disconnect()
-        if (scanner := self._connected_scanner) is not None:
-            scanner._clients.discard(self)
+        try:
+            await self._backend.disconnect()
+        finally:
+            # A raise may leave the link up; keep the client tracked then so
+            # scanner unregister can still tear it down.
+            if (
+                not self.is_connected
+                and (scanner := self._connected_scanner) is not None
+            ):
+                scanner._clients.discard(self)

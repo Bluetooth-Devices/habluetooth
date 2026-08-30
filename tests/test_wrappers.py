@@ -303,7 +303,8 @@ async def test_disconnected_client_is_not_disconnected_again(
     """A client that already disconnected is no longer tracked."""
     client, _, cancel = connected_client
     scanner = client._connected_scanner
-    await client.disconnect()
+    with patch.object(FakeBleakClient, "is_connected", False):
+        await client.disconnect()
     assert client not in scanner._clients
     with patch.object(
         FakeBleakClient, "disconnect", new_callable=AsyncMock
@@ -428,6 +429,26 @@ async def test_stop_cancels_pending_disconnects(
 
 
 @pytest.mark.asyncio
+async def test_failed_disconnect_keeps_client_tracked(
+    connected_client: ConnectedClient,
+) -> None:
+    """A disconnect that raises with the link still up keeps the client tracked."""
+    client, _, _ = connected_client
+    scanner = client._connected_scanner
+    with (
+        patch.object(
+            FakeBleakClient,
+            "disconnect",
+            new_callable=AsyncMock,
+            side_effect=BleakError("nope"),
+        ),
+        pytest.raises(BleakError),
+    ):
+        await client.disconnect()
+    assert client in scanner._clients
+
+
+@pytest.mark.asyncio
 async def test_disconnect_without_connected_scanner(
     install_bleak_catcher: None,
 ) -> None:
@@ -448,7 +469,8 @@ async def test_disconnect_keeps_other_clients_tracked(
     await second.connect()
     scanner = first._connected_scanner
     assert len(scanner._clients) == 2
-    await first.disconnect()
+    with patch.object(FakeBleakClient, "is_connected", False):
+        await first.disconnect()
     assert set(scanner._clients) == {second}
 
 
