@@ -344,7 +344,7 @@ async def test_disconnect_error_on_unregister_is_logged_not_raised(
     connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A client that fails to disconnect must not break scanner teardown."""
-    _, _, cancel = connected_client
+    client, _, cancel = connected_client
     with patch.object(
         FakeBleakClient,
         "disconnect",
@@ -353,6 +353,8 @@ async def test_disconnect_error_on_unregister_is_logged_not_raised(
     ):
         cancel["hci0"]()
         await _settle_disconnects()
+        assert client._backend is None
+        assert client._connected_scanner is None
     assert "from removed scanner" in caplog.text
 
 
@@ -407,6 +409,8 @@ async def test_disconnect_timeout_on_unregister_is_logged(
         cancel["hci0"]()
         await _settle_disconnects()
         assert client._backend is None
+        assert client._connected_scanner is None
+        assert not client.is_connected
     assert "Timed out disconnecting client 00:00:00:00:00:01" in caplog.text
 
 
@@ -611,6 +615,22 @@ async def test_background_task_exception_is_logged(
     manager._async_add_background_task(_boom(), "boom task")
     await _settle_disconnects()
     assert "Background task boom task failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_disconnect_without_backend_untracks_stale_pointers(
+    connected_client: ConnectedClient,
+) -> None:
+    """Disconnect with no backend clears pointers left by a failed teardown."""
+    client, _, _ = connected_client
+    scanner = client._connected_scanner
+    assert client in scanner._clients
+    with patch.object(FakeBleakClient, "is_connected", False):
+        client._backend = None
+        await client.disconnect()
+    assert client not in scanner._clients
+    assert client._connected_scanner is None
+    assert client._connected_device is None
 
 
 @pytest.mark.asyncio
