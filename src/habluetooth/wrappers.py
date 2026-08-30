@@ -507,6 +507,9 @@ class HaBleakClientWrapper(BleakClient):
 
         # Load medium connection parameters after successful connection
         if connected:
+            if (previous := self._connected_scanner) is not None:
+                # Reconnect may have landed on a different scanner.
+                previous._clients.discard(self)
             self._connected_scanner = scanner
             self._connected_device = device
             # Disconnected by the manager if the scanner is unregistered.
@@ -677,6 +680,6 @@ class HaBleakClientWrapper(BleakClient):
         """Disconnect from the device."""
         if self._backend is None:
             return
+        await self._backend.disconnect()
         if (scanner := self._connected_scanner) is not None:
             scanner._clients.discard(self)
-        await self._backend.disconnect()

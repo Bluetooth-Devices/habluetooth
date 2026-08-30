@@ -81,6 +81,10 @@ IS_LINUX = SYSTEM == "Linux"
 FILTER_UUIDS = "UUIDs"
 
 APPLE_MFR_ID = 76
+
+# Bound for disconnecting a removed scanner's clients; a proxy that is gone
+# may never answer, and a pending task would strongly reference the client.
+CLIENT_DISCONNECT_TIMEOUT = 10.0
 APPLE_IBEACON_START_BYTE = 0x02  # iBeacon (tilt_ble)
 APPLE_HOMEKIT_START_BYTE = 0x06  # homekit_controller
 APPLE_DEVICE_ID_START_BYTE = 0x10  # bluetooth_le_tracker
@@ -470,6 +474,8 @@ class BluetoothManager:
             self._cancel_unavailable_tracking.cancel()
             self._cancel_unavailable_tracking = None
         self._auto_scheduler.stop()
+        for task in list(self._background_tasks):
+            task.cancel()
         uninstall_multiple_bleak_catcher()
         self._cancel_allocation_callbacks()
         if self._mgmt_ctl:
@@ -1663,33 +1669,43 @@ class BluetoothManager:
 
     def _async_disconnect_clients(self, scanner: BaseHaScanner) -> None:
         """Disconnect the clients still connected through a removed scanner."""
-        clients = [client for client in scanner._clients if client.is_connected]
+        clients = list(scanner._clients)
         scanner._clients.clear()
         if not clients:
             return
         if TYPE_CHECKING:
             assert self._loop is not None
-        task = self._loop.create_task(
-            self._async_disconnect_all(clients, scanner.source)
-        )
+        task = self._loop.create_task(self._async_disconnect_all(clients, scanner))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
     async def _async_disconnect_all(
-        self, clients: list[HaBleakClientWrapper], source: str
+        self, clients: list[HaBleakClientWrapper], scanner: BaseHaScanner
     ) -> None:
-        """Disconnect clients, logging failures instead of raising."""
-        results = await asyncio.gather(
-            *(client.disconnect() for client in clients), return_exceptions=True
+        """Disconnect clients concurrently."""
+        await asyncio.gather(
+            *(self._async_disconnect_client(client, scanner) for client in clients)
         )
-        for result in results:
-            if isinstance(result, Exception):
-                # client.address resolves through the failed backend; do not read it.
-                _LOGGER.warning(
-                    "Error disconnecting client from removed scanner %s",
-                    source,
-                    exc_info=result,
-                )
+
+    async def _async_disconnect_client(
+        self, client: HaBleakClientWrapper, scanner: BaseHaScanner
+    ) -> None:
+        """Disconnect one client, logging failures instead of raising."""
+        if client._connected_scanner is not scanner or not client.is_connected:
+            # Reconnected through another scanner since this was scheduled.
+            return
+        try:
+            async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
+                await client.disconnect()
+        except Exception:  # pylint: disable=broad-except
+            # client.address resolves through the failed backend; do not read it.
+            device = client._connected_device
+            _LOGGER.warning(
+                "Error disconnecting client %s from removed scanner %s",
+                device.address if device else "unknown",
+                scanner.source,
+                exc_info=True,
+            )
 
     def async_register_scanner(
         self,
