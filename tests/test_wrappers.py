@@ -9,6 +9,7 @@ import sys
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import call as mock_call
 
 import bleak
 import pytest
@@ -483,7 +484,7 @@ async def test_give_up_detaches_the_disconnected_callback(
 
 @pytest.mark.asyncio
 async def test_give_up_survives_a_backend_that_refuses_to_detach(
-    install_bleak_catcher: None,
+    install_bleak_catcher: None, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A backend that refuses to detach is logged, not fatal."""
     client = HaBleakClientWrapper(generate_ble_device("00:00:00:00:00:0E", "x"))
@@ -492,6 +493,28 @@ async def test_give_up_survives_a_backend_that_refuses_to_detach(
     client._backend = refusing
     client._give_up()
     assert client._backend is None
+    assert "could not detach the disconnected callback" in caplog.text
+    assert caplog.records[-1].levelname == "WARNING"
+
+
+@pytest.mark.asyncio
+async def test_abort_detaches_the_callback_before_disconnecting(
+    install_bleak_catcher: None,
+) -> None:
+    """A clean abort cannot fire the consumer callback mid connect."""
+    client = HaBleakClientWrapper(generate_ble_device("00:00:00:00:00:0E", "x"))
+    backend: Any = Mock()
+    backend.disconnect = AsyncMock()
+    backend.is_connected = False
+    client._backend = backend
+    aborted = False
+    try:
+        await client._async_abort_unregistered_mid_connect(MagicMock())
+    except BleakError as err:
+        aborted = "unregistered during connect" in str(err)
+    assert aborted
+    assert backend.mock_calls[0] == mock_call.set_disconnected_callback(None)
+    assert mock_call.disconnect() in backend.mock_calls
 
 
 @pytest.mark.asyncio

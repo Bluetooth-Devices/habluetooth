@@ -721,17 +721,7 @@ class HaBleakClientWrapper(BleakClient):
         schedule their reconnect.
         """
         was_up = self.is_connected
-        if (backend := self._backend) is not None:
-            # The orphaned backend must not fire the consumer's disconnected
-            # callback against a later reconnect when the leaked link drops.
-            try:
-                backend.set_disconnected_callback(None)
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.debug(
-                    "%s: could not detach the disconnected callback",
-                    self.__address,
-                    exc_info=True,
-                )
+        self._detach_disconnected_callback()
         self._backend = None
         self._untrack()
         if (
@@ -747,6 +737,26 @@ class HaBleakClientWrapper(BleakClient):
         ):
             asyncio.get_running_loop().call_soon(callback)
 
+    def _detach_disconnected_callback(self) -> None:
+        """
+        Silence the backend's disconnected callback.
+
+        An orphaned or aborting backend must not fire the consumer's
+        callback: against a later reconnect when a leaked link drops, or
+        for a connect that is about to raise.
+        """
+        if (backend := self._backend) is None:
+            return
+        try:
+            backend.set_disconnected_callback(None)
+        except Exception:  # pylint: disable=broad-except
+            # A stale backend that later fires will reach the consumer.
+            _LOGGER.warning(
+                "%s: could not detach the disconnected callback",
+                self.__address,
+                exc_info=True,
+            )
+
     async def _async_abort_unregistered_mid_connect(
         self, scanner: BaseHaScanner
     ) -> NoReturn:
@@ -759,6 +769,9 @@ class HaBleakClientWrapper(BleakClient):
         link is up, and the slot manager's device watcher (or the
         adapter's removal) already covers the other exits.
         """
+        # The caller learns about this through the BleakError; silence the
+        # callback first or a clean teardown would fire it mid connect.
+        self._detach_disconnected_callback()
         try:
             async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT) as timed_out:
                 await self.disconnect()
