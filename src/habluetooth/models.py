@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 SOURCE_LOCAL: Final = "local"
-TUPLE_NEW: Final = tuple.__new__
+TUPLE_NEW = tuple.__new__  # declared in the .pxd, no Final (cython/cython#7942)
 
 _float = float  # avoid cython conversion since we always want a pyfloat
 _str = str  # avoid cython conversion since we always want a pystr
