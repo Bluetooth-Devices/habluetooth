@@ -209,18 +209,18 @@ docs = ["Sphinx (>=5,<8)", "myst-parser (>=0.18,<3.1)", "sphinx-rtd-theme (>=1,<
 
 [[package]]
 name = "bluetooth-data-tools"
-version = "1.29.21"
+version = "1.29.23"
 description = "Tools for converting bluetooth data and packets"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "bluetooth_data_tools-1.29.21-cp314-cp314-manylinux_2_41_x86_64.whl", hash = "sha256:3a1de157f93da8e2d60ea5d92ada7e40e518f9bafce8a463ae882b92ec387155"},
-    {file = "bluetooth_data_tools-1.29.21.tar.gz", hash = "sha256:2ccf1e90212092cb6af825fd93f3f2f392c543fe2a3a894e7831cbc6f6851c15"},
+    {file = "bluetooth_data_tools-1.29.23-cp314-cp314-manylinux_2_41_x86_64.whl", hash = "sha256:79f6596b6a02ac203a7f5ee34a7a1d63a043bee55ff0b194dc518a5dfbf70fd8"},
+    {file = "bluetooth_data_tools-1.29.23.tar.gz", hash = "sha256:097c4ba51ff956633651117fc4539e95c6063c6f0877719882d454a74514e0fa"},
 ]
 
 [package.dependencies]
-cryptography = ">=47.0.0"
+cryptography = ">=50.0.0"
 
 [package.extras]
 docs = ["Sphinx (>=5,<9)", "myst-parser (>=0.18,<4.1)", "sphinx-rtd-theme (>=1,<4)"]
@@ -704,7 +704,6 @@ files = [
     {file = "dbus_fast-5.0.22-cp39-cp39-musllinux_1_2_x86_64.whl", hash = "sha256:7f2af2fc27f3f188387befad5901953863fc8fa6451202083c2b9ec9f970028f"},
     {file = "dbus_fast-5.0.22.tar.gz", hash = "sha256:34dc67d7d21a12399828dd13e63b352750580beea54ea7c729e708f2d2905fef"},
 ]
-markers = {main = "sys_platform == \"linux\" or platform_system == \"Linux\""}
 
 [[package]]
 name = "docutils"
@@ -2223,4 +2222,4 @@ all = ["winrt-Windows.Foundation.Collections[all] (>=3.2.1.0,<3.3.0.0)", "winrt-
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "ea24a089c3f6c06ad0014133ec37763e7d87ac57f95114d9b817e2a3f6ce4791"
+content-hash = "e35126bc336691b9c7ab2e673c1512e1ee8a0405c9a02fe1dfcd3b0886375490"
