@@ -6,7 +6,6 @@ import asyncio
 import gc
 import logging
 import sys
-from collections.abc import AsyncGenerator, Callable
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch

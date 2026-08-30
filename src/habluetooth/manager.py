@@ -205,7 +205,6 @@ class BluetoothManager:
     ) -> None:
         """Init bluetooth manager."""
         self._cancel_unavailable_tracking: asyncio.TimerHandle | None = None
-        self._background_tasks: set[asyncio.Task[None]] = set()
 
         self._advertisement_tracker = AdvertisementTracker()
         self._fallback_intervals = self._advertisement_tracker.fallback_intervals
@@ -275,6 +274,7 @@ class BluetoothManager:
         )
         self._debug = _LOGGER.isEnabledFor(logging.DEBUG)
         self.shutdown = False
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self.has_advertising_side_channel = False
         self._side_channel_scanners: dict[int, BaseHaScanner] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -1698,7 +1698,6 @@ class BluetoothManager:
             async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
                 await client.disconnect()
         except Exception:  # pylint: disable=broad-except
-            # client.address resolves through the failed backend; do not read it.
             device = client._connected_device
             _LOGGER.warning(
                 "Error disconnecting client %s from removed scanner %s",
