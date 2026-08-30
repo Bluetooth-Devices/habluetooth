@@ -435,7 +435,25 @@ async def test_stop_cancels_pending_disconnects(
         manager.async_stop()
         await asyncio.wait(tasks, timeout=1)
     assert all(task.cancelled() for task in tasks)
+    assert "Cancelling 1 background task(s) at stop" in caplog.text
     assert "Cancelled disconnecting 1 client(s)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_give_up_detaches_the_disconnected_callback(
+    connected_client: ConnectedClient,
+) -> None:
+    """Give up silences the orphaned backend's disconnected callback."""
+    client, _, _ = connected_client
+    backend = Mock()
+    client._backend = backend
+    client._give_up()
+    backend.set_disconnected_callback.assert_called_once_with(None)
+    assert client._backend is None
+    assert client._connected_scanner is None
+    # Idempotent with no backend left.
+    client._give_up()
+    backend.set_disconnected_callback.assert_called_once_with(None)
 
 
 @pytest.mark.asyncio

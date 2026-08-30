@@ -718,6 +718,11 @@ class HaBleakClientWrapper(BleakClient):
         down, and the next establish_connection retry must re-resolve a
         backend instead of short circuiting on is_connected.
         """
+        if (backend := self._backend) is not None:
+            # The orphaned backend must not fire the consumer's disconnected
+            # callback against a later reconnect when the leaked link drops.
+            with contextlib.suppress(Exception):
+                backend.set_disconnected_callback(None)
         self._backend = None
         self._untrack()
 

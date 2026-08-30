@@ -475,6 +475,14 @@ class BluetoothManager:
             self._cancel_unavailable_tracking.cancel()
             self._cancel_unavailable_tracking = None
         self._auto_scheduler.stop()
+        if self._background_tasks:
+            # The cancel is fire and forget; log here so an unregister that
+            # raced shutdown leaves a trace even if the task never started.
+            _LOGGER.debug(
+                "Cancelling %d background task(s) at stop: %s",
+                len(self._background_tasks),
+                [task.get_name() for task in self._background_tasks],
+            )
         for task in list(self._background_tasks):
             task.cancel()
         uninstall_multiple_bleak_catcher()
