@@ -64,7 +64,7 @@ from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catc
 from .util import async_reset_adapter, coalesce_concurrent_future
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Coroutine, Iterable
 
     from bleak.backends.device import BLEDevice
     from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
@@ -1667,17 +1667,21 @@ class BluetoothManager:
         self._auto_scheduler.remove_scanner(scanner)
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.REMOVED)
 
+    def async_add_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
+        """Run a coroutine as a background task that is cancelled on stop."""
+        if TYPE_CHECKING:
+            assert self._loop is not None
+        task = self._loop.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
     def _async_disconnect_clients(self, scanner: BaseHaScanner) -> None:
         """Disconnect the clients still connected through a removed scanner."""
         clients = list(scanner._clients)
         scanner._clients.clear()
         if not clients:
             return
-        if TYPE_CHECKING:
-            assert self._loop is not None
-        task = self._loop.create_task(self._async_disconnect_all(clients, scanner))
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        self.async_add_background_task(self._async_disconnect_all(clients, scanner))
 
     async def _async_disconnect_all(
         self, clients: list[HaBleakClientWrapper], scanner: BaseHaScanner
