@@ -398,7 +398,7 @@ async def test_disconnect_timeout_on_unregister_is_logged(
     connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A hanging disconnect is bounded and logged, not pending forever."""
-    _, _, cancel = connected_client
+    client, _, cancel = connected_client
 
     with (
         patch("habluetooth.manager.CLIENT_DISCONNECT_TIMEOUT", 0.0),
@@ -406,6 +406,7 @@ async def test_disconnect_timeout_on_unregister_is_logged(
     ):
         cancel["hci0"]()
         await _settle_disconnects()
+        assert client._backend is None
     assert "Timed out disconnecting client 00:00:00:00:00:01" in caplog.text
 
 
@@ -607,10 +608,9 @@ async def test_background_task_exception_is_logged(
         msg = "boom"
         raise ValueError(msg)
 
-    manager.async_add_background_task(_boom(), "boom task")
+    manager._async_add_background_task(_boom(), "boom task")
     await _settle_disconnects()
-    assert "Background task" in caplog.text
-    assert "failed" in caplog.text
+    assert "Background task boom task failed" in caplog.text
 
 
 @pytest.mark.asyncio

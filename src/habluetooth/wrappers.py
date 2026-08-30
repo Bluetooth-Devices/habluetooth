@@ -733,6 +733,9 @@ class HaBleakClientWrapper(BleakClient):
     async def disconnect(self) -> None:
         """Disconnect from the device."""
         if self._backend is None:
+            # No backend, but pointers from an earlier failed teardown may
+            # remain; _untrack is a no-op when the link is genuinely up.
+            self._untrack()
             return
         try:
             await self._backend.disconnect()

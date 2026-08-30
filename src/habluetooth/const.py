@@ -92,13 +92,13 @@ RSSI_SMOOTHING_FACTOR: Final = 0.3
 # - 30s scanner restart time * 2
 #
 SCANNER_WATCHDOG_TIMEOUT: Final = 90
+# How often to check if the scanner has reached
+# the SCANNER_WATCHDOG_TIMEOUT without seeing anything
+SCANNER_WATCHDOG_INTERVAL: Final = timedelta(seconds=30)
 
 # Bound for disconnecting a removed scanner's clients; a proxy that is gone
 # may never answer, and a pending task would strongly reference the client.
 CLIENT_DISCONNECT_TIMEOUT: Final = 10.0
-# How often to check if the scanner has reached
-# the SCANNER_WATCHDOG_TIMEOUT without seeing anything
-SCANNER_WATCHDOG_INTERVAL: Final = timedelta(seconds=30)
 
 
 UNAVAILABLE_TRACK_SECONDS: Final = 60 * 5

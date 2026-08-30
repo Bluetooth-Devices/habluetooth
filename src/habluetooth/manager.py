@@ -1669,7 +1669,7 @@ class BluetoothManager:
         # just cleared has forgotten them.
         self._async_disconnect_clients(scanner)
 
-    def async_add_background_task(
+    def _async_add_background_task(
         self, coro: Coroutine[Any, Any, None], name: str
     ) -> None:
         """Run a coroutine as a background task that is cancelled on stop."""
@@ -1690,11 +1690,12 @@ class BluetoothManager:
         if self.shutdown or not scanner._clients:
             return
         clients = list(scanner._clients)
-        scanner._clients.clear()
-        self.async_add_background_task(
+        self._async_add_background_task(
             self._async_disconnect_all(clients, scanner),
             f"disconnect clients of {scanner.source}",
         )
+        # After scheduling, so a failure to schedule keeps the entries.
+        scanner._clients.clear()
 
     async def _async_disconnect_all(
         self, clients: list[HaBleakClientWrapper], scanner: BaseHaScanner
@@ -1730,19 +1731,32 @@ class BluetoothManager:
                 await client.disconnect()
         except TimeoutError:
             # The expected shape for a proxy that went away; no traceback.
+            self._async_give_up_client(client)
             _LOGGER.warning(
                 "Timed out disconnecting client %s from removed scanner %s",
                 address,
                 scanner.source,
             )
         except Exception:  # pylint: disable=broad-except
-            # Deliberate give-up: the scanner is gone and will never be
-            # unregistered again, so re-tracking the client has no reader.
+            self._async_give_up_client(client)
             _LOGGER.exception(
                 "Error disconnecting client %s from removed scanner %s",
                 address,
                 scanner.source,
             )
+
+    def _async_give_up_client(self, client: HaBleakClientWrapper) -> None:
+        """
+        Drop a client whose teardown failed.
+
+        The link leaks to BlueZ (logged by the caller), but the wrapper must
+        not keep reporting connected: the scanner is gone and will never be
+        unregistered again, so nothing else would ever tear it down, and the
+        next establish_connection retry must re-resolve a backend instead of
+        short circuiting on is_connected.
+        """
+        client._backend = None
+        client._untrack()
 
     def async_register_scanner(
         self,
