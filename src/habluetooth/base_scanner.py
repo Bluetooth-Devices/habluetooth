@@ -163,7 +163,7 @@ class BaseHaScanner:
             self._connect_failed_total += 1
             self._add_connect_failure(address)
 
-    def _increase_count(self, target: dict[str, int], address: str) -> None:
+    def _increase_count(self, target: dict[_str, _int], address: str) -> None:
         """Increase the reference count."""
         if address in target:
             target[address] += 1
@@ -577,9 +577,9 @@ class BaseHaScanner:
         address: _str,
         rssi: _int,
         local_name: _str | None,
-        service_uuids: list[str],
-        service_data: dict[str, bytes],
-        manufacturer_data: dict[int, bytes],
+        service_uuids: list[_str],
+        service_data: dict[_str, bytes],
+        manufacturer_data: dict[_int, bytes],
         tx_power: _int | None,
         details: dict[Any, Any],
         advertisement_monotonic_time: _float,
@@ -602,9 +602,9 @@ class BaseHaScanner:
         address: _str,
         rssi: _int,
         local_name: _str | None,
-        service_uuids: list[str],
-        service_data: dict[str, bytes],
-        manufacturer_data: dict[int, bytes],
+        service_uuids: list[_str],
+        service_data: dict[_str, bytes],
+        manufacturer_data: dict[_int, bytes],
         tx_power: _int | None,
         details: dict[Any, Any],
         advertisement_monotonic_time: _float,
