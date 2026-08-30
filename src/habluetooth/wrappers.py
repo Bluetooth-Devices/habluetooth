@@ -521,7 +521,9 @@ class HaBleakClientWrapper(BleakClient):
         # Load medium connection parameters after successful connection
         if connected:
             if manager.async_scanner_by_source(scanner.source) is not scanner:
-                await self._async_abort_unregistered_mid_connect(scanner)
+                await self._async_abort_unregistered_mid_connect(
+                    scanner, device, not wrapped_backend.source
+                )
             self._track(scanner, device)
             self._load_conn_params(
                 scanner,
@@ -709,25 +711,35 @@ class HaBleakClientWrapper(BleakClient):
         if not self.is_connected:
             self._untrack()
 
-    def _give_up(self) -> None:
+    def _give_up(self, notify: bool = False) -> None:
         """
         Drop the backend and tracking for a link nothing can tear down.
 
         The link leaks to BlueZ (logged by the caller), but the wrapper
-        must not keep reporting connected: nothing else would ever tear it
+        must not keep reporting connected: nothing would ever tear it
         down, and the next establish_connection retry must re-resolve a
-        backend instead of short circuiting on is_connected.
+        backend instead of short circuiting on is_connected. With notify,
+        the consumer's disconnected callback fires so integrations that
+        wait for it schedule their reconnect.
         """
         if (backend := self._backend) is not None:
             # The orphaned backend must not fire the consumer's disconnected
             # callback against a later reconnect when the leaked link drops.
-            with contextlib.suppress(Exception):
+            try:
                 backend.set_disconnected_callback(None)
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.debug(
+                    "%s: could not detach the disconnected callback",
+                    self.__address,
+                    exc_info=True,
+                )
         self._backend = None
         self._untrack()
+        if notify and (callback := self.__disconnected_callback) is not None:
+            asyncio.get_running_loop().call_soon(callback, self)
 
     async def _async_abort_unregistered_mid_connect(
-        self, scanner: BaseHaScanner
+        self, scanner: BaseHaScanner, device: BLEDevice, is_local: bool
     ) -> NoReturn:
         """
         Fail a connect whose scanner was unregistered while in flight.
@@ -736,7 +748,7 @@ class HaBleakClientWrapper(BleakClient):
         wrapper reports disconnected and the caller can retry elsewhere.
         """
         try:
-            async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
+            async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT) as timed_out:
                 await self.disconnect()
         except asyncio.CancelledError:
             _LOGGER.debug(
@@ -747,12 +759,21 @@ class HaBleakClientWrapper(BleakClient):
             )
             raise
         except TimeoutError:
-            _LOGGER.warning(
-                "%s: timed out disconnecting after scanner %s was"
-                " unregistered mid connect",
-                self.__address,
-                scanner.name,
-            )
+            if timed_out.expired():
+                _LOGGER.warning(
+                    "%s: timed out disconnecting after scanner %s was"
+                    " unregistered mid connect",
+                    self.__address,
+                    scanner.name,
+                )
+            else:
+                # The backend raised its own TimeoutError inside the bound.
+                _LOGGER.exception(
+                    "%s: error disconnecting after scanner %s was"
+                    " unregistered mid connect",
+                    self.__address,
+                    scanner.name,
+                )
         except Exception:  # pylint: disable=broad-except
             _LOGGER.exception(
                 "%s: error disconnecting after scanner %s was unregistered mid connect",
@@ -761,8 +782,11 @@ class HaBleakClientWrapper(BleakClient):
             )
         finally:
             # On every exit, including cancellation, the wrapper must not
-            # keep a handle to the doomed link.
+            # keep a handle to the doomed link, and a local adapter's slot
+            # must not stay allocated (release_slot no-ops on a live link).
             self._give_up()
+            if is_local:
+                self.__manager.async_release_connection_slot(device)
         msg = (
             f"{self.__address}: scanner {scanner.name} was unregistered during connect"
         )

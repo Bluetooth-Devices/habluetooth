@@ -1728,7 +1728,7 @@ class BluetoothManager:
             for client, result in zip(clients, results, strict=True):
                 if isinstance(result, BaseException):
                     # Only a BaseException can escape the child's handlers.
-                    client._give_up()
+                    client._give_up(notify=True)
                     _LOGGER.error(
                         "Unexpected error disconnecting client from removed scanner %s",
                         scanner.source,
@@ -1761,18 +1761,26 @@ class BluetoothManager:
             client._untrack()
             return
         try:
-            async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
+            async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT) as timed_out:
                 await client.disconnect()
         except TimeoutError:
-            # The expected shape for a proxy that went away; no traceback.
-            client._give_up()
-            _LOGGER.warning(
-                "Timed out disconnecting client %s from removed scanner %s",
-                address,
-                scanner.source,
-            )
+            client._give_up(notify=True)
+            if timed_out.expired():
+                # The expected shape for a proxy that went away; no traceback.
+                _LOGGER.warning(
+                    "Timed out disconnecting client %s from removed scanner %s",
+                    address,
+                    scanner.source,
+                )
+            else:
+                # The backend raised its own TimeoutError inside the bound.
+                _LOGGER.exception(
+                    "Error disconnecting client %s from removed scanner %s",
+                    address,
+                    scanner.source,
+                )
         except Exception:  # pylint: disable=broad-except
-            client._give_up()
+            client._give_up(notify=True)
             _LOGGER.exception(
                 "Error disconnecting client %s from removed scanner %s",
                 address,
