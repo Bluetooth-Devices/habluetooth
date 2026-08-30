@@ -404,12 +404,12 @@ async def test_disconnect_timeout_on_unregister_is_logged(
     ):
         cancel["hci0"]()
         await _settle_disconnects()
-    assert "Error disconnecting client 00:00:00:00:00:01" in caplog.text
+    assert "Timed out disconnecting client 00:00:00:00:00:01" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_stop_cancels_pending_disconnects(
-    connected_client: ConnectedClient,
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     """async_stop cancels disconnect tasks still in flight."""
     _, _, cancel = connected_client
@@ -427,6 +427,7 @@ async def test_stop_cancels_pending_disconnects(
         manager.async_stop()
         await asyncio.wait(tasks, timeout=1)
     assert all(task.cancelled() for task in tasks)
+    assert "Cancelled disconnecting 1 client(s)" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -475,7 +476,8 @@ async def test_connect_in_flight_when_scanner_unregisters(
         with patch.object(
             FakeBleakClient, "disconnect", new_callable=AsyncMock
         ) as disconnect_mock:
-            await client.connect()
+            with pytest.raises(BleakError, match="unregistered during connect"):
+                await client.connect()
             await _settle_disconnects()
         assert disconnect_mock.call_count == 1
     cancel_hci1()

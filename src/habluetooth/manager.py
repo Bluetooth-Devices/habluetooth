@@ -1677,7 +1677,13 @@ class BluetoothManager:
             assert self._loop is not None
         task = self._loop.create_task(coro)
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._on_background_task_done)
+
+    def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
+        """Drop a finished background task, logging an escaped exception."""
+        self._background_tasks.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            _LOGGER.error("Background task failed", exc_info=exc)
 
     def _async_disconnect_clients(self, scanner: BaseHaScanner) -> None:
         """Disconnect the clients still connected through a removed scanner."""
@@ -1714,6 +1720,14 @@ class BluetoothManager:
                 return
             async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
                 await client.disconnect()
+        except TimeoutError:
+            # The expected shape for a proxy that went away; no traceback.
+            device = client._connected_device
+            _LOGGER.warning(
+                "Timed out disconnecting client %s from removed scanner %s",
+                device.address if device else "unknown",
+                scanner.source,
+            )
         except Exception:  # pylint: disable=broad-except
             device = client._connected_device
             _LOGGER.exception(

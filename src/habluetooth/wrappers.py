@@ -516,8 +516,14 @@ class HaBleakClientWrapper(BleakClient):
             scanner._clients.add(self)
             if manager.async_scanner_by_source(scanner.source) is not scanner:
                 # The scanner was unregistered while this connect was in
-                # flight; its teardown already ran, so run it again for us.
+                # flight; its teardown already ran, so run it again for us
+                # and fail the connect so the caller retries elsewhere.
                 manager._async_disconnect_clients(scanner)
+                msg = (
+                    f"{self.__address}: scanner {scanner.name} was"
+                    " unregistered during connect"
+                )
+                raise BleakError(msg)
             self._load_conn_params(
                 scanner,
                 device,
