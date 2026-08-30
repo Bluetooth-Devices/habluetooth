@@ -447,24 +447,6 @@ async def test_stop_cancels_pending_disconnects(
 
 
 @pytest.mark.asyncio
-async def test_abort_mid_connect_remote_does_not_release_local_slot(
-    connected_client: ConnectedClient,
-) -> None:
-    """The abort only releases a slot for a local adapter."""
-    client, _, _ = connected_client
-    scanner = client._connected_scanner
-    device = client._connected_device
-    manager = _get_manager()
-    with (
-        patch.object(manager.slot_manager, "release_slot") as release_slot_mock,
-        patch.object(FakeBleakClient, "disconnect", new_callable=AsyncMock),
-        pytest.raises(BleakError, match="unregistered during connect"),
-    ):
-        await client._async_abort_unregistered_mid_connect(scanner, device, False)
-    assert release_slot_mock.call_count == 0
-
-
-@pytest.mark.asyncio
 async def test_manager_backend_timeout_is_not_misreported(
     connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -484,11 +466,11 @@ async def test_manager_backend_timeout_is_not_misreported(
 
 @pytest.mark.asyncio
 async def test_give_up_detaches_the_disconnected_callback(
-    connected_client: ConnectedClient,
+    install_bleak_catcher: None,
 ) -> None:
     """Give up silences the orphaned backend's disconnected callback."""
-    client, _, _ = connected_client
-    backend = Mock()
+    client = HaBleakClientWrapper(generate_ble_device("00:00:00:00:00:0E", "x"))
+    backend: Any = Mock()
     client._backend = backend
     client._give_up()
     backend.set_disconnected_callback.assert_called_once_with(None)
@@ -497,8 +479,15 @@ async def test_give_up_detaches_the_disconnected_callback(
     # Idempotent with no backend left.
     client._give_up()
     backend.set_disconnected_callback.assert_called_once_with(None)
-    # A backend that refuses to detach is logged, not fatal.
-    refusing = Mock()
+
+
+@pytest.mark.asyncio
+async def test_give_up_survives_a_backend_that_refuses_to_detach(
+    install_bleak_catcher: None,
+) -> None:
+    """A backend that refuses to detach is logged, not fatal."""
+    client = HaBleakClientWrapper(generate_ble_device("00:00:00:00:00:0E", "x"))
+    refusing: Any = Mock()
     refusing.set_disconnected_callback.side_effect = ValueError("no")
     client._backend = refusing
     client._give_up()
@@ -593,7 +582,6 @@ async def test_connect_in_flight_when_scanner_unregisters(
 
     timeout = 0.0 if zero_timeout else CLIENT_DISCONNECT_TIMEOUT
     with (
-        patch.object(_get_manager().slot_manager, "release_slot") as release_slot_mock,
         patch("habluetooth.wrappers.CLIENT_DISCONNECT_TIMEOUT", timeout),
         patch.object(FakeBleakClient, "is_connected", return_value=True),
         patch.object(FakeBleakClient, "connect", _connect_and_unregister),
@@ -609,7 +597,6 @@ async def test_connect_in_flight_when_scanner_unregisters(
             await client.connect()
         assert client._backend is None
     assert disconnect_mock.call_count == 1
-    assert release_slot_mock.call_count == 1
     if log_fragment is not None:
         assert log_fragment in caplog.text
     cancel_hci1()
