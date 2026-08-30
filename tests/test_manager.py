@@ -4098,6 +4098,15 @@ async def test_supports_passive_scan_reflects_adapter_capability() -> None:
 
 
 @pytest.mark.asyncio
+async def test_supports_passive_scan_for_unknown_adapter_is_false() -> None:
+    """supports_passive_scan_for fails closed for an adapter not in the cache."""
+    manager = BluetoothManager(FakeBluetoothAdapters(), Mock())
+    manager._adapters = {"hci0": {ADAPTER_PASSIVE_SCAN: True}}
+    assert manager.supports_passive_scan_for("hci0") is True
+    assert manager.supports_passive_scan_for("hci1") is False
+
+
+@pytest.mark.asyncio
 async def test_get_bluetooth_adapters_cached_with_empty_cache() -> None:
     """cached=True still populates when the adapter cache is empty (no refresh)."""
     adapters = FakeBluetoothAdapters()

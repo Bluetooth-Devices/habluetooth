@@ -14,6 +14,7 @@ from bleak import BleakError
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 from bleak_retry_connector import Allocations, BleakSlotManager
+from bluetooth_adapters import ADAPTER_PASSIVE_SCAN
 
 import habluetooth.scanner as scanner_shim
 from habluetooth import (
@@ -878,10 +879,101 @@ async def test_setup_and_stop_macos() -> None:
 
 
 @pytest.mark.asyncio
+async def test_no_passive_fallback_when_passive_unsupported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No passive fallback when the adapter cannot scan passively."""
+    called_start = 0
+
+    class _AlwaysFailingScanner(MockBleakScanner):
+        async def start(self, *args: object, **kwargs: object) -> None:
+            nonlocal called_start
+            called_start += 1
+            msg = "org.bluez.Error.InProgress"
+            raise BleakError(msg)
+
+        async def stop(self, *args: object, **kwargs: object) -> None:
+            """Stop scanning."""
+
+    mock_scanner = _AlwaysFailingScanner()
+
+    with (
+        patch.object(
+            get_manager(), "_adapters", {"hci0": {ADAPTER_PASSIVE_SCAN: False}}
+        ),
+        patch("habluetooth.scanner_bleak.IS_LINUX", True),
+        patch("habluetooth.scanner_bleak.ADAPTER_INIT_TIME", 0),
+        patch(
+            "habluetooth.scanner_bleak.OriginalBleakScanner",
+            return_value=mock_scanner,
+        ),
+        patch("habluetooth.util.recover_adapter", return_value=True),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        with pytest.raises(ScannerStartError):
+            await scanner.async_start()
+
+    assert called_start == 4
+    assert scanner.current_mode is BluetoothScanningMode.ACTIVE
+    assert "Falling back to passive scanning mode" not in caplog.text
+    assert "Not falling back to passive scanning" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_passive_fallback_uses_own_adapter_capability(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The fallback checks the scanner's own adapter, not any adapter."""
+
+    class _AlwaysFailingScanner(MockBleakScanner):
+        async def start(self, *args: object, **kwargs: object) -> None:
+            msg = "org.bluez.Error.InProgress"
+            raise BleakError(msg)
+
+        async def stop(self, *args: object, **kwargs: object) -> None:
+            """Stop scanning."""
+
+    mixed_adapters = {
+        "hci0": {ADAPTER_PASSIVE_SCAN: False},
+        "hci1": {ADAPTER_PASSIVE_SCAN: True},
+    }
+
+    with (
+        patch.object(get_manager(), "_adapters", mixed_adapters),
+        patch("habluetooth.scanner_bleak.IS_LINUX", True),
+        patch("habluetooth.scanner_bleak.ADAPTER_INIT_TIME", 0),
+        patch(
+            "habluetooth.scanner_bleak.OriginalBleakScanner",
+            return_value=_AlwaysFailingScanner(),
+        ),
+        patch("habluetooth.util.recover_adapter", return_value=True),
+    ):
+        incapable = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        incapable.async_setup()
+        with pytest.raises(ScannerStartError):
+            await incapable.async_start()
+
+        # Assert before hci1 runs so its fallback log cannot mask this.
+        assert incapable.current_mode is BluetoothScanningMode.ACTIVE
+        assert "Falling back to passive scanning mode" not in caplog.text
+
+        capable = HaScanner(BluetoothScanningMode.ACTIVE, "hci1", "AA:BB:CC:DD:EE:FE")
+        capable.async_setup()
+        with pytest.raises(ScannerStartError):
+            await capable.async_start()
+
+    # The capable adapter still takes the fallback.
+    assert capable.current_mode is BluetoothScanningMode.PASSIVE
+    assert "Falling back to passive scanning mode" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_adapter_init_fails_fallback_to_passive(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test we fallback to passive when adapter init fails."""
+    get_manager()._adapters = {"hci0": {ADAPTER_PASSIVE_SCAN: True}}
     called_start = 0
     called_stop = 0
     _callback = None
