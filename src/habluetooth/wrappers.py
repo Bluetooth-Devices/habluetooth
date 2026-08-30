@@ -21,7 +21,13 @@ from bleak_retry_connector import (
 )
 
 from .central_manager import get_manager
-from .const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM, CALLBACK_TYPE, ConnectParams
+from .const import (
+    BDADDR_LE_PUBLIC,
+    BDADDR_LE_RANDOM,
+    CALLBACK_TYPE,
+    CLIENT_DISCONNECT_TIMEOUT,
+    ConnectParams,
+)
 from .models import BluetoothReachabilityIntent
 
 FILTER_UUIDS: Final = "UUIDs"
@@ -510,9 +516,11 @@ class HaBleakClientWrapper(BleakClient):
             self._track(scanner, device)
             if manager.async_scanner_by_source(scanner.source) is not scanner:
                 # The scanner was unregistered while this connect was in
-                # flight; its teardown already ran, so run it again for us
-                # and fail the connect so the caller retries elsewhere.
-                manager._async_disconnect_clients(scanner)
+                # flight; tear the link down inline so the wrapper reports
+                # disconnected and the caller can retry elsewhere.
+                with contextlib.suppress(Exception):
+                    async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
+                        await self.disconnect()
                 msg = (
                     f"{self.__address}: scanner {scanner.name} was"
                     " unregistered during connect"

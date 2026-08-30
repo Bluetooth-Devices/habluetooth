@@ -1680,11 +1680,11 @@ class BluetoothManager:
         """Drop a finished background task, logging an escaped exception."""
         self._background_tasks.discard(task)
         if not task.cancelled() and (exc := task.exception()) is not None:
-            _LOGGER.error("Background task failed", exc_info=exc)
+            _LOGGER.error("Background task %s failed", task.get_name(), exc_info=exc)
 
     def _async_disconnect_clients(self, scanner: BaseHaScanner) -> None:
         """Disconnect the clients still connected through a removed scanner."""
-        if not scanner._clients:
+        if self.shutdown or not scanner._clients:
             return
         clients = list(scanner._clients)
         scanner._clients.clear()
@@ -1727,6 +1727,8 @@ class BluetoothManager:
                 scanner.source,
             )
         except Exception:  # pylint: disable=broad-except
+            # Deliberate give-up: the scanner is gone and will never be
+            # unregistered again, so re-tracking the client has no reader.
             _LOGGER.exception(
                 "Error disconnecting client %s from removed scanner %s",
                 address,

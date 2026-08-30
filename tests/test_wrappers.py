@@ -483,6 +483,33 @@ async def test_connect_in_flight_when_scanner_unregisters(
 
 
 @pytest.mark.asyncio
+async def test_track_moves_client_between_scanners(
+    connected_client: ConnectedClient,
+) -> None:
+    """Tracking follows the client when it roams to another scanner."""
+    client, _, _ = connected_client
+    manager = _get_manager()
+    first = client._connected_scanner
+    second = next(s for s in manager._sources.values() if s is not first)
+    client._track(second, client._connected_device)
+    assert client not in first._clients
+    assert client in second._clients
+    assert client._connected_scanner is second
+
+
+@pytest.mark.asyncio
+async def test_no_disconnects_scheduled_after_stop(
+    connected_client: ConnectedClient,
+) -> None:
+    """A scanner unregistering after async_stop schedules nothing."""
+    _, _, cancel = connected_client
+    manager = _get_manager()
+    manager.async_stop()
+    cancel["hci0"]()
+    assert not manager._background_tasks
+
+
+@pytest.mark.asyncio
 async def test_background_task_exception_is_logged(
     two_adapters: None,
     enable_bluetooth: None,
@@ -497,7 +524,8 @@ async def test_background_task_exception_is_logged(
 
     manager.async_add_background_task(_boom())
     await _settle_disconnects()
-    assert "Background task failed" in caplog.text
+    assert "Background task" in caplog.text
+    assert "failed" in caplog.text
 
 
 @pytest.mark.asyncio
