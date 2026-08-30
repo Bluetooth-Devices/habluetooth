@@ -484,6 +484,25 @@ async def test_connect_in_flight_when_scanner_unregisters(
 
 
 @pytest.mark.asyncio
+async def test_background_task_exception_is_logged(
+    two_adapters: None,
+    enable_bluetooth: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An exception escaping a background task is logged, not lost."""
+    manager = _get_manager()
+
+    async def _boom() -> None:
+        msg = "boom"
+        raise ValueError(msg)
+
+    manager.async_add_background_task(_boom())
+    await asyncio.gather(*manager._background_tasks, return_exceptions=True)
+    await asyncio.sleep(0)
+    assert "Background task failed" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_disconnect_without_connected_scanner(
     install_bleak_catcher: None,
 ) -> None:
