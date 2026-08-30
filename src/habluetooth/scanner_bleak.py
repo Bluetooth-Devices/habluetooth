@@ -870,7 +870,7 @@ class HaScanner(BaseHaScanner):
         Full teardown: nulls ``self.scanner`` and constructs a fresh
         one. AUTO active-window flips on Linux use
         ``_async_toggle_active_window_mode`` instead to skip the dbus
-        setup + ``restore_discoveries`` cost.
+        client setup; it re-seeds with ``restore_discoveries_sync``.
         """
         await self._async_stop_scanner()
         await self._async_start()
