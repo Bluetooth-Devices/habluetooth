@@ -422,8 +422,10 @@ async def test_stop_cancels_pending_disconnects(
         cancel["hci0"]()
         tasks = list(manager._background_tasks)
         assert tasks
-        manager.async_stop()
+        # Let the disconnect task start and block on the hung disconnect.
         await asyncio.sleep(0)
+        manager.async_stop()
+        await asyncio.wait(tasks, timeout=1)
     assert all(task.cancelled() for task in tasks)
 
 
