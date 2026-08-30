@@ -1763,9 +1763,9 @@ class BluetoothManager:
         try:
             async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT) as timed_out:
                 await client.disconnect()
-        except TimeoutError:
+        except Exception as exc:  # pylint: disable=broad-except
             client._give_up(notify=True)
-            if timed_out.expired():
+            if isinstance(exc, TimeoutError) and timed_out.expired():
                 # The expected shape for a proxy that went away; no traceback.
                 _LOGGER.warning(
                     "Timed out disconnecting client %s from removed scanner %s",
@@ -1773,19 +1773,11 @@ class BluetoothManager:
                     scanner.source,
                 )
             else:
-                # The backend raised its own TimeoutError inside the bound.
                 _LOGGER.exception(
                     "Error disconnecting client %s from removed scanner %s",
                     address,
                     scanner.source,
                 )
-        except Exception:  # pylint: disable=broad-except
-            client._give_up(notify=True)
-            _LOGGER.exception(
-                "Error disconnecting client %s from removed scanner %s",
-                address,
-                scanner.source,
-            )
 
     def async_register_scanner(
         self,
