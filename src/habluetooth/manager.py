@@ -36,6 +36,7 @@ from .const import (
     ADV_RSSI_SWITCH_DEADBAND,
     ADV_RSSI_SWITCH_THRESHOLD,
     CALLBACK_TYPE,
+    CLIENT_DISCONNECT_TIMEOUT,
     DEFAULT_ACTIVE_SCAN_DURATION,
     DEFAULT_ACTIVE_SCAN_INTERVAL,
     DEFAULT_ON_DEMAND_SWEEP_DURATION,
@@ -64,12 +65,13 @@ from .usage import install_multiple_bleak_catcher, uninstall_multiple_bleak_catc
 from .util import async_reset_adapter, coalesce_concurrent_future
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Coroutine, Iterable
 
     from bleak.backends.device import BLEDevice
     from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 
     from .base_scanner import BaseHaScanner
+    from .wrappers import HaBleakClientWrapper
 
 
 SYSTEM = platform.system()
@@ -160,6 +162,7 @@ class BluetoothManager:
         "_allocations",
         "_allocations_callbacks",
         "_auto_scheduler",
+        "_background_tasks",
         "_bleak_callbacks",
         "_bluetooth_adapters",
         "_cancel_allocation_callbacks",
@@ -268,6 +271,7 @@ class BluetoothManager:
         )
         self._debug = _LOGGER.isEnabledFor(logging.DEBUG)
         self.shutdown = False
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self.has_advertising_side_channel = False
         self._side_channel_scanners: dict[int, BaseHaScanner] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -471,6 +475,16 @@ class BluetoothManager:
             self._cancel_unavailable_tracking.cancel()
             self._cancel_unavailable_tracking = None
         self._auto_scheduler.stop()
+        if self._background_tasks:
+            # The cancel is fire and forget; log here so an unregister that
+            # raced shutdown leaves a trace even if the task never started.
+            _LOGGER.debug(
+                "Cancelling %d background task(s) at stop: %s",
+                len(self._background_tasks),
+                [task.get_name() for task in self._background_tasks],
+            )
+        for task in list(self._background_tasks):
+            task.cancel()
         uninstall_multiple_bleak_catcher()
         self._cancel_allocation_callbacks()
         if self._mgmt_ctl:
@@ -1658,6 +1672,117 @@ class BluetoothManager:
             self._side_channel_scanners.pop(idx, None)
         self._auto_scheduler.remove_scanner(scanner)
         self._async_on_scanner_registration(scanner, HaScannerRegistrationEvent.REMOVED)
+        # Last so a failure to schedule cannot strand the teardown above.
+        # BlueZ keeps a removed adapter's links up and the slot bookkeeping
+        # just cleared has forgotten them.
+        self._async_disconnect_clients(scanner)
+
+    def _async_add_background_task(
+        self, coro: Coroutine[Any, Any, None], name: str
+    ) -> None:
+        """Run a coroutine as a background task that is cancelled on stop."""
+        if TYPE_CHECKING:
+            assert self._loop is not None
+        task = self._loop.create_task(coro, name=name)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
+
+    def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
+        """Drop a finished background task, logging an escaped exception."""
+        self._background_tasks.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            _LOGGER.error("Background task %s failed", task.get_name(), exc_info=exc)
+
+    def _async_disconnect_clients(self, scanner: BaseHaScanner) -> None:
+        """Disconnect the clients still connected through a removed scanner."""
+        if not scanner._clients:
+            return
+        if self.shutdown:
+            # Abandoned to BlueZ/the kernel; scheduling after stop would
+            # leak tasks past the loop's lifetime.
+            _LOGGER.debug(
+                "Shutdown; not disconnecting %d client(s) from removed scanner %s",
+                len(scanner._clients),
+                scanner.source,
+            )
+            return
+        clients = list(scanner._clients)
+        self._async_add_background_task(
+            self._async_disconnect_all(clients, scanner),
+            f"disconnect clients of {scanner.source}",
+        )
+        # After scheduling, so a failure to schedule keeps the entries.
+        scanner._clients.clear()
+
+    async def _async_disconnect_all(
+        self, clients: list[HaBleakClientWrapper], scanner: BaseHaScanner
+    ) -> None:
+        """Disconnect clients concurrently."""
+        try:
+            # Each child logs its own failures; return_exceptions keeps one
+            # misbehaving client from abandoning its siblings mid gather.
+            results = await asyncio.gather(
+                *(self._async_disconnect_client(client, scanner) for client in clients),
+                return_exceptions=True,
+            )
+            for client, result in zip(clients, results, strict=True):
+                if isinstance(result, BaseException):
+                    # Only a BaseException can escape the child's handlers.
+                    # This runs after every sibling settled, so re-check the
+                    # client did not reconnect elsewhere in the meantime.
+                    if client._connected_scanner is scanner:
+                        client._give_up(notify=True)
+                    _LOGGER.error(
+                        "Unexpected error disconnecting client from removed scanner %s",
+                        scanner.source,
+                        exc_info=result,
+                    )
+        except asyncio.CancelledError:
+            # Shutdown; the links are abandoned to BlueZ/the kernel.
+            _LOGGER.debug(
+                "Cancelled disconnecting %d client(s) from removed scanner %s",
+                len(clients),
+                scanner.source,
+            )
+            raise
+
+    async def _async_disconnect_client(
+        self, client: HaBleakClientWrapper, scanner: BaseHaScanner
+    ) -> None:
+        """Disconnect one client, logging failures instead of raising."""
+        if client._connected_scanner is not scanner:
+            # Reconnected through another scanner since this was scheduled.
+            return
+        device = client._connected_device
+        address = device.address if device else "unknown"
+        if not client.is_connected:
+            _LOGGER.debug(
+                "Client %s already down; not disconnecting from removed scanner %s",
+                address,
+                scanner.source,
+            )
+            client._untrack()
+            return
+        try:
+            async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT) as timed_out:
+                await client.disconnect()
+        except Exception as exc:  # pylint: disable=broad-except
+            if client._connected_scanner is scanner:
+                # Not given up if it reconnected elsewhere while this hung.
+                client._give_up(notify=True)
+            if isinstance(exc, TimeoutError) and timed_out.expired():
+                # The expected shape for a proxy that went away; no traceback.
+                _LOGGER.warning(
+                    "Timed out disconnecting client %s from removed scanner %s",
+                    address,
+                    scanner.source,
+                )
+            else:
+                _LOGGER.exception(
+                    "Error disconnecting client %s from removed scanner %s",
+                    address,
+                    scanner.source,
+                )
 
     def async_register_scanner(
         self,

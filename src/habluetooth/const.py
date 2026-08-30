@@ -96,6 +96,10 @@ SCANNER_WATCHDOG_TIMEOUT: Final = 90
 # the SCANNER_WATCHDOG_TIMEOUT without seeing anything
 SCANNER_WATCHDOG_INTERVAL: Final = timedelta(seconds=30)
 
+# Bound for disconnecting a removed scanner's clients; a proxy that is gone
+# may never answer, and a pending task would strongly reference the client.
+CLIENT_DISCONNECT_TIMEOUT: Final = 10.0
+
 
 UNAVAILABLE_TRACK_SECONDS: Final = 60 * 5
 

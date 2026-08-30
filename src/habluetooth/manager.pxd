@@ -46,6 +46,7 @@ cdef class BleakCallback:
 cdef class BluetoothManager:
 
     cdef public object _cancel_unavailable_tracking
+    cdef public set _background_tasks
     cdef public AdvertisementTracker _advertisement_tracker
     cdef public dict _fallback_intervals
     cdef public dict _intervals

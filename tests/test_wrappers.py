@@ -3,27 +3,35 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import sys
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import call as mock_call
 
 import bleak
 import pytest
+import pytest_asyncio
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from bleak_retry_connector import Allocations
 
 from habluetooth import HaBluetoothConnector
 from habluetooth import get_manager as _get_manager
-from habluetooth.const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM
+from habluetooth.const import (
+    BDADDR_LE_PUBLIC,
+    BDADDR_LE_RANDOM,
+    CLIENT_DISCONNECT_TIMEOUT,
+)
 from habluetooth.usage import (
     install_multiple_bleak_catcher,
     uninstall_multiple_bleak_catcher,
 )
 from habluetooth.wrappers import (
     FILTER_UUIDS,
+    HaBleakClientWrapper,
     HaBleakScannerWrapper,
     _get_device_address_type,
 )
@@ -38,11 +46,15 @@ from . import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Generator
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 
     from bleak.backends.scanner import AdvertisementData
 
     from habluetooth.manager import BluetoothManager
+
+    ConnectedClient = tuple[
+        bleak.BleakClient, dict[str, Any], dict[str, Callable[[], None]]
+    ]
 
 
 @contextmanager
@@ -249,6 +261,562 @@ def _generate_scanners_with_fake_devices():
     cancel_hci1 = manager.async_register_scanner(scanner_hci1, connection_slots=1)
 
     return hci0_device_advs, cancel_hci0, cancel_hci1
+
+
+@pytest_asyncio.fixture
+async def connected_client(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> AsyncGenerator[ConnectedClient, None]:
+    """A client connected through hci0 plus the scanner cancel callbacks."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    with patch.object(FakeBleakClient, "is_connected", return_value=True):
+        client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
+        await client.connect()
+        yield client, hci0_device_advs, {"hci0": cancel_hci0, "hci1": cancel_hci1}
+    cancel_hci0()
+    cancel_hci1()
+
+
+async def _settle_disconnects() -> None:
+    """Wait for the manager's background tasks to finish."""
+    await asyncio.gather(*_get_manager()._background_tasks, return_exceptions=True)
+    await asyncio.sleep(0)
+
+
+async def _hang() -> None:
+    await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("removed", "disconnects"), [("hci0", 1), ("hci1", 0)])
+async def test_unregister_scanner_disconnects_only_its_clients(
+    connected_client: ConnectedClient, removed: str, disconnects: int
+) -> None:
+    """Removing a scanner disconnects its clients and nobody else's."""
+    _, _, cancel = connected_client
+    with patch.object(
+        FakeBleakClient, "disconnect", new_callable=AsyncMock
+    ) as disconnect_mock:
+        cancel[removed]()
+        await _settle_disconnects()
+    assert disconnect_mock.call_count == disconnects
+
+
+@pytest.mark.asyncio
+async def test_disconnected_client_is_not_disconnected_again(
+    connected_client: ConnectedClient,
+) -> None:
+    """A client that already disconnected is no longer tracked."""
+    client, _, cancel = connected_client
+    scanner = client._connected_scanner
+    with patch.object(FakeBleakClient, "is_connected", False):
+        await client.disconnect()
+    assert client not in scanner._clients
+    with patch.object(
+        FakeBleakClient, "disconnect", new_callable=AsyncMock
+    ) as disconnect_mock:
+        cancel["hci0"]()
+        await _settle_disconnects()
+    assert disconnect_mock.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_client_tracking_does_not_keep_client_alive(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """Tracked clients are held weakly so a dropped client cannot leak."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    with patch.object(FakeBleakClient, "is_connected", return_value=True):
+        client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
+        await client.connect()
+        scanner = client._connected_scanner
+        assert len(scanner._clients) == 1
+        del client
+        gc.collect()
+        assert len(scanner._clients) == 0
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reconnected_elsewhere", [False, True])
+async def test_disconnect_error_on_unregister_is_logged_not_raised(
+    connected_client: ConnectedClient,
+    caplog: pytest.LogCaptureFixture,
+    reconnected_elsewhere: bool,
+) -> None:
+    """A failed disconnect is logged; give up re-checks identity first."""
+    client, _, cancel = connected_client
+
+    async def _fail_mid_disconnect(*args: Any, **kwargs: Any) -> None:
+        if reconnected_elsewhere:
+            # The client moves on while its disconnect is failing; the
+            # handler must not give up the fresh backend.
+            client._connected_scanner = MagicMock()
+        msg = "nope"
+        raise BleakError(msg)
+
+    with patch.object(
+        FakeBleakClient,
+        "disconnect",
+        new_callable=AsyncMock,
+        side_effect=_fail_mid_disconnect,
+    ):
+        cancel["hci0"]()
+        await _settle_disconnects()
+        assert (client._backend is None) is not reconnected_elsewhere
+        if not reconnected_elsewhere:
+            assert client._connected_scanner is None
+    assert "from removed scanner" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_client_reconnected_elsewhere_is_not_disconnected(
+    connected_client: ConnectedClient,
+) -> None:
+    """A client that moved to another scanner survives the old one's removal."""
+    client, _, cancel = connected_client
+    other_scanner = MagicMock()
+    with (
+        patch.object(client, "_connected_scanner", other_scanner),
+        patch.object(
+            FakeBleakClient, "disconnect", new_callable=AsyncMock
+        ) as disconnect_mock,
+    ):
+        cancel["hci0"]()
+        await _settle_disconnects()
+    assert disconnect_mock.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_reconnect_untracks_from_previous_scanner(
+    connected_client: ConnectedClient,
+) -> None:
+    """Reconnecting drops the stale entry on the previous scanner."""
+    client, _, cancel = connected_client
+    first_scanner = client._connected_scanner
+    assert client in first_scanner._clients
+    cancel["hci0"]()
+    await _settle_disconnects()
+    # The old link is gone; reconnect resolves to the remaining scanner.
+    with patch.object(FakeBleakClient, "is_connected", False):
+        await client.connect()
+    second_scanner = client._connected_scanner
+    assert second_scanner is not first_scanner
+    assert client not in first_scanner._clients
+    assert client in second_scanner._clients
+
+
+@pytest.mark.asyncio
+async def test_disconnect_timeout_on_unregister_is_logged(
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A hanging disconnect is bounded and logged, not pending forever."""
+    client, _, cancel = connected_client
+
+    disconnected: list[bleak.BleakClient] = []
+    with patch.object(
+        FakeBleakClient, "set_disconnected_callback", Mock(), create=True
+    ):
+        client.set_disconnected_callback(disconnected.append)
+    with (
+        patch("habluetooth.manager.CLIENT_DISCONNECT_TIMEOUT", 0.0),
+        patch.object(FakeBleakClient, "disconnect", side_effect=_hang),
+    ):
+        cancel["hci0"]()
+        await _settle_disconnects()
+        assert client._backend is None
+        assert client._connected_scanner is None
+        assert not client.is_connected
+        await asyncio.sleep(0)
+    assert disconnected == [client]
+    assert "Timed out disconnecting client 00:00:00:00:00:01" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_pending_disconnects(
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """async_stop cancels disconnect tasks still in flight."""
+    _, _, cancel = connected_client
+    manager = _get_manager()
+
+    with patch.object(FakeBleakClient, "disconnect", side_effect=_hang):
+        cancel["hci0"]()
+        tasks = list(manager._background_tasks)
+        assert tasks
+        # Let the disconnect task start and block on the hung disconnect.
+        await asyncio.sleep(0)
+        manager.async_stop()
+        await asyncio.wait(tasks, timeout=1)
+    assert all(task.cancelled() for task in tasks)
+    assert "Cancelling 1 background task(s) at stop" in caplog.text
+    assert "Cancelled disconnecting 1 client(s)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_manager_backend_timeout_is_not_misreported(
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A backend raised TimeoutError logs as an error, not the deadline."""
+    _, _, cancel = connected_client
+    with patch.object(
+        FakeBleakClient,
+        "disconnect",
+        new_callable=AsyncMock,
+        side_effect=TimeoutError("backend"),
+    ):
+        cancel["hci0"]()
+        await _settle_disconnects()
+    assert "Error disconnecting client" in caplog.text
+    assert "Timed out disconnecting client" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_give_up_detaches_the_disconnected_callback(
+    install_bleak_catcher: None,
+) -> None:
+    """Give up silences the orphaned backend's disconnected callback."""
+    client = HaBleakClientWrapper(generate_ble_device("00:00:00:00:00:0E", "x"))
+    backend: Any = Mock()
+    client._backend = backend
+    client._give_up()
+    backend.set_disconnected_callback.assert_called_once_with(None)
+    assert client._backend is None
+    assert client._connected_scanner is None
+    # Idempotent with no backend left.
+    client._give_up()
+    backend.set_disconnected_callback.assert_called_once_with(None)
+
+
+@pytest.mark.asyncio
+async def test_give_up_survives_a_backend_that_refuses_to_detach(
+    install_bleak_catcher: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A backend that refuses to detach is logged, not fatal."""
+    client = HaBleakClientWrapper(generate_ble_device("00:00:00:00:00:0E", "x"))
+    refusing: Any = Mock()
+    refusing.set_disconnected_callback.side_effect = ValueError("no")
+    client._backend = refusing
+    client._give_up()
+    assert client._backend is None
+    assert "could not detach the disconnected callback" in caplog.text
+    assert caplog.records[-1].levelname == "WARNING"
+
+
+@pytest.mark.asyncio
+async def test_abort_detaches_the_callback_before_disconnecting(
+    install_bleak_catcher: None,
+) -> None:
+    """A clean abort cannot fire the consumer callback mid connect."""
+    client = HaBleakClientWrapper(generate_ble_device("00:00:00:00:00:0E", "x"))
+    backend: Any = Mock()
+    backend.disconnect = AsyncMock()
+    backend.is_connected = False
+    client._backend = backend
+    aborted = False
+    try:
+        await client._async_abort_unregistered_mid_connect(MagicMock())
+    except BleakError as err:
+        aborted = "unregistered during connect" in str(err)
+    assert aborted
+    assert backend.mock_calls[0] == mock_call.set_disconnected_callback(None)
+    assert mock_call.disconnect() in backend.mock_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("link_up", "notified"), [(True, True), (False, False)])
+async def test_give_up_notifies_only_when_the_link_was_up(
+    install_bleak_catcher: None, link_up: bool, notified: bool
+) -> None:
+    """The consumer hears about a give up once, not twice."""
+    client = HaBleakClientWrapper(generate_ble_device("00:00:00:00:00:0E", "x"))
+    disconnected: list[bleak.BleakClient] = []
+    client.set_disconnected_callback(disconnected.append)
+    backend: Any = Mock()
+    backend.is_connected = link_up
+    client._backend = backend
+    client._give_up(notify=True)
+    await asyncio.sleep(0)
+    assert (disconnected == [client]) is notified
+
+
+@pytest.mark.asyncio
+async def test_failed_disconnect_with_link_down_untracks(
+    connected_client: ConnectedClient,
+) -> None:
+    """A raising disconnect still untracks when the link actually dropped."""
+    client, _, _ = connected_client
+    scanner = client._connected_scanner
+    with (
+        patch.object(FakeBleakClient, "is_connected", False),
+        patch.object(
+            FakeBleakClient,
+            "disconnect",
+            new_callable=AsyncMock,
+            side_effect=BleakError("nope"),
+        ),
+        pytest.raises(BleakError),
+    ):
+        await client.disconnect()
+    assert client not in scanner._clients
+    assert client._connected_scanner is None
+
+
+@pytest.mark.asyncio
+async def test_failed_disconnect_keeps_client_tracked(
+    connected_client: ConnectedClient,
+) -> None:
+    """A disconnect that raises with the link still up keeps the client tracked."""
+    client, _, _ = connected_client
+    scanner = client._connected_scanner
+    with (
+        patch.object(
+            FakeBleakClient,
+            "disconnect",
+            new_callable=AsyncMock,
+            side_effect=BleakError("nope"),
+        ),
+        pytest.raises(BleakError),
+    ):
+        await client.disconnect()
+    assert client in scanner._clients
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("disconnect_effect", "zero_timeout", "expected_exc", "log_fragment"),
+    [
+        (None, False, BleakError, None),
+        (BleakError("nope"), False, BleakError, "error disconnecting after scanner"),
+        (
+            TimeoutError("backend"),
+            False,
+            BleakError,
+            "error disconnecting after scanner",
+        ),
+        (
+            asyncio.CancelledError,
+            False,
+            asyncio.CancelledError,
+            "cancelled disconnecting after scanner",
+        ),
+        (_hang, True, BleakError, "timed out disconnecting after scanner"),
+    ],
+    ids=["clean", "error", "backend_timeout", "cancelled", "timeout"],
+)
+async def test_connect_in_flight_when_scanner_unregisters(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+    caplog: pytest.LogCaptureFixture,
+    disconnect_effect: Any,
+    zero_timeout: bool,
+    expected_exc: type[BaseException],
+    log_fragment: str | None,
+) -> None:
+    """A connect that finishes after its scanner unregistered is torn down."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    original_connect = FakeBleakClient.connect
+
+    async def _connect_and_unregister(
+        self: FakeBleakClient, *args: Any, **kwargs: Any
+    ) -> None:
+        await original_connect(self, *args, **kwargs)
+        # The scanner goes away while the connect is still in flight.
+        cancel_hci0()
+
+    timeout = 0.0 if zero_timeout else CLIENT_DISCONNECT_TIMEOUT
+    with (
+        patch("habluetooth.wrappers.CLIENT_DISCONNECT_TIMEOUT", timeout),
+        patch.object(FakeBleakClient, "is_connected", return_value=True),
+        patch.object(FakeBleakClient, "connect", _connect_and_unregister),
+        patch.object(
+            FakeBleakClient,
+            "disconnect",
+            new_callable=AsyncMock,
+            side_effect=disconnect_effect,
+        ) as disconnect_mock,
+    ):
+        client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
+        with pytest.raises(expected_exc):
+            await client.connect()
+        assert client._backend is None
+    assert disconnect_mock.call_count == 1
+    if log_fragment is not None:
+        assert log_fragment in caplog.text
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_dropped_link_is_not_disconnected_on_unregister(
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A client whose link already dropped is untracked, not disconnected."""
+    client, _, cancel = connected_client
+    with (
+        patch.object(FakeBleakClient, "is_connected", False),
+        patch.object(
+            FakeBleakClient, "disconnect", new_callable=AsyncMock
+        ) as disconnect_mock,
+    ):
+        cancel["hci0"]()
+        await _settle_disconnects()
+        assert client._connected_scanner is None
+    assert disconnect_mock.call_count == 0
+    assert "already down; not disconnecting" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_track_moves_client_between_scanners(
+    connected_client: ConnectedClient,
+) -> None:
+    """Tracking follows the client when it roams to another scanner."""
+    client, _, _ = connected_client
+    manager = _get_manager()
+    first = client._connected_scanner
+    second = next(s for s in manager._sources.values() if s is not first)
+    client._track(second, client._connected_device)
+    assert client not in first._clients
+    assert client in second._clients
+    assert client._connected_scanner is second
+
+
+@pytest.mark.asyncio
+async def test_no_disconnects_scheduled_after_stop(
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A scanner unregistering after async_stop schedules nothing."""
+    _, _, cancel = connected_client
+    manager = _get_manager()
+    manager.async_stop()
+    cancel["hci0"]()
+    assert not manager._background_tasks
+    assert "Shutdown; not disconnecting 1 client(s)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_background_task_exception_is_logged(
+    two_adapters: None,
+    enable_bluetooth: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An exception escaping a background task is logged, not lost."""
+    manager = _get_manager()
+
+    async def _boom() -> None:
+        msg = "boom"
+        raise ValueError(msg)
+
+    manager._async_add_background_task(_boom(), "boom task")
+    await _settle_disconnects()
+    assert "Background task boom task failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_disconnect_untracks_even_if_backend_still_reports_connected(
+    connected_client: ConnectedClient,
+) -> None:
+    """A clean disconnect untracks even when the backend clears state late."""
+    client, _, _ = connected_client
+    scanner = client._connected_scanner
+    # The fixture pins is_connected True, simulating a backend that only
+    # clears its state asynchronously; the clean return must still untrack.
+    with patch.object(FakeBleakClient, "disconnect", new_callable=AsyncMock):
+        await client.disconnect()
+    assert client not in scanner._clients
+    assert client._connected_scanner is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reconnected_elsewhere", [False, True])
+async def test_base_exception_from_disconnect_gives_up_client(
+    connected_client: ConnectedClient,
+    caplog: pytest.LogCaptureFixture,
+    reconnected_elsewhere: bool,
+) -> None:
+    """A BaseException escaping a child is logged; give up re-checks identity."""
+    client, _, cancel = connected_client
+
+    async def _cancel_mid_disconnect(*args: Any, **kwargs: Any) -> None:
+        if reconnected_elsewhere:
+            # The client moves on while the gather is still settling; the
+            # late results pass must not give it up.
+            client._connected_scanner = MagicMock()
+        raise asyncio.CancelledError
+
+    with patch.object(
+        FakeBleakClient,
+        "disconnect",
+        new_callable=AsyncMock,
+        side_effect=_cancel_mid_disconnect,
+    ):
+        cancel["hci0"]()
+        await _settle_disconnects()
+        assert (client._backend is None) is not reconnected_elsewhere
+    assert "Unexpected error disconnecting client" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_set_connection_params_disconnected_is_quiet(
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No upgrade-the-backend warning for a client that is not connected."""
+    client, _, _ = connected_client
+    with patch.object(FakeBleakClient, "is_connected", False):
+        await client.disconnect()
+        await client.set_connection_params(6, 6, 0, 1000)
+    assert "Upgrade the backend library" not in caplog.text
+    assert "not setting connection params" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_disconnect_without_backend_untracks_stale_pointers(
+    connected_client: ConnectedClient,
+) -> None:
+    """Disconnect with no backend clears pointers left by a failed teardown."""
+    client, _, _ = connected_client
+    scanner = client._connected_scanner
+    assert client in scanner._clients
+    with patch.object(FakeBleakClient, "is_connected", False):
+        client._backend = None
+        await client.disconnect()
+    assert client not in scanner._clients
+    assert client._connected_scanner is None
+    assert client._connected_device is None
+
+
+@pytest.mark.asyncio
+async def test_disconnect_without_connected_scanner(
+    install_bleak_catcher: None,
+) -> None:
+    """Disconnect with a backend but no recorded scanner is a no-op untrack."""
+    client = HaBleakClientWrapper(generate_ble_device("00:00:00:00:00:0F", "x"))
+    client._backend = FakeBleakClient(generate_ble_device("00:00:00:00:00:0F", "x"))
+    assert client._connected_scanner is None
+    await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_keeps_other_clients_tracked(
+    connected_client: ConnectedClient,
+) -> None:
+    """Untracking one client leaves the scanner's other clients tracked."""
+    first, hci0_device_advs, _ = connected_client
+    second = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:02"][0])
+    await second.connect()
+    scanner = first._connected_scanner
+    assert len(scanner._clients) == 2
+    with patch.object(FakeBleakClient, "is_connected", False):
+        await first.disconnect()
+    assert set(scanner._clients) == {second}
 
 
 @pytest.mark.asyncio
