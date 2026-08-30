@@ -720,6 +720,7 @@ class HaBleakClientWrapper(BleakClient):
         disconnected callback fires so integrations that wait for it
         schedule their reconnect.
         """
+        was_up = self.is_connected
         if (backend := self._backend) is not None:
             # The orphaned backend must not fire the consumer's disconnected
             # callback against a later reconnect when the leaked link drops.
@@ -735,6 +736,8 @@ class HaBleakClientWrapper(BleakClient):
         self._untrack()
         if (
             notify
+            # The backend already fired the callback if the link was down.
+            and was_up
             and (
                 callback := self._make_disconnected_callback(
                     self.__disconnected_callback

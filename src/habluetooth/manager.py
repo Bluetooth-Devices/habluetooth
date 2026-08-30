@@ -1728,7 +1728,10 @@ class BluetoothManager:
             for client, result in zip(clients, results, strict=True):
                 if isinstance(result, BaseException):
                     # Only a BaseException can escape the child's handlers.
-                    client._give_up(notify=True)
+                    # This runs after every sibling settled, so re-check the
+                    # client did not reconnect elsewhere in the meantime.
+                    if client._connected_scanner is scanner:
+                        client._give_up(notify=True)
                     _LOGGER.error(
                         "Unexpected error disconnecting client from removed scanner %s",
                         scanner.source,

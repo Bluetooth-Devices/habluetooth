@@ -495,6 +495,23 @@ async def test_give_up_survives_a_backend_that_refuses_to_detach(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("link_up", "notified"), [(True, True), (False, False)])
+async def test_give_up_notifies_only_when_the_link_was_up(
+    install_bleak_catcher: None, link_up: bool, notified: bool
+) -> None:
+    """The consumer hears about a give up once, not twice."""
+    client = HaBleakClientWrapper(generate_ble_device("00:00:00:00:00:0E", "x"))
+    disconnected: list[bleak.BleakClient] = []
+    client.set_disconnected_callback(disconnected.append)
+    backend: Any = Mock()
+    backend.is_connected = link_up
+    client._backend = backend
+    client._give_up(notify=True)
+    await asyncio.sleep(0)
+    assert (disconnected == [client]) is notified
+
+
+@pytest.mark.asyncio
 async def test_failed_disconnect_with_link_down_untracks(
     connected_client: ConnectedClient,
 ) -> None:
@@ -683,10 +700,13 @@ async def test_disconnect_untracks_even_if_backend_still_reports_connected(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reconnected_elsewhere", [False, True])
 async def test_base_exception_from_disconnect_gives_up_client(
-    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
+    connected_client: ConnectedClient,
+    caplog: pytest.LogCaptureFixture,
+    reconnected_elsewhere: bool,
 ) -> None:
-    """A BaseException escaping a child is logged and the client given up."""
+    """A BaseException escaping a child is logged; give up re-checks identity."""
     client, _, cancel = connected_client
     with patch.object(
         FakeBleakClient,
@@ -694,9 +714,12 @@ async def test_base_exception_from_disconnect_gives_up_client(
         new_callable=AsyncMock,
         side_effect=asyncio.CancelledError,
     ):
+        if reconnected_elsewhere:
+            # The late results pass must not give up a client that moved on.
+            client._connected_scanner = MagicMock()
         cancel["hci0"]()
         await _settle_disconnects()
-        assert client._backend is None
+        assert (client._backend is None) is not reconnected_elsewhere
     assert "Unexpected error disconnecting client" in caplog.text
 
 
