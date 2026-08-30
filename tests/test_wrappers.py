@@ -483,6 +483,23 @@ async def test_connect_in_flight_when_scanner_unregisters(
 
 
 @pytest.mark.asyncio
+async def test_dropped_link_is_not_disconnected_on_unregister(
+    connected_client: ConnectedClient,
+) -> None:
+    """A client whose link already dropped is skipped at unregister."""
+    _, _, cancel = connected_client
+    with (
+        patch.object(FakeBleakClient, "is_connected", False),
+        patch.object(
+            FakeBleakClient, "disconnect", new_callable=AsyncMock
+        ) as disconnect_mock,
+    ):
+        cancel["hci0"]()
+        await _settle_disconnects()
+    assert disconnect_mock.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_track_moves_client_between_scanners(
     connected_client: ConnectedClient,
 ) -> None:

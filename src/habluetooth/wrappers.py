@@ -518,9 +518,17 @@ class HaBleakClientWrapper(BleakClient):
                 # The scanner was unregistered while this connect was in
                 # flight; tear the link down inline so the wrapper reports
                 # disconnected and the caller can retry elsewhere.
-                with contextlib.suppress(Exception):
+                try:
                     async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
                         await self.disconnect()
+                except Exception:  # pylint: disable=broad-except
+                    _LOGGER.warning(
+                        "%s: error disconnecting after scanner %s was"
+                        " unregistered mid connect",
+                        self.__address,
+                        scanner.name,
+                        exc_info=True,
+                    )
                 msg = (
                     f"{self.__address}: scanner {scanner.name} was"
                     " unregistered during connect"
