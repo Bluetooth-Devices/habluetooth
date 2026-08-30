@@ -57,9 +57,8 @@ ADV_MONITOR_DEVICE_FOUND = 0x002F
 IS_WINDOWS = 'os.name == "nt"'
 IS_POSIX = 'os.name == "posix"'
 NOT_POSIX = 'os.name != "posix"'
-# or_patterns is a workaround for the fact that passive scanning
-# needs at least one matcher to be set. The below matcher
-# will match all devices.
+# Passive scanning needs at least one or_pattern; production lists FLAGS
+# values, one pattern each (see scanner_bleak.PASSIVE_SCAN_FLAGS).
 if platform.system() == "Linux":
     # On Linux, use the real BlueZScannerArgs to avoid mocking issues
     from bleak.args.bluez import BlueZScannerArgs, OrPattern
@@ -67,9 +66,8 @@ if platform.system() == "Linux":
 
     scanner.PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
         or_patterns=[
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
+            OrPattern(0, AdvertisementDataType.FLAGS, bytes([flags]))
+            for flags in scanner.PASSIVE_SCAN_FLAGS
         ]
     )
 else:
@@ -151,6 +149,18 @@ def test_create_bleak_scanner_linux_no_adapter_active() -> None:
     assert "adapter" not in kwargs
 
 
+def test_passive_scan_flags_fit_one_monitor() -> None:
+    """The FLAGS list stays within the 16 pattern monitor limit and unique."""
+    flags = scanner.PASSIVE_SCAN_FLAGS
+    assert len(flags) <= 16
+    assert len(set(flags)) == len(flags)
+    assert all(0 <= value <= 0x1F for value in flags)
+    # Values reported by real networks (#31, #615) must all be covered.
+    assert {0x02, 0x04, 0x05, 0x06, 0x18, 0x1A} <= set(flags)
+    assert len(scanner.PASSIVE_SCANNER_ARGS["or_patterns"]) == len(flags)
+
+
+@pytest.mark.skipif(platform.system() != "Linux", reason="Linux only")
 def test_create_bleak_scanner_linux_no_adapter_passive() -> None:
     """Linux + no adapter + passive: ``bluez`` carries passive args only."""
     with (
