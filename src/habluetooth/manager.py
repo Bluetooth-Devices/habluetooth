@@ -1687,27 +1687,35 @@ class BluetoothManager:
         self, clients: list[HaBleakClientWrapper], scanner: BaseHaScanner
     ) -> None:
         """Disconnect clients concurrently."""
-        await asyncio.gather(
-            *(self._async_disconnect_client(client, scanner) for client in clients)
-        )
+        try:
+            await asyncio.gather(
+                *(self._async_disconnect_client(client, scanner) for client in clients)
+            )
+        except asyncio.CancelledError:
+            # Shutdown; the links are abandoned to BlueZ/the kernel.
+            _LOGGER.debug(
+                "Cancelled disconnecting %d client(s) from removed scanner %s",
+                len(clients),
+                scanner.source,
+            )
+            raise
 
     async def _async_disconnect_client(
         self, client: HaBleakClientWrapper, scanner: BaseHaScanner
     ) -> None:
         """Disconnect one client, logging failures instead of raising."""
-        if client._connected_scanner is not scanner or not client.is_connected:
-            # Reconnected through another scanner since this was scheduled.
-            return
         try:
+            if client._connected_scanner is not scanner or not client.is_connected:
+                # Reconnected through another scanner since this was scheduled.
+                return
             async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
                 await client.disconnect()
         except Exception:  # pylint: disable=broad-except
             device = client._connected_device
-            _LOGGER.warning(
+            _LOGGER.exception(
                 "Error disconnecting client %s from removed scanner %s",
                 device.address if device else "unknown",
                 scanner.source,
-                exc_info=True,
             )
 
     def async_register_scanner(

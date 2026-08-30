@@ -448,6 +448,38 @@ async def test_failed_disconnect_keeps_client_tracked(
 
 
 @pytest.mark.asyncio
+async def test_connect_in_flight_when_scanner_unregisters(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """A connect that finishes after its scanner unregistered is torn down."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    original_connect = FakeBleakClient.connect
+
+    async def _connect_and_unregister(
+        self: FakeBleakClient, *args: Any, **kwargs: Any
+    ) -> None:
+        await original_connect(self, *args, **kwargs)
+        # The scanner goes away while the connect is still in flight.
+        cancel_hci0()
+
+    with (
+        patch.object(FakeBleakClient, "is_connected", return_value=True),
+        patch.object(FakeBleakClient, "connect", _connect_and_unregister),
+    ):
+        client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
+        with patch.object(
+            FakeBleakClient, "disconnect", new_callable=AsyncMock
+        ) as disconnect_mock:
+            await client.connect()
+            await _settle_disconnects()
+        assert disconnect_mock.call_count == 1
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
 async def test_disconnect_without_connected_scanner(
     install_bleak_catcher: None,
 ) -> None:

@@ -514,6 +514,10 @@ class HaBleakClientWrapper(BleakClient):
             self._connected_device = device
             # Disconnected by the manager if the scanner is unregistered.
             scanner._clients.add(self)
+            if manager.async_scanner_by_source(scanner.source) is not scanner:
+                # The scanner was unregistered while this connect was in
+                # flight; its teardown already ran, so run it again for us.
+                manager._async_disconnect_clients(scanner)
             self._load_conn_params(
                 scanner,
                 device,
