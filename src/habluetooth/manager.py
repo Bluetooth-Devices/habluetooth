@@ -1742,8 +1742,16 @@ class BluetoothManager:
         device = client._connected_device
         address = device.address if device else "unknown"
         try:
-            if client._connected_scanner is not scanner or not client.is_connected:
+            if client._connected_scanner is not scanner:
                 # Reconnected through another scanner since this was scheduled.
+                return
+            if not client.is_connected:
+                _LOGGER.debug(
+                    "Client %s already down; not disconnecting from removed scanner %s",
+                    address,
+                    scanner.source,
+                )
+                client._untrack()
                 return
             async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
                 await client.disconnect()

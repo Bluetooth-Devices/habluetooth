@@ -528,6 +528,14 @@ class HaBleakClientWrapper(BleakClient):
                 try:
                     async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT):
                         await self.disconnect()
+                except asyncio.CancelledError:
+                    _LOGGER.debug(
+                        "%s: cancelled disconnecting after scanner %s was"
+                        " unregistered mid connect",
+                        self.__address,
+                        scanner.name,
+                    )
+                    raise
                 except TimeoutError:
                     _LOGGER.warning(
                         "%s: timed out disconnecting after scanner %s was"

@@ -524,6 +524,42 @@ async def test_connect_in_flight_unregister_teardown_failure_is_logged(
 
 
 @pytest.mark.asyncio
+async def test_connect_in_flight_unregister_teardown_cancelled_is_logged(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Cancellation during the inline teardown is logged and propagates."""
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    original_connect = FakeBleakClient.connect
+
+    async def _connect_and_unregister(
+        self: FakeBleakClient, *args: Any, **kwargs: Any
+    ) -> None:
+        await original_connect(self, *args, **kwargs)
+        cancel_hci0()
+
+    with (
+        patch.object(FakeBleakClient, "is_connected", return_value=True),
+        patch.object(FakeBleakClient, "connect", _connect_and_unregister),
+        patch.object(
+            FakeBleakClient,
+            "disconnect",
+            new_callable=AsyncMock,
+            side_effect=asyncio.CancelledError,
+        ),
+    ):
+        client = bleak.BleakClient(hci0_device_advs["00:00:00:00:00:01"][0])
+        with pytest.raises(asyncio.CancelledError):
+            await client.connect()
+        assert client._backend is None
+    assert "cancelled disconnecting after scanner" in caplog.text
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
 async def test_connect_in_flight_unregister_teardown_timeout_is_logged(
     two_adapters: None,
     enable_bluetooth: None,
@@ -557,10 +593,10 @@ async def test_connect_in_flight_unregister_teardown_timeout_is_logged(
 
 @pytest.mark.asyncio
 async def test_dropped_link_is_not_disconnected_on_unregister(
-    connected_client: ConnectedClient,
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A client whose link already dropped is skipped at unregister."""
-    _, _, cancel = connected_client
+    """A client whose link already dropped is untracked, not disconnected."""
+    client, _, cancel = connected_client
     with (
         patch.object(FakeBleakClient, "is_connected", False),
         patch.object(
@@ -569,7 +605,9 @@ async def test_dropped_link_is_not_disconnected_on_unregister(
     ):
         cancel["hci0"]()
         await _settle_disconnects()
+        assert client._connected_scanner is None
     assert disconnect_mock.call_count == 0
+    assert "already down; not disconnecting" in caplog.text
 
 
 @pytest.mark.asyncio
