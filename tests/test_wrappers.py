@@ -618,6 +618,52 @@ async def test_background_task_exception_is_logged(
 
 
 @pytest.mark.asyncio
+async def test_disconnect_untracks_even_if_backend_still_reports_connected(
+    connected_client: ConnectedClient,
+) -> None:
+    """A clean disconnect untracks even when the backend clears state late."""
+    client, _, _ = connected_client
+    scanner = client._connected_scanner
+    # The fixture pins is_connected True, simulating a backend that only
+    # clears its state asynchronously; the clean return must still untrack.
+    with patch.object(FakeBleakClient, "disconnect", new_callable=AsyncMock):
+        await client.disconnect()
+    assert client not in scanner._clients
+    assert client._connected_scanner is None
+
+
+@pytest.mark.asyncio
+async def test_base_exception_from_disconnect_gives_up_client(
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A BaseException escaping a child is logged and the client given up."""
+    client, _, cancel = connected_client
+    with patch.object(
+        FakeBleakClient,
+        "disconnect",
+        new_callable=AsyncMock,
+        side_effect=asyncio.CancelledError,
+    ):
+        cancel["hci0"]()
+        await _settle_disconnects()
+        assert client._backend is None
+    assert "Unexpected error disconnecting client" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_set_connection_params_disconnected_is_quiet(
+    connected_client: ConnectedClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No upgrade-the-backend warning for a client that is not connected."""
+    client, _, _ = connected_client
+    with patch.object(FakeBleakClient, "is_connected", False):
+        await client.disconnect()
+        await client.set_connection_params(6, 6, 0, 1000)
+    assert "Upgrade the backend library" not in caplog.text
+    assert "not setting connection params" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_disconnect_without_backend_untracks_stale_pointers(
     connected_client: ConnectedClient,
 ) -> None:

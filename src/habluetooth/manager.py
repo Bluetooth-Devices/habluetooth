@@ -1704,10 +1704,19 @@ class BluetoothManager:
         try:
             # Each child logs its own failures; return_exceptions keeps one
             # misbehaving client from abandoning its siblings mid gather.
-            await asyncio.gather(
+            results = await asyncio.gather(
                 *(self._async_disconnect_client(client, scanner) for client in clients),
                 return_exceptions=True,
             )
+            for client, result in zip(clients, results, strict=True):
+                if isinstance(result, BaseException):
+                    # Only a BaseException can escape the child's handlers.
+                    self._async_give_up_client(client)
+                    _LOGGER.error(
+                        "Unexpected error disconnecting client from removed scanner %s",
+                        scanner.source,
+                        exc_info=result,
+                    )
         except asyncio.CancelledError:
             # Shutdown; the links are abandoned to BlueZ/the kernel.
             _LOGGER.debug(

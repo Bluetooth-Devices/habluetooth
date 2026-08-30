@@ -357,6 +357,12 @@ class HaBleakClientWrapper(BleakClient):
         timeout: int,
     ) -> None:
         """Set BLE connection parameters on a connected device."""
+        if not self.is_connected:
+            _LOGGER.debug(
+                "%s: not setting connection params; client is not connected",
+                self.__address,
+            )
+            return
         if self._backend is not None and hasattr(
             self._backend, "set_connection_params"
         ):
@@ -719,25 +725,29 @@ class HaBleakClientWrapper(BleakClient):
         scanner._clients.add(self)
 
     def _untrack(self) -> None:
-        """
-        Drop the connected path once the link is confirmed down.
-
-        A raise may leave the link up; keep the client tracked then so
-        scanner unregister can still tear it down.
-        """
-        if not self.is_connected and (scanner := self._connected_scanner) is not None:
+        """Drop the connected path."""
+        if (scanner := self._connected_scanner) is not None:
             scanner._clients.discard(self)
             self._connected_scanner = None
             self._connected_device = None
+
+    def _untrack_if_down(self) -> None:
+        """Drop the connected path unless the link may still be up."""
+        if not self.is_connected:
+            self._untrack()
 
     async def disconnect(self) -> None:
         """Disconnect from the device."""
         if self._backend is None:
             # No backend, but pointers from an earlier failed teardown may
-            # remain; _untrack is a no-op when the link is genuinely up.
-            self._untrack()
+            # remain.
+            self._untrack_if_down()
             return
         try:
             await self._backend.disconnect()
-        finally:
-            self._untrack()
+        except BaseException:
+            # A raise may leave the link up; keep the client tracked then so
+            # scanner unregister can still tear it down.
+            self._untrack_if_down()
+            raise
+        self._untrack()
