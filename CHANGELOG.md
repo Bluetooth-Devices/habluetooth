@@ -1,5 +1,13 @@
 # Changelog
 
+## v6.26.11 (2026-08-30)
+
+### Bug fixes
+
+
+- Disconnect clients when their scanner is unregistered ([`bbe4fa1`](https://github.com/Bluetooth-Devices/habluetooth/commit/bbe4fa18dcef43ca5ccf33bd88b96e3a7d4f0935))
+
+
 ## v6.26.10 (2026-08-30)
 
 ### Bug fixes
