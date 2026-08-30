@@ -306,6 +306,10 @@ class BluetoothManager:
         """Return if passive scan is supported."""
         return any(adapter[ADAPTER_PASSIVE_SCAN] for adapter in self._adapters.values())
 
+    def supports_passive_scan_for(self, adapter: str) -> bool:
+        """Return if passive scan is supported on a specific adapter."""
+        return self._adapters.get(adapter, {}).get(ADAPTER_PASSIVE_SCAN, False)
+
     def is_operating_degraded(self) -> bool:
         """
         Return if the manager is operating in degraded mode.
