@@ -103,6 +103,14 @@ channels/bluez.py
    types. `models.py` declares `_float = float`, `_str = str`, `_int = int`
    for exactly this reason — use the underscore aliases when you need to
    guarantee a Python object.
+5. Do not annotate a global that is `cdef`-declared in a `.pxd` with
+   `typing.Final`; Cython 3.3 crashes on it (cython/cython#7942).
+6. Parameters of `.pxd`-declared functions must not use a subscripted builtin
+   whose arguments Cython can resolve (`list[str]`, `dict[str, int]`,
+   `set[ActiveScanRequest]`); Cython 3.3 rejects them as incompatible with the
+   bare `list`/`dict`/`set` in the `.pxd`. Route them through an alias Cython
+   cannot resolve (`list[_str]`, `set[_ActiveScanRequest]`) so the `.pxd`
+   type applies and mypy still sees the full type.
 
 ## Development workflow
 

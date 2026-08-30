@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.26.8 (2026-08-30)
+
+### Bug fixes
+
+
+- Build with cython 3.3.0 by reconciling annotations with the pxd declarations ([`b7ea8cb`](https://github.com/Bluetooth-Devices/habluetooth/commit/b7ea8cbd383182e8cad6617201a148b4e257a1bb))
+
+
+### Build system
+
+
+- Pin cython below 3.3 ([`f099c61`](https://github.com/Bluetooth-Devices/habluetooth/commit/f099c619b38c386a913dcaf59df86fd9a45bd9ba))
+
+
 ## v6.26.7 (2026-08-19)
 
 ### Bug fixes

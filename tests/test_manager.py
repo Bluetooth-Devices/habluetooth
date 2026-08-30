@@ -3991,6 +3991,26 @@ async def test_address_reachability_diagnostics_in_history_no_scanner() -> None:
 
 
 @pytest.mark.asyncio
+async def test_address_reachability_diagnostics_connection_in_history_no_scanner() -> (
+    None
+):
+    """A connect intent says the device is not in any discovered map."""
+    manager = get_manager()
+    address = "44:44:33:11:23:4d"
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", rssi=-70)
+    # In history but cached by no scanner: no connect path.
+    inject_advertisement_with_source(device, adv, "ghost")
+
+    diag = manager.async_address_reachability_diagnostics(
+        address, BluetoothReachabilityIntent.CONNECTION
+    )
+    assert "in connectable history" in diag
+    assert "no scanner currently has it in its discovered devices" in diag
+    assert "slot" not in diag
+
+
+@pytest.mark.asyncio
 async def test_address_reachability_diagnostics_all_scanners_connecting() -> None:
     """When every scanner is paused connecting, the device cannot be seen."""
     manager = get_manager()
