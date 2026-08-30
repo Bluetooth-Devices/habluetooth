@@ -92,6 +92,7 @@ def disable_stop_discovery():
     with (
         patch("habluetooth.scanner_bleak.stop_discovery"),
         patch("habluetooth.scanner_bleak.restore_discoveries"),
+        patch("habluetooth.scanner_bleak.restore_discoveries_sync"),
     ):
         yield
 
@@ -1871,6 +1872,26 @@ async def test_async_toggle_active_window_mode_marks_not_scanning_on_start_error
         assert scanner_obj.scanning is True
         assert await scanner_obj._async_toggle_active_window_mode() is False
         assert scanner_obj.scanning is False
+
+
+@pytest.mark.usefixtures("force_linux_scanner_mode")
+@pytest.mark.asyncio
+async def test_async_toggle_active_window_mode_restores_discoveries() -> None:
+    """A successful in place toggle re-seeds bleak's discovered map."""
+    with (
+        patch_bleak_scanner_factory(MockBleakScanner),
+        patch("habluetooth.scanner_bleak.restore_discoveries", AsyncMock()) as restore,
+        patch("habluetooth.scanner_bleak.restore_discoveries_sync") as restore_sync,
+    ):
+        scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner_obj.async_setup()
+        await scanner_obj.async_start()
+        assert restore.await_count == 1
+        scanner_obj._scan_mode_override = BluetoothScanningMode.ACTIVE
+        assert await scanner_obj._async_toggle_active_window_mode() is True
+        assert restore.await_count == 1
+        restore_sync.assert_called_once_with(scanner_obj.scanner, "hci0")
+        await scanner_obj.async_stop()
 
 
 @pytest.mark.usefixtures("force_linux_scanner_mode")
