@@ -66,6 +66,7 @@ class BaseHaScanner:
         "_last_detection",
         "_loop",
         "_manager",
+        "_merge_reset_addresses",
         "_previous_service_info",
         "_start_time",
         "adapter",
@@ -125,6 +126,7 @@ class BaseHaScanner:
             scanner_type=scanner_type,
         )
         self._previous_service_info: dict[str, BluetoothServiceInfoBleak] = {}
+        self._merge_reset_addresses: set[str] = set()
         # Scanners only care about connectable devices. The manager
         # will handle taking care of availability for non-connectable devices
         self._expire_seconds = CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
@@ -435,6 +437,7 @@ class BaseHaScanner:
     ) -> None:
         """Restore discovered devices from a previous run."""
         discovered_device_timestamps = history.discovered_device_timestamps
+        self._merge_reset_addresses.clear()
         self._previous_service_info = {
             address: BluetoothServiceInfoBleak(
                 device.name or address,
@@ -515,6 +518,17 @@ class BaseHaScanner:
             address: info.raw for address, info in self._previous_service_info.items()
         }
 
+    def _clear_advertisement_merge_history(self, address: str) -> None:
+        """
+        Treat the next advertisement from this address as new data.
+
+        The stored advertisement is kept so the address stays reachable through
+        this scanner while waiting for that advertisement; only the merging of
+        the next advertisement into it is suppressed.
+        """
+        if address in self._previous_service_info:
+            self._merge_reset_addresses.add(address)
+
     def _async_on_raw_advertisement(
         self,
         address: _str,
@@ -524,8 +538,10 @@ class BaseHaScanner:
         advertisement_monotonic_time: _float,
     ) -> None:
         if (
-            prev_info := self._previous_service_info.get(address)
-        ) is not None and prev_info.raw == raw:
+            (prev_info := self._previous_service_info.get(address)) is not None
+            and prev_info.raw == raw
+            and address not in self._merge_reset_addresses
+        ):
             # Raw advertisement data unchanged — skip parsing and merge
             # logic, reuse the previous parsed data directly.
             self.scanning = not self._connecting
@@ -604,7 +620,17 @@ class BaseHaScanner:
         self._last_detection = advertisement_monotonic_time
         info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
 
-        if (prev_info := self._previous_service_info.get(address)) is None:
+        prev_info = self._previous_service_info.get(address)
+        # Almost always empty, so check that before hashing the address
+        if (
+            prev_info is not None
+            and self._merge_reset_addresses
+            and address in self._merge_reset_addresses
+        ):
+            self._merge_reset_addresses.remove(address)
+            prev_info = None
+
+        if prev_info is None:
             # We expect this is the rare case and since py3.11+ has
             # near zero cost try on success, and we can avoid .get()
             # which is slower than [] we use the try/except pattern.
@@ -712,6 +738,7 @@ class BaseHaScanner:
         ]
         for address in expired:
             del self._previous_service_info[address]
+            self._merge_reset_addresses.discard(address)
 
     def _cancel_expire_devices(self) -> None:
         """Cancel the expiration of old devices."""

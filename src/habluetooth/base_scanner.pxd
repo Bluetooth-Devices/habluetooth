@@ -29,6 +29,7 @@ cdef class BaseHaScanner:
     cdef public object current_mode
     cdef public object requested_mode
     cdef public dict _previous_service_info
+    cdef public set _merge_reset_addresses
     cdef public double _expire_seconds
     cdef public dict _details
     cdef public object _cancel_track
@@ -77,6 +78,8 @@ cdef class BaseHaScanner:
 
     @cython.locals(info=BluetoothServiceInfoBleak)
     cdef dict _build_discovered_device_timestamps(self)
+
+    cpdef void _clear_advertisement_merge_history(self, str address)
 
     @cython.locals(parsed=tuple, prev_info=BluetoothServiceInfoBleak, info=BluetoothServiceInfoBleak)
     cpdef void _async_on_raw_advertisement(
