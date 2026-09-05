@@ -1068,11 +1068,13 @@ class AutoScanScheduler:
         connecting fallback).
         """
         loop = self._loop
-        if (
-            loop is None
-            or not self._running
-            or (requests := self._requests_by_address.get(address)) is None
-        ):
+        if loop is None or not self._running:
+            return
+        # Cython 3.0.12 through 3.1.x cannot prove a walrus bound inside a
+        # short-circuited or chain assigns a typed local (requests=set in the
+        # .pxd) and rejects the read below
+        requests = self._requests_by_address.get(address)
+        if requests is None:
             return
         now = loop.time()
         coarse_now = monotonic_time_coarse()
