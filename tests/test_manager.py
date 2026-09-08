@@ -4576,3 +4576,57 @@ async def test_connectable_adv_still_dispatches_to_bleak_callbacks(
         cancel()
 
     assert bleak_devices == [device]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.parametrize(
+    ("owner_connectable", "challenger_connectable"),
+    [(True, False), (True, True), (False, False)],
+)
+async def test_non_owner_payload_dispatched_without_changing_owner(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+    owner_connectable: bool,
+    challenger_connectable: bool,
+) -> None:
+    """Deliver a missed state change once without moving the connection route."""
+    manager = get_manager()
+    address = "44:44:33:11:23:47"
+    device = generate_ble_device(address, "presence")
+    now = time.monotonic()
+    discovered: list[BluetoothServiceInfoBleak] = []
+    manager._subclass_discover_info = Mock(side_effect=discovered.append)
+
+    occupied = generate_advertisement_data(
+        local_name="presence", service_data={"181a": b"\x01"}, rssi=-60
+    )
+    inject_advertisement_with_time_and_source_connectable(
+        device, occupied, now, HCI0_SOURCE_ADDRESS, owner_connectable
+    )
+    owner = manager.async_last_service_info(address, connectable=False)
+    connection_route = manager.async_last_service_info(address, connectable=True)
+    discovered.clear()
+
+    clear = generate_advertisement_data(
+        local_name="presence", service_data={"181a": b"\x00"}, rssi=-80
+    )
+    inject_advertisement_with_time_and_source_connectable(
+        device, clear, now + 1, HCI1_SOURCE_ADDRESS, challenger_connectable
+    )
+
+    assert len(discovered) == 1
+    assert discovered[0].service_data == {"181a": b"\x00"}
+    assert discovered[0].source == HCI1_SOURCE_ADDRESS
+    assert discovered[0].connectable is owner_connectable
+    assert manager.async_last_service_info(address, connectable=False) is owner
+    assert (
+        manager.async_last_service_info(address, connectable=True) is connection_route
+    )
+
+    # The owner's cache still contains occupied; deduplicate against the callback.
+    for source in (HCI1_SOURCE_ADDRESS, NON_CONNECTABLE_REMOTE_SOURCE_ADDRESS):
+        inject_advertisement_with_time_and_source_connectable(
+            device, clear, now + 2, source, False
+        )
+    assert len(discovered) == 1
