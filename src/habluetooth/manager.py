@@ -1577,6 +1577,11 @@ class BluetoothManager:
             parts.append("in connectable history")
         elif address in self._all_history:
             parts.append("only in non-connectable history (no connectable path)")
+        elif devices:
+            # async_clear_advertisement_history empties the manager history but
+            # keeps each scanner's discovered-device record, so scanners still
+            # holding the address means it was cleared, not never seen.
+            parts.append("not in history (advertisement history was cleared)")
         else:
             parts.append("unknown (never seen by any scanner)")
 
