@@ -63,7 +63,30 @@ def build(setup_kwargs: Any) -> None:
             {
                 "ext_modules": cythonize(
                     EXTENSIONS,
-                    compiler_directives={"language_level": "3"},  # Python 3
+                    compiler_directives={
+                        "language_level": "3",  # Python 3
+                        # The .pxd files are the authoritative C-level types.
+                        # Cython 3.3 started reconciling them against the .py
+                        # annotations and rejects a bare container type in a
+                        # .pxd against a parameterised one in the .py, e.g.
+                        #
+                        #   .pxd  cpdef void _attach_owned(self, str address,
+                        #                                  dict entries)
+                        #   .py   def _attach_owned(
+                        #             self, address: str,
+                        #             entries: dict[ActiveScanRequest, float],
+                        #         ) -> None
+                        #
+                        # which fails with "Signature not compatible with
+                        # previous declaration". Ten declarations across
+                        # auto_scheduler.pxd and base_scanner.pxd hit this, so
+                        # a source build with an unpinned Cython (the
+                        # build-system requirement is only `Cython>=3`) cannot
+                        # complete. Take the types from the .pxd, which is
+                        # where they were always meant to come from, and leave
+                        # the annotations to mypy and to human readers.
+                        "annotation_typing": False,
+                    },
                     annotate=bool(os.environ.get("CYTHON_ANNOTATE")),
                 ),
                 "cmdclass": {"build_ext": BuildExt},
