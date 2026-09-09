@@ -1,5 +1,13 @@
 # Changelog
 
+## v7.0.0 (2026-09-09)
+
+### Bug fixes
+
+
+- Keep the device record when clearing advertisement history ([`1aeec36`](https://github.com/Bluetooth-Devices/habluetooth/commit/1aeec36a84e7399a38f8094e237f50ed030ad3f3))
+
+
 ## v6.26.11 (2026-08-30)
 
 ### Bug fixes
