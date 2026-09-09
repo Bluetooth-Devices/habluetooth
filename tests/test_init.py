@@ -569,6 +569,49 @@ async def test_async_clear_advertisement_history_clears_scanner_merging():
 
 
 @pytest.mark.asyncio
+async def test_async_clear_advertisement_history_from_dispatch_callback():
+    """Test clearing from the callback the advertisement is dispatched to."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel = manager.async_register_scanner(scanner)
+
+    address = "AA:BB:CC:DD:EE:FF"
+    dispatched: list[BluetoothServiceInfoBleak] = []
+
+    def _clear_on_dispatch(service_info: BluetoothServiceInfoBleak) -> None:
+        dispatched.append(service_info)
+        manager.async_clear_advertisement_history(service_info.address)
+
+    # The #358 flow: a consumer that needs mutually-exclusive state UUIDs never
+    # to accumulate clears on every advertisement, from inside the dispatch the
+    # scanner makes after storing its record.
+    manager._subclass_discover_info = _clear_on_dispatch
+
+    _advertise_state_uuid(scanner, address, STATE_A_UUID, 1.0)
+    device = scanner._previous_service_info[address].device
+    _advertise_state_uuid(scanner, address, STATE_B_UUID, 2.0)
+    _advertise_state_uuid(scanner, address, STATE_A_UUID, 3.0)
+
+    # Each advertisement is dispatched with only its own state UUID; the reset
+    # builds a new record rather than mutating the one already handed out
+    assert [info.service_uuids for info in dispatched] == [
+        [STATE_A_UUID],
+        [STATE_B_UUID],
+        [STATE_A_UUID],
+    ]
+
+    # ...and the address stays reachable throughout, never dropping out of the
+    # scanner between the clear and the next advertisement
+    stored = scanner._previous_service_info[address]
+    assert stored.service_uuids == []
+    assert stored.device is device
+    assert manager.async_scanner_devices_by_address(address, True)
+
+    cancel()
+
+
+@pytest.mark.asyncio
 async def test_async_clear_advertisement_history_bypasses_raw_shortcut():
     """Test an unchanged raw advertisement still resets merging after a clear."""
     manager = get_manager()
