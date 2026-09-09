@@ -1372,6 +1372,12 @@ class BluetoothManager:
         data, bypassing both the advertisement-merging logic in scanners and
         the change-detection guard. Intended for devices that encode state in
         mutually-exclusive service UUIDs.
+
+        Each scanner's discovered-device record is retained with its
+        advertisement data emptied, so the address stays connectable and keeps
+        its BLEDevice identity while waiting for the next advertisement. The
+        record still expires on its original schedule; clearing does not
+        extend its lifetime.
         """
         self._all_history.pop(address, None)
         self._connectable_history.pop(address, None)
@@ -1380,7 +1386,7 @@ class BluetoothManager:
         self._demoted_sources.pop(address, None)
         self._rescue_triggered.pop(address, None)
         for scanner in self._sources.values():
-            scanner._previous_service_info.pop(address, None)
+            scanner._clear_advertisement_merge_history(address)
 
     def _discover_service_info(self, service_info: BluetoothServiceInfoBleak) -> None:
         """
@@ -1571,6 +1577,11 @@ class BluetoothManager:
             parts.append("in connectable history")
         elif address in self._all_history:
             parts.append("only in non-connectable history (no connectable path)")
+        elif devices:
+            # async_clear_advertisement_history empties the manager history but
+            # keeps each scanner's discovered-device record, so scanners still
+            # holding the address means it was cleared, not never seen.
+            parts.append("not in history (advertisement history was cleared)")
         else:
             parts.append("unknown (never seen by any scanner)")
 

@@ -3931,6 +3931,29 @@ async def test_address_reachability_diagnostics_unknown(
 
 
 @pytest.mark.asyncio
+async def test_address_reachability_diagnostics_after_clearing_history() -> None:
+    """A cleared address is reported as cleared, not as never seen."""
+    manager = get_manager()
+    address = "44:44:33:11:23:4b"
+    scanner = InjectableRemoteScanner("proxy", "proxy", None, True)
+    cancel = manager.async_register_scanner(scanner)
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", rssi=-70)
+    scanner.inject_advertisement(device, adv)
+
+    # Clearing empties the manager history but keeps the scanner record, so
+    # the diagnostics must not claim no scanner has ever seen the address
+    manager.async_clear_advertisement_history(address)
+
+    diag = manager.async_address_reachability_diagnostics(
+        address, BluetoothReachabilityIntent.CONNECTION
+    )
+    assert "not in history (advertisement history was cleared)" in diag
+    assert "never seen by any scanner" not in diag
+    cancel()
+
+
+@pytest.mark.asyncio
 async def test_address_reachability_diagnostics_no_connectable_scanners() -> None:
     """With only a non-connectable scanner the connectable count is zero."""
     manager = get_manager()

@@ -515,6 +515,27 @@ class BaseHaScanner:
             address: info.raw for address, info in self._previous_service_info.items()
         }
 
+    def _clear_advertisement_merge_history(self, address: str) -> None:
+        """Keep the device reachable but drop the advertisement data it merges into."""
+        if (prev_info := self._previous_service_info.get(address)) is None:
+            return
+        info = BluetoothServiceInfoBleak.__new__(BluetoothServiceInfoBleak)
+        info.device = prev_info.device
+        info.name = prev_info.name
+        info.manufacturer_data = {}
+        info.service_data = {}
+        info.service_uuids = []
+        info.address = address
+        info.rssi = prev_info.rssi
+        info.source = self.source
+        info._advertisement = None
+        info.connectable = self.connectable
+        info.time = prev_info.time
+        info.tx_power = prev_info.tx_power
+        # No raw bytes, so the unchanged-raw shortcut cannot reuse this record
+        info.raw = None
+        self._previous_service_info[address] = info
+
     def _async_on_raw_advertisement(
         self,
         address: _str,
