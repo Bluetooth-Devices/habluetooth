@@ -3,7 +3,6 @@ from unittest.mock import ANY, MagicMock
 import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from bluetooth_data_tools import monotonic_time_coarse
 
 from habluetooth import (
     BaseHaRemoteScanner,
@@ -518,7 +517,7 @@ def _advertise_state_uuid(
 
 @pytest.mark.asyncio
 async def test_async_clear_advertisement_history_clears_scanner_merging():
-    """Test that clearing history resets UUID merging in scanners."""
+    """Test that clearing history resets UUID merging but keeps the device."""
     manager = get_manager()
     connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
     scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
@@ -526,7 +525,12 @@ async def test_async_clear_advertisement_history_clears_scanner_merging():
 
     address = "AA:BB:CC:DD:EE:FF"
 
+    # Clearing an address the scanner has never seen does not create a record
+    manager.async_clear_advertisement_history(address)
+    assert address not in scanner._previous_service_info
+
     _advertise_state_uuid(scanner, address, STATE_A_UUID, 1.0)
+    device = scanner._previous_service_info[address].device
     # Without a clear, the mutually-exclusive state UUIDs merge into one set
     _advertise_state_uuid(scanner, address, STATE_B_UUID, 2.0)
     assert set(scanner._previous_service_info[address].service_uuids) == {
@@ -539,9 +543,20 @@ async def test_async_clear_advertisement_history_clears_scanner_merging():
     assert address not in manager._all_history
     assert address not in manager._connectable_history
 
+    # bleak-retry-connector resolves a backend through this list; an empty one
+    # raises "never seen by any scanner" until the device advertises again
+    assert manager.async_scanner_devices_by_address(address, True)
+    assert address in scanner.discovered_addresses
+    stored = scanner._previous_service_info[address]
+    assert stored.device is device
+    assert stored.rssi == -88
+    assert stored.time == 2.0
+    assert stored.service_uuids == []
+
     # The next advertisement is built from scratch instead of being merged
     _advertise_state_uuid(scanner, address, STATE_A_UUID, 3.0)
     assert scanner._previous_service_info[address].service_uuids == [STATE_A_UUID]
+    assert scanner._previous_service_info[address].device is device
 
     # ...and only that one advertisement, merging resumes afterwards
     _advertise_state_uuid(scanner, address, STATE_B_UUID, 4.0)
@@ -549,45 +564,6 @@ async def test_async_clear_advertisement_history_clears_scanner_merging():
         STATE_A_UUID,
         STATE_B_UUID,
     }
-
-    cancel()
-
-
-@pytest.mark.asyncio
-async def test_async_clear_advertisement_history_keeps_device_connectable():
-    """Test the device stays reachable before the next advertisement arrives."""
-    manager = get_manager()
-    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
-    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
-    cancel = manager.async_register_scanner(scanner)
-
-    address = "AA:BB:CC:DD:EE:FF"
-    _advertise_state_uuid(scanner, address, STATE_A_UUID, 1.0)
-    device_before = scanner.get_discovered_device_advertisement_data(address)
-    assert device_before is not None
-
-    manager.async_clear_advertisement_history(address)
-
-    # bleak-retry-connector resolves a backend through this list; an empty one
-    # raises "never seen by any scanner" until the device advertises again
-    assert manager.async_scanner_devices_by_address(address, True)
-    assert scanner.get_discovered_device_advertisement_data(address) == device_before
-    assert address in scanner.discovered_addresses
-    assert address in scanner.discovered_devices_and_advertisement_data
-
-    cancel()
-
-
-@pytest.mark.asyncio
-async def test_async_clear_advertisement_history_unknown_address():
-    """Test clearing an address the scanner has never seen does not mark it."""
-    manager = get_manager()
-    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
-    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
-    cancel = manager.async_register_scanner(scanner)
-
-    manager.async_clear_advertisement_history("AA:BB:CC:DD:EE:FF")
-    assert not scanner._merge_reset_addresses
 
     cancel()
 
@@ -605,33 +581,16 @@ async def test_async_clear_advertisement_history_bypasses_raw_shortcut():
     raw_b = b"\x03\x03\x00\xe0"
     scanner._async_on_raw_advertisement(address, -88, raw_a, {}, 1.0)
     scanner._async_on_raw_advertisement(address, -88, raw_b, {}, 2.0)
-    assert len(scanner._previous_service_info[address].service_uuids) == 2
+    assert set(scanner._previous_service_info[address].service_uuids) == {
+        STATE_A_UUID,
+        STATE_B_UUID,
+    }
 
     manager.async_clear_advertisement_history(address)
 
     # Identical raw bytes normally short-circuit straight to the merged data
     scanner._async_on_raw_advertisement(address, -88, raw_b, {}, 3.0)
-    assert len(scanner._previous_service_info[address].service_uuids) == 1
-
-    cancel()
-
-
-@pytest.mark.asyncio
-async def test_async_clear_advertisement_history_expiry_drops_marker():
-    """Test an expired device does not leave a stale merge-reset marker."""
-    manager = get_manager()
-    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
-    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
-    cancel = manager.async_register_scanner(scanner)
-
-    address = "AA:BB:CC:DD:EE:FF"
-    stale = monotonic_time_coarse() - scanner._expire_seconds - 1
-    _advertise_state_uuid(scanner, address, STATE_A_UUID, stale)
-    manager.async_clear_advertisement_history(address)
-    assert scanner._merge_reset_addresses == {address}
-
-    scanner._async_expire_devices()
-    assert address not in scanner._previous_service_info
-    assert not scanner._merge_reset_addresses
+    assert scanner._previous_service_info[address].service_uuids == [STATE_B_UUID]
+    assert scanner._previous_service_info[address].raw == raw_b
 
     cancel()

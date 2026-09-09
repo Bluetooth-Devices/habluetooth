@@ -1372,10 +1372,6 @@ class BluetoothManager:
         data, bypassing both the advertisement-merging logic in scanners and
         the change-detection guard. Intended for devices that encode state in
         mutually-exclusive service UUIDs.
-
-        Each scanner keeps the advertisement it last reported for the address,
-        since that record is also what it hands out as a connection path; only
-        the merging of the next advertisement into it is suppressed.
         """
         self._all_history.pop(address, None)
         self._connectable_history.pop(address, None)
