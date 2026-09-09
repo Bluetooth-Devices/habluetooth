@@ -1,5 +1,49 @@
 # Changelog
 
+## v6.26.11 (2026-08-30)
+
+### Bug fixes
+
+
+- Disconnect clients when their scanner is unregistered ([`bbe4fa1`](https://github.com/Bluetooth-Devices/habluetooth/commit/bbe4fa18dcef43ca5ccf33bd88b96e3a7d4f0935))
+
+
+## v6.26.10 (2026-08-30)
+
+### Bug fixes
+
+
+- Only fall back to passive when the adapter supports it ([`a913449`](https://github.com/Bluetooth-Devices/habluetooth/commit/a913449f1d0eb258f8b49b8dfa7ebfeb81e2bb94))
+
+
+## v6.26.9 (2026-08-30)
+
+### Bug fixes
+
+
+- Restore discoveries after an active window flip ([`8fab61c`](https://github.com/Bluetooth-Devices/habluetooth/commit/8fab61c39ea81e24b70023b760b4de6dcb01c89c))
+
+
+- Say when a device is in history but cached by no scanner ([`c741414`](https://github.com/Bluetooth-Devices/habluetooth/commit/c741414edb6d0d899481ebf7d18c890b9444736b))
+
+
+- Passive scanning misses devices whose flags are not general discoverable ([`c960fac`](https://github.com/Bluetooth-Devices/habluetooth/commit/c960facefbdd512d8164b4910a7f20f968db9d73))
+
+
+## v6.26.8 (2026-08-30)
+
+### Bug fixes
+
+
+- Build with cython 3.3.0 by reconciling annotations with the pxd declarations ([`b7ea8cb`](https://github.com/Bluetooth-Devices/habluetooth/commit/b7ea8cbd383182e8cad6617201a148b4e257a1bb))
+
+
+### Build system
+
+
+- Pin cython below 3.3 ([`f099c61`](https://github.com/Bluetooth-Devices/habluetooth/commit/f099c619b38c386a913dcaf59df86fd9a45bd9ba))
+
+
 ## v6.26.7 (2026-08-19)
 
 ### Bug fixes

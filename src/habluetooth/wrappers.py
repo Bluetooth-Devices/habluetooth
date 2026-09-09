@@ -9,7 +9,7 @@ import logging
 import warnings
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final, Literal, Self, overload
+from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, Self, overload
 
 from bleak import BleakClient, BleakError, normalize_uuid_str
 from bleak.backends.client import BaseBleakClient, get_platform_client_backend_type
@@ -21,7 +21,13 @@ from bleak_retry_connector import (
 )
 
 from .central_manager import get_manager
-from .const import BDADDR_LE_PUBLIC, BDADDR_LE_RANDOM, CALLBACK_TYPE, ConnectParams
+from .const import (
+    BDADDR_LE_PUBLIC,
+    BDADDR_LE_RANDOM,
+    CALLBACK_TYPE,
+    CLIENT_DISCONNECT_TIMEOUT,
+    ConnectParams,
+)
 from .models import BluetoothReachabilityIntent
 
 FILTER_UUIDS: Final = "UUIDs"
@@ -354,8 +360,15 @@ class HaBleakClientWrapper(BleakClient):
         if self._backend is not None and hasattr(
             self._backend, "set_connection_params"
         ):
+            # The backend owns its own not-connected handling.
             await self._backend.set_connection_params(
                 min_interval, max_interval, latency, timeout
+            )
+            return
+        if not self.is_connected:
+            _LOGGER.debug(
+                "%s: not setting connection params; client is not connected",
+                self.__address,
             )
             return
         # BlueZ local path - use mgmt API
@@ -507,8 +520,9 @@ class HaBleakClientWrapper(BleakClient):
 
         # Load medium connection parameters after successful connection
         if connected:
-            self._connected_scanner = scanner
-            self._connected_device = device
+            if manager.async_scanner_by_source(scanner.source) is not scanner:
+                await self._async_abort_unregistered_mid_connect(scanner)
+            self._track(scanner, device)
             self._load_conn_params(
                 scanner,
                 device,
@@ -671,8 +685,140 @@ class HaBleakClientWrapper(BleakClient):
             msg = f"{msg}: {diagnostics}"
         raise BleakError(msg)
 
+    def _track(self, scanner: BaseHaScanner, device: BLEDevice) -> None:
+        """Record the connected path; the scanner set follows the pointer."""
+        if (previous := self._connected_scanner) is not None and (
+            previous is not scanner
+        ):
+            # Reconnect landed on a different scanner.
+            previous._clients.discard(self)
+        self._connected_scanner = scanner
+        self._connected_device = device
+        # Disconnected by the manager if the scanner is unregistered.
+        scanner._clients.add(self)
+
+    def _untrack(self) -> None:
+        """Drop the connected path."""
+        if (scanner := self._connected_scanner) is not None:
+            scanner._clients.discard(self)
+            self._connected_scanner = None
+            self._connected_device = None
+
+    def _untrack_if_down(self) -> None:
+        """Drop the connected path unless the link may still be up."""
+        if not self.is_connected:
+            self._untrack()
+
+    def _give_up(self, notify: bool = False) -> None:
+        """
+        Drop the backend and tracking for a link this wrapper no longer owns.
+
+        When the teardown failed the link leaks to BlueZ (logged by the
+        caller), but the wrapper must not keep reporting connected: the
+        next establish_connection retry must re-resolve a backend instead
+        of short circuiting on is_connected. With notify, the consumer's
+        disconnected callback fires so integrations that wait for it
+        schedule their reconnect.
+        """
+        was_up = self.is_connected
+        self._detach_disconnected_callback()
+        self._backend = None
+        self._untrack()
+        if (
+            notify
+            # The backend already fired the callback if the link was down.
+            and was_up
+            and (
+                callback := self._make_disconnected_callback(
+                    self.__disconnected_callback
+                )
+            )
+            is not None
+        ):
+            asyncio.get_running_loop().call_soon(callback)
+
+    def _detach_disconnected_callback(self) -> None:
+        """
+        Silence the backend's disconnected callback.
+
+        An orphaned or aborting backend must not fire the consumer's
+        callback: against a later reconnect when a leaked link drops, or
+        for a connect that is about to raise.
+        """
+        if (backend := self._backend) is None:
+            return
+        try:
+            backend.set_disconnected_callback(None)
+        except Exception:  # pylint: disable=broad-except
+            # A stale backend that later fires will reach the consumer.
+            _LOGGER.warning(
+                "%s: could not detach the disconnected callback",
+                self.__address,
+                exc_info=True,
+            )
+
+    async def _async_abort_unregistered_mid_connect(
+        self, scanner: BaseHaScanner
+    ) -> NoReturn:
+        """
+        Fail a connect whose scanner was unregistered while in flight.
+
+        Tears the link down inline, without ever tracking it, so the
+        wrapper reports disconnected and the caller can retry elsewhere.
+        The slot needs no explicit release: it stays occupied while the
+        link is up, and the slot manager's device watcher (or the
+        adapter's removal) already covers the other exits.
+        """
+        # The caller learns about this through the BleakError; silence the
+        # callback first or a clean teardown would fire it mid connect.
+        self._detach_disconnected_callback()
+        try:
+            async with asyncio.timeout(CLIENT_DISCONNECT_TIMEOUT) as timed_out:
+                await self.disconnect()
+        except asyncio.CancelledError:
+            _LOGGER.debug(
+                "%s: cancelled disconnecting after scanner %s was"
+                " unregistered mid connect",
+                self.__address,
+                scanner.name,
+            )
+            raise
+        except Exception as exc:  # pylint: disable=broad-except
+            if isinstance(exc, TimeoutError) and timed_out.expired():
+                _LOGGER.warning(
+                    "%s: timed out disconnecting after scanner %s was"
+                    " unregistered mid connect",
+                    self.__address,
+                    scanner.name,
+                )
+            else:
+                _LOGGER.exception(
+                    "%s: error disconnecting after scanner %s was"
+                    " unregistered mid connect",
+                    self.__address,
+                    scanner.name,
+                )
+        finally:
+            # On every exit, including cancellation, the wrapper must not
+            # keep a handle to the doomed link.
+            self._give_up()
+        msg = (
+            f"{self.__address}: scanner {scanner.name} was unregistered during connect"
+        )
+        raise BleakError(msg)
+
     async def disconnect(self) -> None:
         """Disconnect from the device."""
         if self._backend is None:
+            # No backend means not connected; drop any pointers left by an
+            # earlier failed teardown.
+            self._untrack()
             return
-        await self._backend.disconnect()
+        try:
+            await self._backend.disconnect()
+        except BaseException:
+            # A raise may leave the link up; keep the client tracked then so
+            # scanner unregister can still tear it down.
+            self._untrack_if_down()
+            raise
+        self._untrack()

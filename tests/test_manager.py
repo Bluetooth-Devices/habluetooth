@@ -3991,6 +3991,26 @@ async def test_address_reachability_diagnostics_in_history_no_scanner() -> None:
 
 
 @pytest.mark.asyncio
+async def test_address_reachability_diagnostics_connection_in_history_no_scanner() -> (
+    None
+):
+    """A connect intent says the device is not in any discovered map."""
+    manager = get_manager()
+    address = "44:44:33:11:23:4d"
+    device = generate_ble_device(address, "wohand")
+    adv = generate_advertisement_data(local_name="wohand", rssi=-70)
+    # In history but cached by no scanner: no connect path.
+    inject_advertisement_with_source(device, adv, "ghost")
+
+    diag = manager.async_address_reachability_diagnostics(
+        address, BluetoothReachabilityIntent.CONNECTION
+    )
+    assert "in connectable history" in diag
+    assert "no scanner currently has it in its discovered devices" in diag
+    assert "slot" not in diag
+
+
+@pytest.mark.asyncio
 async def test_address_reachability_diagnostics_all_scanners_connecting() -> None:
     """When every scanner is paused connecting, the device cannot be seen."""
     manager = get_manager()
@@ -4075,6 +4095,15 @@ async def test_supports_passive_scan_reflects_adapter_capability() -> None:
         "hci1": {ADAPTER_PASSIVE_SCAN: True},
     }
     assert manager.supports_passive_scan is True
+
+
+@pytest.mark.asyncio
+async def test_supports_passive_scan_for_unknown_adapter_is_false() -> None:
+    """supports_passive_scan_for fails closed for an adapter not in the cache."""
+    manager = BluetoothManager(FakeBluetoothAdapters(), Mock())
+    manager._adapters = {"hci0": {ADAPTER_PASSIVE_SCAN: True}}
+    assert manager.supports_passive_scan_for("hci0") is True
+    assert manager.supports_passive_scan_for("hci1") is False
 
 
 @pytest.mark.asyncio

@@ -65,9 +65,7 @@ class BondStorage:
                 long_term_key_from_dict(key) for key in saved
             )
         # Save (debounced) whenever the scanner's bonds change.
-        scanner.set_long_term_keys_changed_callback(
-            lambda: self._async_save(scanner)
-        )
+        scanner.set_long_term_keys_changed_callback(lambda: self._async_save(scanner))
 
     def _async_save(self, scanner: HaScannerMgmt):
         self._data[scanner.adapter] = [

@@ -14,6 +14,7 @@ from bleak import BleakError
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 from bleak_retry_connector import Allocations, BleakSlotManager
+from bluetooth_adapters import ADAPTER_PASSIVE_SCAN
 
 import habluetooth.scanner as scanner_shim
 from habluetooth import (
@@ -57,25 +58,9 @@ ADV_MONITOR_DEVICE_FOUND = 0x002F
 IS_WINDOWS = 'os.name == "nt"'
 IS_POSIX = 'os.name == "posix"'
 NOT_POSIX = 'os.name != "posix"'
-# or_patterns is a workaround for the fact that passive scanning
-# needs at least one matcher to be set. The below matcher
-# will match all devices.
-if platform.system() == "Linux":
-    # On Linux, use the real BlueZScannerArgs to avoid mocking issues
-    from bleak.args.bluez import BlueZScannerArgs, OrPattern
-    from bleak.assigned_numbers import AdvertisementDataType
-
-    scanner.PASSIVE_SCANNER_ARGS = BlueZScannerArgs(
-        or_patterns=[
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x02"),
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x06"),
-            OrPattern(0, AdvertisementDataType.FLAGS, b"\x1a"),
-        ]
-    )
-else:
-    # On other platforms ``bleak.args.bluez`` may not be importable. Use a
-    # non-empty real mapping that mimics the Linux shape so the production
-    # code's ``if bluez_args:`` truthy check still adds the ``bluez`` kwarg.
+if platform.system() != "Linux":
+    # ``bleak.args.bluez`` may not be importable off Linux; mimic the shape
+    # so the production ``if bluez_args:`` truthy check still fires.
     scanner.PASSIVE_SCANNER_ARGS = {"or_patterns": [(0, 0x01, b"\x06")]}
 # If the adapter is in a stuck state the following errors are raised:
 NEED_RESET_ERRORS = [
@@ -92,6 +77,7 @@ def disable_stop_discovery():
     with (
         patch("habluetooth.scanner_bleak.stop_discovery"),
         patch("habluetooth.scanner_bleak.restore_discoveries"),
+        patch("habluetooth.scanner_bleak.restore_discoveries_sync"),
     ):
         yield
 
@@ -149,6 +135,18 @@ def test_create_bleak_scanner_linux_no_adapter_active() -> None:
     kwargs = mock_scanner.call_args.kwargs
     assert "bluez" not in kwargs
     assert "adapter" not in kwargs
+
+
+@pytest.mark.skipif(platform.system() != "Linux", reason="Linux only")
+def test_passive_scan_flags_fit_one_monitor() -> None:
+    """The FLAGS list fits one monitor and covers the observed values."""
+    flags = scanner.PASSIVE_SCAN_FLAGS
+    assert len(flags) <= 16
+    assert len(set(flags)) == len(flags)
+    assert all(0 <= value <= 0xFF for value in flags)
+    # Values reported by real networks (#31, #615) must all be covered.
+    assert {0x02, 0x04, 0x05, 0x06, 0x18, 0x1A} <= set(flags)
+    assert len(scanner.PASSIVE_SCANNER_ARGS["or_patterns"]) == len(flags)
 
 
 def test_create_bleak_scanner_linux_no_adapter_passive() -> None:
@@ -881,10 +879,101 @@ async def test_setup_and_stop_macos() -> None:
 
 
 @pytest.mark.asyncio
+async def test_no_passive_fallback_when_passive_unsupported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No passive fallback when the adapter cannot scan passively."""
+    called_start = 0
+
+    class _AlwaysFailingScanner(MockBleakScanner):
+        async def start(self, *args: object, **kwargs: object) -> None:
+            nonlocal called_start
+            called_start += 1
+            msg = "org.bluez.Error.InProgress"
+            raise BleakError(msg)
+
+        async def stop(self, *args: object, **kwargs: object) -> None:
+            """Stop scanning."""
+
+    mock_scanner = _AlwaysFailingScanner()
+
+    with (
+        patch.object(
+            get_manager(), "_adapters", {"hci0": {ADAPTER_PASSIVE_SCAN: False}}
+        ),
+        patch("habluetooth.scanner_bleak.IS_LINUX", True),
+        patch("habluetooth.scanner_bleak.ADAPTER_INIT_TIME", 0),
+        patch(
+            "habluetooth.scanner_bleak.OriginalBleakScanner",
+            return_value=mock_scanner,
+        ),
+        patch("habluetooth.util.recover_adapter", return_value=True),
+    ):
+        scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner.async_setup()
+        with pytest.raises(ScannerStartError):
+            await scanner.async_start()
+
+    assert called_start == 4
+    assert scanner.current_mode is BluetoothScanningMode.ACTIVE
+    assert "Falling back to passive scanning mode" not in caplog.text
+    assert "Not falling back to passive scanning" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_passive_fallback_uses_own_adapter_capability(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The fallback checks the scanner's own adapter, not any adapter."""
+
+    class _AlwaysFailingScanner(MockBleakScanner):
+        async def start(self, *args: object, **kwargs: object) -> None:
+            msg = "org.bluez.Error.InProgress"
+            raise BleakError(msg)
+
+        async def stop(self, *args: object, **kwargs: object) -> None:
+            """Stop scanning."""
+
+    mixed_adapters = {
+        "hci0": {ADAPTER_PASSIVE_SCAN: False},
+        "hci1": {ADAPTER_PASSIVE_SCAN: True},
+    }
+
+    with (
+        patch.object(get_manager(), "_adapters", mixed_adapters),
+        patch("habluetooth.scanner_bleak.IS_LINUX", True),
+        patch("habluetooth.scanner_bleak.ADAPTER_INIT_TIME", 0),
+        patch(
+            "habluetooth.scanner_bleak.OriginalBleakScanner",
+            return_value=_AlwaysFailingScanner(),
+        ),
+        patch("habluetooth.util.recover_adapter", return_value=True),
+    ):
+        incapable = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+        incapable.async_setup()
+        with pytest.raises(ScannerStartError):
+            await incapable.async_start()
+
+        # Assert before hci1 runs so its fallback log cannot mask this.
+        assert incapable.current_mode is BluetoothScanningMode.ACTIVE
+        assert "Falling back to passive scanning mode" not in caplog.text
+
+        capable = HaScanner(BluetoothScanningMode.ACTIVE, "hci1", "AA:BB:CC:DD:EE:FE")
+        capable.async_setup()
+        with pytest.raises(ScannerStartError):
+            await capable.async_start()
+
+    # The capable adapter still takes the fallback.
+    assert capable.current_mode is BluetoothScanningMode.PASSIVE
+    assert "Falling back to passive scanning mode" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_adapter_init_fails_fallback_to_passive(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test we fallback to passive when adapter init fails."""
+    get_manager()._adapters = {"hci0": {ADAPTER_PASSIVE_SCAN: True}}
     called_start = 0
     called_stop = 0
     _callback = None
@@ -1871,6 +1960,26 @@ async def test_async_toggle_active_window_mode_marks_not_scanning_on_start_error
         assert scanner_obj.scanning is True
         assert await scanner_obj._async_toggle_active_window_mode() is False
         assert scanner_obj.scanning is False
+
+
+@pytest.mark.usefixtures("force_linux_scanner_mode")
+@pytest.mark.asyncio
+async def test_async_toggle_active_window_mode_restores_discoveries() -> None:
+    """A successful in place toggle re-seeds bleak's discovered map."""
+    with (
+        patch_bleak_scanner_factory(MockBleakScanner),
+        patch("habluetooth.scanner_bleak.restore_discoveries", AsyncMock()) as restore,
+        patch("habluetooth.scanner_bleak.restore_discoveries_sync") as restore_sync,
+    ):
+        scanner_obj = HaScanner(BluetoothScanningMode.AUTO, "hci0", "AA:BB:CC:DD:EE:FF")
+        scanner_obj.async_setup()
+        await scanner_obj.async_start()
+        assert restore.await_count == 1
+        scanner_obj._scan_mode_override = BluetoothScanningMode.ACTIVE
+        assert await scanner_obj._async_toggle_active_window_mode() is True
+        assert restore.await_count == 1
+        restore_sync.assert_called_once_with(scanner_obj.scanner, "hci0")
+        await scanner_obj.async_stop()
 
 
 @pytest.mark.usefixtures("force_linux_scanner_mode")
