@@ -55,6 +55,7 @@ cdef class BluetoothManager:
     cdef public set _bleak_callbacks
     cdef public dict _all_history
     cdef public dict _connectable_history
+    cdef public dict _last_dispatched_history
     cdef public dict _smoothed_rssi
     cdef public dict _demoted_sources
     cdef public dict _rescue_triggered
@@ -141,6 +142,12 @@ cdef class BluetoothManager:
         bint record_demotion
     )
 
+    cdef bint _advertisement_data_changed(
+        self,
+        BluetoothServiceInfoBleak old_info,
+        BluetoothServiceInfoBleak new_info,
+    )
+
     @cython.locals(
         cached=str,
         cached_cf=str,
@@ -161,6 +168,8 @@ cdef class BluetoothManager:
     @cython.locals(
         old_service_info=BluetoothServiceInfoBleak,
         old_connectable_service_info=BluetoothServiceInfoBleak,
+        last_dispatched_service_info=BluetoothServiceInfoBleak,
+        dispatch_service_info=BluetoothServiceInfoBleak,
         source=str,
         connectable=bint,
         apple_cstr="const unsigned char *",

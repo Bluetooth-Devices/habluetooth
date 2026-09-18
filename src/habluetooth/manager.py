@@ -176,6 +176,7 @@ class BluetoothManager:
         "_disappeared_callbacks",
         "_fallback_intervals",
         "_intervals",
+        "_last_dispatched_history",
         "_loop",
         "_mgmt_ctl",
         "_name_cache",
@@ -217,6 +218,11 @@ class BluetoothManager:
         self._bleak_callbacks: set[BleakCallback] = set()
         self._all_history: dict[str, BluetoothServiceInfoBleak] = {}
         self._connectable_history: dict[str, BluetoothServiceInfoBleak] = {}
+        # Latest advertisement delivered to integration callbacks. This is
+        # intentionally separate from _all_history: source arbitration owns
+        # connection routing, but a preferred scanner missing one changed
+        # broadcast must not hide that data when another scanner receives it.
+        self._last_dispatched_history: dict[str, BluetoothServiceInfoBleak] = {}
         # address -> source -> EWMA-smoothed advertisement RSSI. Only
         # populated for addresses seen from more than one source (the
         # arbitration that uses it only runs cross-source); single-proxy
@@ -582,6 +588,7 @@ class BluetoothManager:
                     self._smoothed_rssi.pop(address, None)
                     self._demoted_sources.pop(address, None)
                     self._rescue_triggered.pop(address, None)
+                    self._last_dispatched_history.pop(address, None)
                     for disappear_callback in self._disappeared_callbacks:
                         try:
                             disappear_callback(address)
@@ -1103,6 +1110,28 @@ class BluetoothManager:
         """
         self._scanner_adv_received(service_info)
 
+    def _advertisement_data_changed(
+        self,
+        old_info: BluetoothServiceInfoBleak,
+        new_info: BluetoothServiceInfoBleak,
+    ) -> bool:
+        """Return whether integration-visible advertisement data changed."""
+        return bool(
+            (
+                new_info.manufacturer_data is not old_info.manufacturer_data
+                and new_info.manufacturer_data != old_info.manufacturer_data
+            )
+            or (
+                new_info.service_data is not old_info.service_data
+                and new_info.service_data != old_info.service_data
+            )
+            or (
+                new_info.service_uuids is not old_info.service_uuids
+                and new_info.service_uuids != old_info.service_uuids
+            )
+            or (new_info.name is not old_info.name and new_info.name != old_info.name)
+        )
+
     def _scanner_adv_received(  # noqa: C901
         self, service_info: BluetoothServiceInfoBleak
     ) -> None:
@@ -1244,25 +1273,50 @@ class BluetoothManager:
             # If we are rejecting the new advertisement and the device is connectable
             # but not in the connectable history or the connectable source is the same
             # as the new source, we need to add it to the connectable history
-            if service_info.connectable:
-                if old_connectable_service_info is not None and (
-                    # If it's the same as the preferred source, we're done; we know
-                    # we prefer the old advertisement from the check above.
-                    old_connectable_service_info is old_service_info
-                    # Otherwise the old connectable came from a different source;
-                    # re-run the predicate against the connectable history entry.
-                    or self._should_keep_previous_adv(
+            if service_info.connectable and (
+                old_connectable_service_info is None
+                or (
+                    # If the connectable owner is also the all-history owner, retain
+                    # it. Otherwise independently decide whether this connectable
+                    # challenger should become the connection route.
+                    old_connectable_service_info is not old_service_info
+                    and not self._should_keep_previous_adv(
                         old_connectable_service_info,
                         service_info,
                         smoothed_bucket,
                         new_smoothed,
                         False,
                     )
-                ):
-                    return
-
+                )
+            ):
                 self._connectable_history[service_info.address] = service_info
 
+            # Compare with the last callback, not the owner's cached payload,
+            # so additional non-owner copies do not repeat the same update.
+            # Source selection still owns connection routing.
+            last_dispatched_service_info = self._last_dispatched_history.get(
+                service_info.address, old_service_info
+            )
+            if not self._advertisement_data_changed(
+                last_dispatched_service_info, service_info
+            ):
+                return
+
+            dispatch_service_info = service_info
+            if (
+                not service_info.connectable
+                and (
+                    connectable_path := self._connectable_history.get(
+                        service_info.address
+                    )
+                )
+                is not None
+                and connectable_path.source in self._sources
+            ):
+                dispatch_service_info = service_info._as_connectable()
+
+            self._last_dispatched_history[service_info.address] = service_info
+            self._subclass_discover_info(dispatch_service_info)
             return
 
         if service_info.connectable:
@@ -1312,26 +1366,7 @@ class BluetoothManager:
             # PyObject_RichCompare overhead as its can be upwards of
             # 65% of the time spent in this method. The common case
             # is that its the same object for remote scanners.
-            and not (
-                (
-                    service_info.manufacturer_data
-                    is not old_service_info.manufacturer_data
-                    and service_info.manufacturer_data
-                    != old_service_info.manufacturer_data
-                )
-                or (
-                    service_info.service_data is not old_service_info.service_data
-                    and service_info.service_data != old_service_info.service_data
-                )
-                or (
-                    service_info.service_uuids is not old_service_info.service_uuids
-                    and service_info.service_uuids != old_service_info.service_uuids
-                )
-                or (
-                    service_info.name is not old_service_info.name
-                    and service_info.name != old_service_info.name
-                )
-            )
+            and not self._advertisement_data_changed(old_service_info, service_info)
         ):
             return
 
@@ -1362,6 +1397,7 @@ class BluetoothManager:
                     bleak_callback, service_info.device, advertisement_data
                 )
 
+        self._last_dispatched_history[service_info.address] = service_info
         self._subclass_discover_info(service_info)
 
     def async_clear_advertisement_history(self, address: str) -> None:
@@ -1385,6 +1421,7 @@ class BluetoothManager:
         self._smoothed_rssi.pop(address, None)
         self._demoted_sources.pop(address, None)
         self._rescue_triggered.pop(address, None)
+        self._last_dispatched_history.pop(address, None)
         for scanner in self._sources.values():
             scanner._clear_advertisement_merge_history(address)
 
