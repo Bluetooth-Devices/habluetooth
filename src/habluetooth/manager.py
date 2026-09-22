@@ -157,6 +157,7 @@ class BluetoothManager:
         "_adapter_refresh_future",
         "_adapter_sources",
         "_adapters",
+        "_advertisement_callbacks",
         "_advertisement_tracker",
         "_all_history",
         "_allocations",
@@ -211,6 +212,9 @@ class BluetoothManager:
             str, set[Callable[[BluetoothServiceInfoBleak], None]]
         ] = {}
         self._connectable_unavailable_callbacks: dict[
+            str, set[Callable[[BluetoothServiceInfoBleak], None]]
+        ] = {}
+        self._advertisement_callbacks: dict[
             str, set[Callable[[BluetoothServiceInfoBleak], None]]
         ] = {}
 
@@ -1128,6 +1132,15 @@ class BluetoothManager:
             }:
                 return
 
+        # Per-address subscribers see every advertisement, including ones whose
+        # data matches the previous one and would be skipped further down.
+        # Running after the Apple pre-filter is intentional: those packets are
+        # noise the manager never processes, so they are not liveness signals.
+        if self._advertisement_callbacks and (
+            callbacks := self._advertisement_callbacks.get(service_info.address)
+        ):
+            self._dispatch_advertisement_callbacks(callbacks, service_info)
+
         # Cross-scanner name cache. Only the steady-state identity check
         # is inlined here because this code runs on every advertisement
         # after the Apple pre-filter; the rest is handled in a cdef
@@ -1405,19 +1418,17 @@ class BluetoothManager:
             description += " [connectable]"
         return description
 
-    def _async_remove_unavailable_callback_internal(
+    def _async_remove_address_callback_internal(
         self,
-        unavailable_callbacks: dict[
-            str, set[Callable[[BluetoothServiceInfoBleak], None]]
-        ],
+        address_callbacks: dict[str, set[Callable[[BluetoothServiceInfoBleak], None]]],
         address: str,
         callbacks: set[Callable[[BluetoothServiceInfoBleak], None]],
         callback: Callable[[BluetoothServiceInfoBleak], None],
     ) -> None:
-        """Remove a callback."""
+        """Remove a callback registered for an address."""
         callbacks.remove(callback)
         if not callbacks:
-            del unavailable_callbacks[address]
+            del address_callbacks[address]
 
     def async_track_unavailable(
         self,
@@ -1433,8 +1444,38 @@ class BluetoothManager:
         callbacks = unavailable_callbacks.setdefault(address, set())
         callbacks.add(callback)
         return partial(
-            self._async_remove_unavailable_callback_internal,
+            self._async_remove_address_callback_internal,
             unavailable_callbacks,
+            address,
+            callbacks,
+            callback,
+        )
+
+    def async_register_advertisement_callback(
+        self,
+        callback: Callable[[BluetoothServiceInfoBleak], None],
+        address: str,
+    ) -> Callable[[], None]:
+        """
+        Register a callback for every advertisement from an address.
+
+        Unlike change driven callbacks this also fires when the advertisement
+        data is unchanged, so callers can observe liveness and the latest raw
+        packet of a device.
+
+        Only ``raw`` is per packet and it is ``None`` on backends that do not
+        provide raw advertisements; ``service_data``, ``manufacturer_data`` and
+        ``service_uuids`` are merged across packets. The callback fires once per
+        scanner that hears a packet, including advertisements the manager then
+        discards in favour of a stronger source, and it runs before the
+        advertisement is recorded in the manager's history. Advertisements
+        dropped by the Apple noise pre-filter are not delivered.
+        """
+        callbacks = self._advertisement_callbacks.setdefault(address, set())
+        callbacks.add(callback)
+        return partial(
+            self._async_remove_address_callback_internal,
+            self._advertisement_callbacks,
             address,
             callbacks,
             callback,
@@ -1980,6 +2021,18 @@ class BluetoothManager:
             callbacks.discard(callback)
             if not callbacks:
                 del callbacks_dict[source]
+
+    def _dispatch_advertisement_callbacks(
+        self,
+        callbacks: set[Callable[[BluetoothServiceInfoBleak], None]],
+        service_info: BluetoothServiceInfoBleak,
+    ) -> None:
+        """Dispatch an advertisement to the per address subscribers."""
+        for callback in callbacks.copy():
+            try:
+                callback(service_info)
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Error in advertisement callback")
 
     def _dispatch_source_callbacks(
         self,

@@ -52,6 +52,7 @@ cdef class BluetoothManager:
     cdef public dict _intervals
     cdef public dict _unavailable_callbacks
     cdef public dict _connectable_unavailable_callbacks
+    cdef public dict _advertisement_callbacks
     cdef public set _bleak_callbacks
     cdef public dict _all_history
     cdef public dict _connectable_history
@@ -182,6 +183,12 @@ cdef class BluetoothManager:
         dict callbacks_dict,
         object source,
         object callback,
+    ) except *
+
+    cdef void _dispatch_advertisement_callbacks(
+        self,
+        set callbacks,
+        BluetoothServiceInfoBleak service_info,
     ) except *
 
     cdef void _dispatch_source_callbacks(
