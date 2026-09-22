@@ -1139,11 +1139,7 @@ class BluetoothManager:
         if self._advertisement_callbacks and (
             callbacks := self._advertisement_callbacks.get(service_info.address)
         ):
-            for callback in callbacks.copy():
-                try:
-                    callback(service_info)
-                except Exception:
-                    _LOGGER.exception("Error in advertisement callback")
+            self._dispatch_advertisement_callbacks(callbacks, service_info)
 
         # Cross-scanner name cache. Only the steady-state identity check
         # is inlined here because this code runs on every advertisement
@@ -2023,6 +2019,18 @@ class BluetoothManager:
             callbacks.discard(callback)
             if not callbacks:
                 del callbacks_dict[source]
+
+    def _dispatch_advertisement_callbacks(
+        self,
+        callbacks: set[Callable[[BluetoothServiceInfoBleak], None]],
+        service_info: BluetoothServiceInfoBleak,
+    ) -> None:
+        """Dispatch an advertisement to the per address subscribers."""
+        for callback in callbacks.copy():
+            try:
+                callback(service_info)
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Error in advertisement callback")
 
     def _dispatch_source_callbacks(
         self,

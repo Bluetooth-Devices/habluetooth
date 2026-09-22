@@ -185,6 +185,12 @@ cdef class BluetoothManager:
         object callback,
     ) except *
 
+    cdef void _dispatch_advertisement_callbacks(
+        self,
+        set callbacks,
+        BluetoothServiceInfoBleak service_info,
+    ) except *
+
     cdef void _dispatch_source_callbacks(
         self,
         dict callbacks_dict,
