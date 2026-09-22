@@ -1,5 +1,13 @@
 # Changelog
 
+## v7.1.0 (2026-09-22)
+
+### Features
+
+
+- Add per address advertisement callbacks that fire for every packet ([`6b0e4d8`](https://github.com/Bluetooth-Devices/habluetooth/commit/6b0e4d8775837a190b13d426a742b6e56a26557c))
+
+
 ## v7.0.0 (2026-09-09)
 
 ### Bug fixes
