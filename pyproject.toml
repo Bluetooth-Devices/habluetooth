@@ -68,7 +68,7 @@ version_variables = [
     "src/habluetooth/__init__.py:__version__",
     "docs/conf.py:release",
 ]
-build_command = "pip install poetry && SKIP_CYTHON=1 poetry build"
+build_command = "pip install poetry && poetry build --format sdist"
 
 [tool.semantic_release.changelog]
 exclude_commit_patterns = [
