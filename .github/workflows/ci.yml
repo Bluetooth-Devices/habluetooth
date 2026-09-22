@@ -60,6 +60,7 @@ jobs:
           - ubuntu-latest
           - macOS-latest
           - windows-latest
+          - windows-11-arm
         extension:
           - "skip_cython"
           - "use_cython"
@@ -82,7 +83,8 @@ jobs:
           path: |
             .venv
             src/habluetooth/**/*.so
-          key: venv-v3-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ matrix.extension }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
+            src/habluetooth/**/*.pyd
+          key: venv-v4-${{ runner.os }}-${{ runner.arch }}-py${{ steps.python.outputs.python-version }}-${{ matrix.extension }}-${{ hashFiles('poetry.lock', 'pyproject.toml', 'build_ext.py', 'src/habluetooth/**/*.py', 'src/habluetooth/**/*.pxd') }}
       - name: Install Dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         env:
@@ -236,7 +238,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-24.04-arm, ubuntu-latest, macos-latest]
+        os:
+          - windows-latest
+          - windows-11-arm
+          - ubuntu-24.04-arm
+          - ubuntu-latest
+          - macos-latest
         qemu: [""]
         musl: [""]
         pyver: [""]
