@@ -1,5 +1,13 @@
 # Changelog
 
+## v7.1.1 (2026-09-22)
+
+### Bug fixes
+
+
+- Build pure python distributions in the release job ([`b722453`](https://github.com/Bluetooth-Devices/habluetooth/commit/b7224536b399762db45daba1c4f6bde627856171))
+
+
 ## v7.1.0 (2026-09-22)
 
 ### Features
