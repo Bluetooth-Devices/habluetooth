@@ -1,5 +1,13 @@
 # Changelog
 
+## v7.1.2 (2026-09-22)
+
+### Bug fixes
+
+
+- Upload only the sdist from the release job ([`9a92a9f`](https://github.com/Bluetooth-Devices/habluetooth/commit/9a92a9f9e481a03ea9e14f557e3016ca16ab0e8e))
+
+
 ## v7.1.1 (2026-09-22)
 
 ### Bug fixes
