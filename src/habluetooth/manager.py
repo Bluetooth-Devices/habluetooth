@@ -157,6 +157,7 @@ class BluetoothManager:
         "_adapter_refresh_future",
         "_adapter_sources",
         "_adapters",
+        "_advertisement_callbacks",
         "_advertisement_tracker",
         "_all_history",
         "_allocations",
@@ -211,6 +212,9 @@ class BluetoothManager:
             str, set[Callable[[BluetoothServiceInfoBleak], None]]
         ] = {}
         self._connectable_unavailable_callbacks: dict[
+            str, set[Callable[[BluetoothServiceInfoBleak], None]]
+        ] = {}
+        self._advertisement_callbacks: dict[
             str, set[Callable[[BluetoothServiceInfoBleak], None]]
         ] = {}
 
@@ -1128,6 +1132,17 @@ class BluetoothManager:
             }:
                 return
 
+        # Per-address subscribers see every advertisement, including ones whose
+        # data matches the previous one and would be skipped further down.
+        if self._advertisement_callbacks and (
+            callbacks := self._advertisement_callbacks.get(service_info.address)
+        ):
+            for callback in callbacks.copy():
+                try:
+                    callback(service_info)
+                except Exception:
+                    _LOGGER.exception("Error in advertisement callback")
+
         # Cross-scanner name cache. Only the steady-state identity check
         # is inlined here because this code runs on every advertisement
         # after the Apple pre-filter; the rest is handled in a cdef
@@ -1435,6 +1450,28 @@ class BluetoothManager:
         return partial(
             self._async_remove_unavailable_callback_internal,
             unavailable_callbacks,
+            address,
+            callbacks,
+            callback,
+        )
+
+    def async_register_advertisement_callback(
+        self,
+        callback: Callable[[BluetoothServiceInfoBleak], None],
+        address: str,
+    ) -> Callable[[], None]:
+        """
+        Register a callback for every advertisement from an address.
+
+        Unlike change driven callbacks this also fires when the advertisement
+        data is unchanged, so callers can observe liveness and the latest raw
+        packet of a device.
+        """
+        callbacks = self._advertisement_callbacks.setdefault(address, set())
+        callbacks.add(callback)
+        return partial(
+            self._async_remove_unavailable_callback_internal,
+            self._advertisement_callbacks,
             address,
             callbacks,
             callback,
