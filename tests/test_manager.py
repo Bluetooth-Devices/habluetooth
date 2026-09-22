@@ -4629,6 +4629,13 @@ async def test_async_register_advertisement_callback(
     inject_advertisement_with_source(other_device, adv, "hci0")
     assert [info.address for info in seen] == [address, address]
 
+    # Packets dropped by the Apple noise pre-filter are not delivered.
+    apple_noise = generate_advertisement_data(
+        manufacturer_data={76: b"\x01\x00"}, service_uuids=[]
+    )
+    inject_advertisement_with_source(device, apple_noise, "hci0")
+    assert len(seen) == 2
+
     cancel_failing()
     cancel()
     inject_advertisement_with_source(device, adv, "hci0")

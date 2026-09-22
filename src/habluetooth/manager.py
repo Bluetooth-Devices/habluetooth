@@ -1465,9 +1465,11 @@ class BluetoothManager:
 
         Only ``raw`` is per packet and it is ``None`` on backends that do not
         provide raw advertisements; ``service_data``, ``manufacturer_data`` and
-        ``service_uuids`` are merged across packets. Advertisements dropped by
-        the Apple noise pre-filter are not delivered, and the callback runs
-        before the advertisement is recorded in the manager's history.
+        ``service_uuids`` are merged across packets. The callback fires once per
+        scanner that hears a packet, including advertisements the manager then
+        discards in favour of a stronger source, and it runs before the
+        advertisement is recorded in the manager's history. Advertisements
+        dropped by the Apple noise pre-filter are not delivered.
         """
         callbacks = self._advertisement_callbacks.setdefault(address, set())
         callbacks.add(callback)
