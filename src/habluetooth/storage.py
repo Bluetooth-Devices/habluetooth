@@ -95,11 +95,24 @@ def expire_stale_scanner_discovered_device_advertisement_data(
     expired_scanners: list[str] = []
     for scanner, data in data_by_scanner.items():
         expire: list[str] = []
-        expire_seconds = data[EXPIRE_SECONDS]
-        timestamps = data[DISCOVERED_DEVICE_TIMESTAMPS]
-        discovered_device_advertisement_datas = data[
-            DISCOVERED_DEVICE_ADVERTISEMENT_DATAS
-        ]
+        try:
+            expire_seconds = data[EXPIRE_SECONDS]
+            timestamps = data[DISCOVERED_DEVICE_TIMESTAMPS]
+            discovered_device_advertisement_datas = data[
+                DISCOVERED_DEVICE_ADVERTISEMENT_DATAS
+            ]
+        except (KeyError, TypeError):
+            # A corrupt/partial blob for one scanner may be missing required
+            # top-level keys (or not be a mapping at all). Drop just that
+            # scanner and keep going rather than aborting expiry for every
+            # other scanner — this mirrors the discard-and-rebuild strategy
+            # ``discovered_device_advertisement_data_from_dict`` already uses
+            # for malformed cache data.
+            _LOGGER.warning(
+                "Discarding malformed discovery cache for scanner %s", scanner
+            )
+            expired_scanners.append(scanner)
+            continue
         discovered_device_raw = data.get(DISCOVERED_DEVICE_RAW, {})
         for address, timestamp in timestamps.items():
             time_diff = now - timestamp
@@ -116,8 +129,12 @@ def expire_stale_scanner_discovered_device_advertisement_data(
                 )
                 expire.append(address)
         for address in expire:
+            # ``timestamps`` drives expiry, so its key is always present, but a
+            # divergent/corrupt blob may have an address here that is missing
+            # from the companion dicts. Use ``pop`` with a default so one stale
+            # entry can never raise ``KeyError`` and abort the whole load.
             del timestamps[address]
-            del discovered_device_advertisement_datas[address]
+            discovered_device_advertisement_datas.pop(address, None)
             discovered_device_raw.pop(address, None)
         if not timestamps:
             expired_scanners.append(scanner)
