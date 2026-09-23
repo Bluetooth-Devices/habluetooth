@@ -89,10 +89,15 @@ jobs:
           PYTHON_VERSION: ${{ matrix.python-version }}
         run: |
           poetry env use "$(uv python find "${PYTHON_VERSION}")"
+          # Dependencies sharing our build_ext pattern read these variables
+          # too, and REQUIRE_CYTHON turns their optional Cython build into a
+          # hard failure on any Cython release they do not support yet. Only
+          # our own extensions are under test here, so install them separately.
+          poetry install --only=main,dev --no-root
           if [ "${{ matrix.extension }}" = "skip_cython" ]; then
-            SKIP_CYTHON=1 poetry install --only=main,dev
+            SKIP_CYTHON=1 poetry install --only-root
           else
-            REQUIRE_CYTHON=1 poetry install --only=main,dev
+            REQUIRE_CYTHON=1 poetry install --only-root
           fi
         shell: bash
       - name: Test with Pytest
@@ -134,7 +139,8 @@ jobs:
       - name: Install Dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
-          REQUIRE_CYTHON=1 poetry install --only=main,dev
+          poetry install --only=main,dev --no-root
+          REQUIRE_CYTHON=1 poetry install --only-root
         shell: bash
       - name: Run benchmarks
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v3
