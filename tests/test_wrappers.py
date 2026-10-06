@@ -3415,3 +3415,95 @@ async def test_connect_no_scanners_raises_no_backend() -> None:
         ),
     ):
         await client.connect()
+
+
+def _connected_interface(client: bleak.BleakClient) -> str:
+    """Return the adapter interface the wrapper actually connected through."""
+    return client._backend._device.details["path"].split("/")[3]
+
+
+@pytest.mark.asyncio
+async def test_pinned_source_wins_over_rssi(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """A pinned source is preferred even when another path scores better."""
+    manager = _get_manager()
+    # hci0 advertises at -60, hci1 at -80, so hci0 wins without a pin.
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+
+    with patch.object(manager.slot_manager, "allocate_slot", return_value=True):
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+        assert _connected_interface(client) == "hci0"
+
+        # hci1's scanner was registered with source 00:00:00:00:00:02
+        manager.async_set_pinned_source("00:00:00:00:00:01", "00:00:00:00:00:02")
+        assert manager.async_get_pinned_source("00:00:00:00:00:01") == (
+            "00:00:00:00:00:02"
+        )
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+        assert _connected_interface(client) == "hci1"
+
+        # Unpinning restores the scored order.
+        manager.async_set_pinned_source("00:00:00:00:00:01", None)
+        assert manager.async_get_pinned_source("00:00:00:00:00:01") is None
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+        assert _connected_interface(client) == "hci0"
+
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_pinned_source_falls_back_when_unavailable(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """A pin to a source that cannot see the device does not block connecting."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+    manager.async_set_pinned_source("00:00:00:00:00:01", "does:not:exist")
+
+    with patch.object(manager.slot_manager, "allocate_slot", return_value=True):
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+        assert _connected_interface(client) == "hci0"
+
+    manager.async_set_pinned_source("00:00:00:00:00:01", None)
+    cancel_hci0()
+    cancel_hci1()
+
+
+@pytest.mark.asyncio
+async def test_pinned_source_falls_back_when_out_of_slots(
+    two_adapters: None,
+    enable_bluetooth: None,
+    install_bleak_catcher: None,
+    mock_platform_client: None,
+) -> None:
+    """The pin is a preference: an exhausted pinned scanner still falls back."""
+    manager = _get_manager()
+    hci0_device_advs, cancel_hci0, cancel_hci1 = _generate_scanners_with_fake_devices()
+    ble_device = hci0_device_advs["00:00:00:00:00:01"][0]
+    manager.async_set_pinned_source("00:00:00:00:00:01", "00:00:00:00:00:02")
+
+    def _allocate_slot_mock(ble_device: BLEDevice) -> bool:
+        return "hci0" in ble_device.details["path"]
+
+    with patch.object(manager.slot_manager, "allocate_slot", _allocate_slot_mock):
+        client = bleak.BleakClient(ble_device)
+        await client.connect()
+        assert _connected_interface(client) == "hci0"
+
+    manager.async_set_pinned_source("00:00:00:00:00:01", None)
+    cancel_hci0()
+    cancel_hci1()
