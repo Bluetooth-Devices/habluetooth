@@ -14,7 +14,7 @@ from bleak import BleakError
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
 from bleak_retry_connector import Allocations, BleakSlotManager
-from bluetooth_adapters import ADAPTER_PASSIVE_SCAN
+from bluetooth_adapters import ADAPTER_ADDRESS, ADAPTER_PASSIVE_SCAN
 
 import habluetooth.scanner as scanner_shim
 from habluetooth import (
@@ -51,7 +51,11 @@ from . import (
     patch_bluetooth_time,
     utcnow,
 )
-from .conftest import FakeBluetoothAdapters, MockBluetoothManagerWithCallbacks
+from .conftest import (
+    FakeBluetoothAdapters,
+    MockBluetoothManagerWithCallbacks,
+    PatchableBluetoothManager,
+)
 
 DEVICE_FOUND = 0x0012
 ADV_MONITOR_DEVICE_FOUND = 0x002F
@@ -3159,3 +3163,76 @@ async def test_auto_scanner_current_mode_passive_after_active_window() -> None:
             assert ha_scanner._scan_mode_override is None
         finally:
             await ha_scanner.async_stop()
+
+
+@pytest.fixture
+def patchable_manager() -> Generator[PatchableBluetoothManager, None, None]:
+    """Install a manager whose methods can be patched, also under Cython."""
+    original_manager = get_manager()
+    manager = PatchableBluetoothManager(FakeBluetoothAdapters(), BleakSlotManager())
+    set_manager(manager)
+    try:
+        yield manager
+    finally:
+        set_manager(original_manager)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reset_result", "adapters", "moved_to"),
+    [
+        (True, {"hci1": "AA:BB:CC:DD:EE:FF"}, "hci1"),
+        (False, {"hci1": "AA:BB:CC:DD:EE:FF"}, "hci1"),
+        (True, {"hci0": "AA:BB:CC:DD:EE:FF"}, None),
+        (True, {"hci1": "11:22:33:44:55:66"}, None),
+        (True, {}, None),
+    ],
+    ids=["moved", "moved_reset_failed", "same_name", "other_address", "adapter_gone"],
+)
+async def test_adapter_moved_callback(
+    patchable_manager: PatchableBluetoothManager,
+    reset_result: bool,
+    adapters: dict[str, str],
+    moved_to: str | None,
+) -> None:
+    """Test the callback gets the new name only if our address has moved."""
+    adapter_moved_callback = Mock()
+    scanner = HaScanner(
+        BluetoothScanningMode.ACTIVE,
+        "hci0",
+        "AA:BB:CC:DD:EE:FF",
+        adapter_moved_callback=adapter_moved_callback,
+    )
+    refreshed = {name: {ADAPTER_ADDRESS: address} for name, address in adapters.items()}
+    with (
+        patch.object(
+            patchable_manager,
+            "async_get_bluetooth_adapters",
+            AsyncMock(return_value=refreshed),
+        ) as mock_get_adapters,
+        patch("habluetooth.util.recover_adapter", return_value=reset_result),
+    ):
+        await scanner._async_reset_adapter(False)
+
+    mock_get_adapters.assert_awaited_once_with(cached=False)
+    if moved_to is None:
+        adapter_moved_callback.assert_not_called()
+    else:
+        adapter_moved_callback.assert_called_once_with(moved_to)
+
+
+@pytest.mark.asyncio
+async def test_reset_without_adapter_moved_callback_skips_refresh(
+    patchable_manager: PatchableBluetoothManager,
+) -> None:
+    """Test a scanner without the callback does not refresh the adapters."""
+    scanner = HaScanner(BluetoothScanningMode.ACTIVE, "hci0", "AA:BB:CC:DD:EE:FF")
+    with (
+        patch.object(
+            patchable_manager, "async_get_bluetooth_adapters", AsyncMock()
+        ) as mock_get_adapters,
+        patch("habluetooth.util.recover_adapter", return_value=True),
+    ):
+        await scanner._async_reset_adapter(False)
+
+    mock_get_adapters.assert_not_awaited()
