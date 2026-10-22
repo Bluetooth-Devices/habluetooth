@@ -651,10 +651,19 @@ class BaseHaScanner:
             # change.
             #
             # https://github.com/hbldh/bleak/blob/222618b7747f0467dbb32bd3679f8cfaa19b1668/bleak/backends/scanner.py#L203
+            #
+            # A name that is a case-folded truncation of the stored one
+            # (shortened name AD) keeps the stored name; any other name is
+            # a rename and replaces it, so one bad frame cannot pin a wrong
+            # name for as long as the device keeps advertising.
             if prev_name is not None and (
                 prev_name is local_name
                 or not local_name
-                or len(prev_name) > len(local_name)
+                or prev_name == local_name
+                or (
+                    len(prev_name) >= len(local_name)
+                    and prev_name.casefold().startswith(local_name.casefold())
+                )
             ):
                 info.name = prev_name
             else:
