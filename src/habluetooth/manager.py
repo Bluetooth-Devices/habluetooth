@@ -995,7 +995,9 @@ class BluetoothManager:
            real; no patch needed since the cache now matches.
         3. Cached and incoming are both real but differ: apply the
            prefix rule via _update_name_cache and patch service_info
-           with whatever the cache settled on.
+           with whatever the cache settled on. If the cache took the
+           incoming name, rewrite the other scanners' stored records so
+           none of them can bring the old name back.
         """
         # When we patch service_info.name and service_info.device.name,
         # we also clear service_info._advertisement so the lazy rebuild
@@ -1025,10 +1027,28 @@ class BluetoothManager:
             return
         self._update_name_cache(service_info.address, service_info.name)
         cached_name = self._name_cache[service_info.address]
-        if cached_name is not service_info.name and cached_name != service_info.name:
+        if cached_name is service_info.name:
+            self._sync_scanner_names(service_info.address, cached_name)
+        elif cached_name != service_info.name:
             service_info.name = cached_name
             service_info.device.name = cached_name
             service_info._advertisement = None
+
+    def _sync_scanner_names(self, address: str, name: str) -> None:
+        """
+        Rewrite the name stored by every scanner for an address.
+
+        Called when the cache takes a new name. A scanner that inherited
+        the old name keeps reporting it on nameless frames, and the rename
+        rule would let it overwrite the new one, so the cache would flap
+        between scanners for as long as the device advertises.
+        """
+        for scanner in self._sources.values():
+            info = scanner._previous_service_info.get(address)
+            if info is not None and info.name is not name:
+                info.name = name
+                info.device.name = name
+                info._advertisement = None
 
     def seed_name_cache(self, address: str, name: str) -> None:
         """

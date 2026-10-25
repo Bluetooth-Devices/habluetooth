@@ -487,3 +487,161 @@ async def test_restore_discovered_devices_seeds_cache() -> None:
     src_unsetup()
     dst_cancel()
     dst_unsetup()
+
+
+# ---------------------------------------------------------------------------
+# Recovery from a wrong name (one bad frame must not stick)
+# ---------------------------------------------------------------------------
+
+_REAL_NAME = "GVH60080091"
+_FOREIGN_NAME = "FOREIGNNAME16CHR"
+_REAL_RAW = (
+    bytes.fromhex("020105")
+    + bytes([0x0C, 0x09])
+    + _REAL_NAME.encode()
+    + bytes.fromhex("09ff4388ec0001010100")
+)
+_FOREIGN_RAW = (
+    bytes.fromhex("020106")
+    + bytes([0x11, 0x09])
+    + _FOREIGN_NAME.encode()
+    + bytes.fromhex("09ff282e000000000000")
+)
+_NAMELESS_RAW = bytes.fromhex("02010609ff4388ec0001010101")
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_shorter_rename_replaces_longer_name_in_scanner() -> None:
+    """A shorter name that is not a truncation replaces the stored name."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = _SeedFakeScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+    address = "5C:E7:53:00:00:91"
+
+    scanner.inject_raw_advertisement(address, -70, _REAL_RAW)
+    scanner.inject_raw_advertisement(address, -80, _FOREIGN_RAW)
+    assert scanner._previous_service_info[address].name == _FOREIGN_NAME
+
+    scanner.inject_raw_advertisement(address, -70, _REAL_RAW)
+    info = scanner._previous_service_info[address]
+    assert info.name == _REAL_NAME
+    assert info.device.name == _REAL_NAME
+    assert manager._name_cache[address] == _REAL_NAME
+    assert manager._all_history[address].name == _REAL_NAME
+
+    # A nameless frame keeps the recovered name
+    scanner.inject_raw_advertisement(address, -70, _NAMELESS_RAW)
+    assert scanner._previous_service_info[address].name == _REAL_NAME
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_case_folded_truncation_keeps_name_in_scanner() -> None:
+    """A case-folded truncation of the stored name is not a rename."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = _SeedFakeScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+    address = "44:44:33:11:23:60"
+
+    for name in ("Onvis XXX", "onv", "ONVIS XXX"):
+        scanner.inject_advertisement(
+            generate_ble_device(address, name, {}),
+            generate_advertisement_data(local_name=name, rssi=-60),
+        )
+    info = scanner._previous_service_info[address]
+    assert info.name == "Onvis XXX"
+    assert info.device.name == "Onvis XXX"
+
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_rename_does_not_flap_with_passive_scanner() -> None:
+    """
+    A name heard by an active scanner wins over a passive scanner's stale one.
+
+    The passive scanner inherits the wrong name through the cache and keeps
+    reporting it on its nameless frames; it must not bring it back after the
+    active scanner hears the real name again.
+    """
+    manager = get_manager()
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    active = _SeedFakeScanner("esp32-active", "esp32-active", connector, True)
+    active_unsetup = active.async_setup()
+    active_cancel = manager.async_register_scanner(active)
+    passive = _SeedFakeScanner("esp32-passive", "esp32-passive", connector, True)
+    passive_unsetup = passive.async_setup()
+    passive_cancel = manager.async_register_scanner(passive)
+    address = "5C:E7:53:00:00:92"
+
+    active.inject_raw_advertisement(address, -60, _REAL_RAW)
+    active.inject_raw_advertisement(address, -80, _FOREIGN_RAW)
+    passive.inject_raw_advertisement(address, -70, _NAMELESS_RAW)
+    assert passive._previous_service_info[address].name == _FOREIGN_NAME
+
+    active.inject_raw_advertisement(address, -60, _REAL_RAW)
+    for rssi in (-70, -71):
+        passive.inject_raw_advertisement(address, rssi, _NAMELESS_RAW)
+        active.inject_raw_advertisement(address, rssi, _NAMELESS_RAW)
+        assert manager._name_cache[address] == _REAL_NAME
+        assert manager._all_history[address].name == _REAL_NAME
+        for scanner in (active, passive):
+            info = scanner._previous_service_info[address]
+            assert info.name == _REAL_NAME
+            assert info.device.name == _REAL_NAME
+
+    active_cancel()
+    active_unsetup()
+    passive_cancel()
+    passive_unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_restored_wrong_name_recovers() -> None:
+    """A wrong name restored from storage is replaced by the next real name."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(
+        MockBleakClient, "mock_bleak_client", lambda: False
+    )
+    scanner = _SeedFakeScanner("esp32", "esp32", connector, True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+    address = "5C:E7:53:00:00:93"
+    scanner.inject_raw_advertisement(address, -70, _REAL_RAW)
+    scanner.inject_raw_advertisement(address, -80, _FOREIGN_RAW)
+    saved = scanner.serialize_discovered_devices()
+    cancel()
+    unsetup()
+
+    restored = _SeedFakeScanner("esp32", "esp32", connector, True)
+    restored_unsetup = restored.async_setup()
+    restored_cancel = manager.async_register_scanner(restored)
+    restored.restore_discovered_devices(saved)
+    assert manager._name_cache[address] == _FOREIGN_NAME
+
+    restored.inject_raw_advertisement(address, -70, _REAL_RAW)
+    assert manager._name_cache[address] == _REAL_NAME
+    saved = restored.serialize_discovered_devices()
+    device, adv = saved.discovered_device_advertisement_datas[address]
+    assert device.name == _REAL_NAME
+    assert adv.local_name == _REAL_NAME
+
+    restored_cancel()
+    restored_unsetup()

@@ -157,6 +157,9 @@ cdef class BluetoothManager:
         str cached_name,
     )
 
+    @cython.locals(scanner=BaseHaScanner, info=BluetoothServiceInfoBleak)
+    cdef void _sync_scanner_names(self, str address, str name)
+
     cpdef void scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
 
     @cython.locals(
