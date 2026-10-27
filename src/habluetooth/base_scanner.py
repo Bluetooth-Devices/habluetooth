@@ -694,6 +694,13 @@ class BaseHaScanner:
             has_manufacturer_data = bool(manufacturer_data)
             if (
                 has_manufacturer_data
+                and address in self._manager._replace_manufacturer_data
+            ):
+                # The device encodes readings in the company ID, so merging
+                # would keep every value it has sent; keep only the newest.
+                info.manufacturer_data = manufacturer_data
+            elif (
+                has_manufacturer_data
                 and manufacturer_data is not prev_info.manufacturer_data
             ):
                 for id_, sub_value in manufacturer_data.items():

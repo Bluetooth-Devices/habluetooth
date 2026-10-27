@@ -182,6 +182,7 @@ class BluetoothManager:
         "_name_cache",
         "_non_connectable_scanners",
         "_recovery_lock",
+        "_replace_manufacturer_data",
         "_rescue_triggered",
         "_scanner_mode_change_callbacks",
         "_scanner_registration_callbacks",
@@ -295,6 +296,9 @@ class BluetoothManager:
         # while active scans are requested; deduped so one passive proxy
         # behind many devices warns once.
         self._warned_passive_active_scan: set[str] = set()
+        # Addresses whose newest manufacturer data replaces, rather than
+        # merges into, what the scanners stored before.
+        self._replace_manufacturer_data: set[str] = set()
         self._subclass_discover_info = self._discover_service_info
         self._mgmt_ctl: MGMTBluetoothCtl | None = None
         self._auto_scheduler = AutoScanScheduler(self)
@@ -1376,6 +1380,27 @@ class BluetoothManager:
                 )
 
         self._subclass_discover_info(service_info)
+
+    def async_replace_manufacturer_data(self, address: str) -> Callable[[], None]:
+        """
+        Replace, rather than merge, manufacturer data for a device.
+
+        Scanners normally merge each advertisement's manufacturer data into
+        what they stored before, like BlueZ. Devices that encode readings in
+        the company ID then accumulate one entry per value they have sent, and
+        a reading that returns to an earlier value no longer changes the merged
+        data, so the manager's change detection drops it.
+
+        Once registered, each advertisement that carries manufacturer data
+        replaces the stored entries; advertisements without manufacturer data
+        leave any stored entries as-is. Entries merged before registration
+        are dropped via async_clear_advertisement_history.
+
+        Returns a callable that restores merging.
+        """
+        self._replace_manufacturer_data.add(address)
+        self.async_clear_advertisement_history(address)
+        return partial(self._replace_manufacturer_data.discard, address)
 
     def async_clear_advertisement_history(self, address: str) -> None:
         """

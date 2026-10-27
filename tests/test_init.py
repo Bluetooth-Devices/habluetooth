@@ -7,6 +7,7 @@ from bleak.backends.scanner import AdvertisementData
 from habluetooth import (
     BaseHaRemoteScanner,
     BaseHaScanner,
+    BluetoothManager,
     BluetoothScanningMode,
     HaBluetoothConnector,
     HaScanner,
@@ -636,4 +637,132 @@ async def test_async_clear_advertisement_history_bypasses_raw_shortcut():
     assert scanner._previous_service_info[address].service_uuids == [STATE_B_UUID]
     assert scanner._previous_service_info[address].raw == raw_b
 
+    cancel()
+
+
+# Readings encoded in the company ID, like Inkbird sensors: 24.54 and 24.94 °C
+READING_A = {2454: b"\x00\x00\x64"}
+READING_B = {2494: b"\x00\x00\x64"}
+RAW_READING_A = b"\x06\xff\x96\x09\x00\x00\x64"
+RAW_READING_B = b"\x06\xff\xbe\x09\x00\x00\x64"
+
+
+def _advertise_manufacturer_data(
+    scanner: BaseHaRemoteScanner,
+    address: str,
+    manufacturer_data: dict[int, bytes],
+    timestamp: float,
+) -> None:
+    """Report an advertisement carrying only manufacturer data."""
+    scanner._async_on_advertisement(
+        address, -88, "name", [], {}, manufacturer_data, -88, {}, timestamp
+    )
+
+
+def _record_dispatches(manager: BluetoothManager) -> list[BluetoothServiceInfoBleak]:
+    """Record the advertisements the manager dispatches to integrations."""
+    dispatched: list[BluetoothServiceInfoBleak] = []
+
+    def _record(service_info: BluetoothServiceInfoBleak) -> None:
+        dispatched.append(service_info)
+
+    manager._subclass_discover_info = _record
+    return dispatched
+
+
+@pytest.mark.asyncio
+async def test_async_replace_manufacturer_data():
+    """Test a reading that returns to an earlier value is still dispatched."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel = manager.async_register_scanner(scanner)
+
+    merged = "AA:BB:CC:DD:EE:01"
+    replaced = "AA:BB:CC:DD:EE:02"
+    cancel_replace = manager.async_replace_manufacturer_data(replaced)
+    dispatched = _record_dispatches(manager)
+
+    for timestamp, reading in enumerate((READING_A, READING_B, READING_A), 1):
+        _advertise_manufacturer_data(scanner, merged, reading, timestamp)
+        _advertise_manufacturer_data(scanner, replaced, reading, timestamp)
+
+    # Merged, the return to the first reading leaves the data unchanged and
+    # the manager drops it
+    assert [i.manufacturer_data for i in dispatched if i.address == merged] == [
+        READING_A,
+        READING_A | READING_B,
+    ]
+    assert [i.manufacturer_data for i in dispatched if i.address == replaced] == [
+        READING_A,
+        READING_B,
+        READING_A,
+    ]
+
+    # An advertisement without manufacturer data keeps the newest reading
+    _advertise_state_uuid(scanner, replaced, STATE_A_UUID, 4.0)
+    assert dispatched[-1].service_uuids == [STATE_A_UUID]
+    assert dispatched[-1].manufacturer_data == READING_A
+
+    # Merging resumes once the registration is cancelled
+    cancel_replace()
+    _advertise_manufacturer_data(scanner, replaced, READING_B, 5.0)
+    assert dispatched[-1].manufacturer_data == READING_A | READING_B
+
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_replace_manufacturer_data_drops_merged_entries():
+    """Test registering drops the entries merged before it."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel = manager.async_register_scanner(scanner)
+
+    address = "AA:BB:CC:DD:EE:FF"
+    _advertise_manufacturer_data(scanner, address, READING_A, 1.0)
+    _advertise_manufacturer_data(scanner, address, READING_B, 2.0)
+    assert scanner._previous_service_info[address].manufacturer_data == (
+        READING_A | READING_B
+    )
+
+    cancel_replace = manager.async_replace_manufacturer_data(address)
+    assert scanner._previous_service_info[address].manufacturer_data == {}
+
+    dispatched = _record_dispatches(manager)
+    _advertise_manufacturer_data(scanner, address, READING_A, 3.0)
+    assert [i.manufacturer_data for i in dispatched] == [READING_A]
+
+    cancel_replace()
+    cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_replace_manufacturer_data_raw():
+    """Test replacing manufacturer data for raw advertisements."""
+    manager = get_manager()
+    connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
+    scanner = BaseHaRemoteScanner("source1", "source1", connector, True)
+    cancel = manager.async_register_scanner(scanner)
+
+    address = "AA:BB:CC:DD:EE:FF"
+    cancel_replace = manager.async_replace_manufacturer_data(address)
+    dispatched = _record_dispatches(manager)
+
+    for timestamp, raw in enumerate((RAW_READING_A, RAW_READING_B, RAW_READING_A), 1):
+        scanner._async_on_raw_advertisement(address, -88, raw, {}, timestamp)
+
+    assert [i.manufacturer_data for i in dispatched] == [
+        READING_A,
+        READING_B,
+        READING_A,
+    ]
+
+    # Identical raw bytes reuse the stored data, so a true repeat is still dropped
+    scanner._async_on_raw_advertisement(address, -88, RAW_READING_A, {}, 4.0)
+    assert len(dispatched) == 3
+    assert scanner._previous_service_info[address].time == 4.0
+
+    cancel_replace()
     cancel()
