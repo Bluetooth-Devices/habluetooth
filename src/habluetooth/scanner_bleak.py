@@ -19,7 +19,7 @@ from bleak_retry_connector import (
     restore_discoveries_sync,
 )
 from bleak_retry_connector.bluez import stop_discovery
-from bluetooth_adapters import DEFAULT_ADDRESS
+from bluetooth_adapters import ADAPTER_ADDRESS, DEFAULT_ADDRESS
 from bluetooth_data_tools import monotonic_time_coarse
 
 from .base_scanner import BaseHaScanner
@@ -35,7 +35,7 @@ from .models import BluetoothScanningMode, BluetoothServiceInfoBleak
 from .util import async_reset_adapter, is_docker_env
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine, Iterable
+    from collections.abc import Callable, Coroutine, Iterable
 
     from bleak.backends.device import BLEDevice
     from bleak.backends.scanner import AdvertisementData, AdvertisementDataCallback
@@ -232,6 +232,7 @@ class HaScanner(BaseHaScanner):
     __slots__ = (
         "_active_window_end",
         "_active_window_handle",
+        "_adapter_moved_callback",
         "_background_tasks",
         "_scan_mode_override",
         "_start_future",
@@ -245,6 +246,7 @@ class HaScanner(BaseHaScanner):
         mode: BluetoothScanningMode,
         adapter: str,
         address: str,
+        adapter_moved_callback: Callable[[str], None] | None = None,
     ) -> None:
         """Init bluetooth discovery."""
         self.mac_address = address
@@ -263,6 +265,10 @@ class HaScanner(BaseHaScanner):
         self._scan_mode_override: BluetoothScanningMode | None = None
         self._active_window_handle: asyncio.TimerHandle | None = None
         self._active_window_end: float = 0.0
+        # Called with the new adapter name if an adapter reset discovers the
+        # same address has moved to a new name. The current scanner is now
+        # invalid and the caller should create a new scanner object.
+        self._adapter_moved_callback = adapter_moved_callback
 
     def _create_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Create a background task and add it to the background tasks set."""
@@ -691,6 +697,25 @@ class HaScanner(BaseHaScanner):
         _LOGGER.debug("%s: adapter stopped responding; executing reset", self.name)
         result = await async_reset_adapter(self.adapter, self.mac_address, gone_silent)
         _LOGGER.debug("%s: adapter reset result: %s", self.name, result)
+
+        # Check even if the reset failed: the adapter can be up under a new
+        # name while the reset itself reports failure.
+        await self._async_check_adapter_moved()
+
+    async def _async_check_adapter_moved(self) -> None:
+        """Check whether this adapter address now has a new adapter name."""
+        if not self._adapter_moved_callback:
+            return
+
+        # Bypass the cache: it still maps our address to the old name.
+        adapters = await self._manager.async_get_bluetooth_adapters(cached=False)
+        for adapter, details in adapters.items():
+            if details[ADAPTER_ADDRESS] != self.mac_address:
+                continue
+            if adapter != self.adapter:
+                _LOGGER.info("%s: adapter has moved to %s", self.name, adapter)
+                self._adapter_moved_callback(adapter)
+            return
 
     async def async_stop(self) -> None:
         """Stop bluetooth scanner."""
