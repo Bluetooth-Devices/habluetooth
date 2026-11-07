@@ -529,13 +529,11 @@ class BluetoothManager:
             loop.time() + UNAVAILABLE_TRACK_SECONDS, self._async_check_unavailable
         )
 
-    def _async_check_unavailable(self) -> None:  # noqa: C901
+    def _async_check_unavailable(self) -> None:
         """Watch for unavailable devices and cleanup state history."""
         monotonic_now = monotonic_time_coarse()
         connectable_history = self._connectable_history
         all_history = self._all_history
-        tracker = self._advertisement_tracker
-        intervals = tracker.intervals
 
         # Materialize each scanner's discovered_addresses exactly once per
         # cycle. For local HaScanner this property rebuilds bleak's
@@ -559,39 +557,8 @@ class BluetoothManager:
             )
             for address in disappeared:
                 if not connectable:
-                    #
-                    # For non-connectable devices we also check the device has exceeded
-                    # the advertising interval before we mark it as unavailable
-                    # since it may have gone to sleep and since we do not need an active
-                    # connection to it we can only determine its availability
-                    # by the lack of advertisements
-                    if advertising_interval := (
-                        intervals.get(address) or self._fallback_intervals.get(address)
-                    ):
-                        advertising_interval += TRACKER_BUFFERING_WOBBLE_SECONDS
-                    else:
-                        advertising_interval = (
-                            FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
-                        )
-                    time_since_seen = monotonic_now - all_history[address].time
-                    if time_since_seen <= advertising_interval:
-                        continue
-
-                    # The second loop (connectable=False) is responsible for removing
-                    # the device from all the interval tracking since it is no longer
-                    # available for both connectable and non-connectable
-                    tracker.async_remove_fallback_interval(address)
-                    tracker.async_remove_address(address)
-                    self._name_cache.pop(address, None)
-                    self._smoothed_rssi.pop(address, None)
-                    self._demoted_sources.pop(address, None)
-                    self._rescue_triggered.pop(address, None)
-                    for disappear_callback in self._disappeared_callbacks:
-                        try:
-                            disappear_callback(address)
-                        except Exception:
-                            _LOGGER.exception("Error in disappeared callback")
-                    self._address_disappeared(address)
+                    self._async_check_address_unavailable(address, monotonic_now)
+                    continue
 
                 service_info = history.pop(address)
 
@@ -605,6 +572,83 @@ class BluetoothManager:
                         _LOGGER.exception("Error in unavailable callback")
 
         self._schedule_unavailable_tracking()
+
+    def _scanner_devices_expired(self, addresses: list[str]) -> None:
+        """
+        Check passively tracked devices a scanner has just expired.
+
+        Called by a scanner when its periodic expiry drops devices. A device
+        that nothing tracks for availability, or that another scanner still
+        has, is left to the periodic _async_check_unavailable sweep. Otherwise
+        it is checked now instead of waiting up to UNAVAILABLE_TRACK_SECONDS.
+        """
+        monotonic_now = monotonic_time_coarse()
+        unavailable_callbacks = self._unavailable_callbacks
+        all_history = self._all_history
+        for address in addresses:
+            if address not in unavailable_callbacks or address not in all_history:
+                continue
+            if self._address_seen_by_any_scanner(address):
+                continue
+            self._async_check_address_unavailable(address, monotonic_now)
+
+    def _address_seen_by_any_scanner(self, address: str) -> bool:
+        """Return whether any scanner still has the address."""
+        for scanner in self._non_connectable_scanners:
+            if scanner.get_discovered_device_advertisement_data(address):
+                return True
+        for scanner in self._connectable_scanners:
+            if scanner.get_discovered_device_advertisement_data(address):
+                return True
+        return False
+
+    def _async_check_address_unavailable(
+        self, address: str, monotonic_now: float
+    ) -> bool:
+        """Mark a non-connectable device no scanner has as unavailable if overdue."""
+        all_history = self._all_history
+        tracker = self._advertisement_tracker
+        intervals = tracker.intervals
+        #
+        # For non-connectable devices we also check the device has exceeded
+        # the advertising interval before we mark it as unavailable
+        # since it may have gone to sleep and since we do not need an active
+        # connection to it we can only determine its availability
+        # by the lack of advertisements
+        if advertising_interval := (
+            intervals.get(address) or self._fallback_intervals.get(address)
+        ):
+            advertising_interval += TRACKER_BUFFERING_WOBBLE_SECONDS
+        else:
+            advertising_interval = FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
+        time_since_seen = monotonic_now - all_history[address].time
+        if time_since_seen <= advertising_interval:
+            return False
+
+        # The non-connectable check is responsible for removing
+        # the device from all the interval tracking since it is no longer
+        # available for both connectable and non-connectable
+        tracker.async_remove_fallback_interval(address)
+        tracker.async_remove_address(address)
+        self._name_cache.pop(address, None)
+        self._smoothed_rssi.pop(address, None)
+        self._demoted_sources.pop(address, None)
+        self._rescue_triggered.pop(address, None)
+        for disappear_callback in self._disappeared_callbacks:
+            try:
+                disappear_callback(address)
+            except Exception:
+                _LOGGER.exception("Error in disappeared callback")
+        self._address_disappeared(address)
+
+        service_info = all_history.pop(address)
+        if callbacks := self._unavailable_callbacks.get(address):
+            for callback in callbacks.copy():
+                try:
+                    callback(service_info)
+                except Exception:  # pylint: disable=broad-except
+                    _LOGGER.exception("Error in unavailable callback")
+        return True
 
     def _address_disappeared(self, address: str) -> None:
         """

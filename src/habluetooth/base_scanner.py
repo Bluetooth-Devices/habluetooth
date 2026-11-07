@@ -733,6 +733,8 @@ class BaseHaScanner:
         ]
         for address in expired:
             del self._previous_service_info[address]
+        if expired and self._manager:
+            self._manager._scanner_devices_expired(expired)
 
     def _cancel_expire_devices(self) -> None:
         """Cancel the expiration of old devices."""
