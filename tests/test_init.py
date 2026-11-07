@@ -149,7 +149,7 @@ def test__async_on_advertisement_first():
     assert device.details == details
 
 
-def test__async_on_advertisement_prefers_longest_local_name():
+def test__async_on_advertisement_keeps_name_over_truncation():
     connector = HaBluetoothConnector(MockBleakClient, "any", lambda: True)
 
     scanner = BaseHaRemoteScanner("any", "any", connector, True)
@@ -175,7 +175,7 @@ def test__async_on_advertisement_prefers_longest_local_name():
     scanner._async_on_advertisement(
         "AA:BB:CC:DD:EE:FF",
         -88,
-        "tinyname",
+        "short",
         [],
         {},
         {},
@@ -190,6 +190,23 @@ def test__async_on_advertisement_prefers_longest_local_name():
     assert adv is not None
     assert device.name == "shortname"
     assert adv.local_name == "shortname"
+    # A shorter name that is not a truncation is a rename
+    scanner._async_on_advertisement(
+        "AA:BB:CC:DD:EE:FF",
+        -88,
+        "tinyname",
+        [],
+        {},
+        {},
+        -88,
+        details,
+        1.0,
+    )
+    device_adv = scanner.get_discovered_device_advertisement_data("AA:BB:CC:DD:EE:FF")
+    assert device_adv is not None
+    device, adv = device_adv
+    assert device.name == "tinyname"
+    assert adv.local_name == "tinyname"
     scanner._async_on_advertisement(
         "AA:BB:CC:DD:EE:FF",
         -88,
