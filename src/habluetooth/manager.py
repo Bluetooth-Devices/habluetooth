@@ -573,6 +573,35 @@ class BluetoothManager:
 
         self._schedule_unavailable_tracking()
 
+    def _scanner_devices_expired(self, addresses: list[str]) -> None:
+        """
+        Check passively tracked devices a scanner has just expired.
+
+        Called by a scanner when its periodic expiry drops devices. A device
+        that nothing tracks for availability, or that another scanner still
+        has, is left to the periodic _async_check_unavailable sweep. Otherwise
+        it is checked now instead of waiting up to UNAVAILABLE_TRACK_SECONDS.
+        """
+        monotonic_now = monotonic_time_coarse()
+        unavailable_callbacks = self._unavailable_callbacks
+        all_history = self._all_history
+        for address in addresses:
+            if address not in unavailable_callbacks or address not in all_history:
+                continue
+            if self._address_seen_by_any_scanner(address):
+                continue
+            self._async_check_address_unavailable(address, monotonic_now)
+
+    def _address_seen_by_any_scanner(self, address: str) -> bool:
+        """Return whether any scanner still has the address."""
+        for scanner in self._non_connectable_scanners:
+            if scanner.get_discovered_device_advertisement_data(address):
+                return True
+        for scanner in self._connectable_scanners:
+            if scanner.get_discovered_device_advertisement_data(address):
+                return True
+        return False
+
     def _async_check_address_unavailable(
         self, address: str, monotonic_now: float
     ) -> bool:
