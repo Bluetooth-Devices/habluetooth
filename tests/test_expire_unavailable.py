@@ -31,11 +31,11 @@ LEARNED_INTERVAL = 48.0
 AFTER_EXPIRY = CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS + 1
 
 
-def _scanner(source: str) -> InjectableRemoteScanner:
+def _scanner(source: str, connectable: bool = False) -> InjectableRemoteScanner:
     connector = HaBluetoothConnector(
         MockBleakClient, "mock_bleak_client", lambda: False
     )
-    return InjectableRemoteScanner(source, source, connector, False)
+    return InjectableRemoteScanner(source, source, connector, connectable)
 
 
 def _advertise(scanner: InjectableRemoteScanner, now: float) -> None:
@@ -172,5 +172,80 @@ async def test_expiry_respects_the_advertising_interval() -> None:
     assert len(unavailable) == 1
 
     untrack()
+    cancel()
+    unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_expiry_waits_for_a_connectable_scanner() -> None:
+    """A device a connectable scanner still has stays available."""
+    manager = get_manager()
+    passive = _scanner("esp32_a")
+    connectable = _scanner("esp32_b", connectable=True)
+    unsetups = [passive.async_setup(), connectable.async_setup()]
+    cancels = [
+        manager.async_register_scanner(passive),
+        manager.async_register_scanner(connectable),
+    ]
+    unavailable: list[BluetoothServiceInfoBleak] = []
+    untrack = manager.async_track_unavailable(
+        unavailable.append, ADDRESS, connectable=False
+    )
+
+    start = time.monotonic()
+    _advertise(passive, start)
+    _advertise(connectable, start + 20)
+    manager._advertisement_tracker.intervals[ADDRESS] = LEARNED_INTERVAL
+
+    _expire(passive, start + AFTER_EXPIRY)
+    assert unavailable == []
+    assert ADDRESS in manager._all_history
+
+    # The connectable scanner drops it too: now it is unavailable.
+    _expire(connectable, start + 20 + AFTER_EXPIRY)
+    assert len(unavailable) == 1
+
+    untrack()
+    for cancel in cancels:
+        cancel()
+    for unsetup in unsetups:
+        unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_sweep_still_fires_connectable_callbacks(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The periodic check fires connectable unavailable callbacks as before."""
+    manager = get_manager()
+    scanner = _scanner("esp32_a", connectable=True)
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+    unavailable: list[BluetoothServiceInfoBleak] = []
+
+    def _raise(service_info: BluetoothServiceInfoBleak) -> None:
+        msg = "boom"
+        raise ValueError(msg)
+
+    untrack = manager.async_track_unavailable(
+        unavailable.append, ADDRESS, connectable=True
+    )
+    untrack_raise = manager.async_track_unavailable(_raise, ADDRESS, connectable=True)
+
+    start = time.monotonic()
+    _advertise(scanner, start)
+    _expire(scanner, start + AFTER_EXPIRY)
+    assert unavailable == []
+
+    with patch_bluetooth_time(start + AFTER_EXPIRY):
+        manager._async_check_unavailable()
+    assert len(unavailable) == 1
+    assert ADDRESS not in manager._connectable_history
+    assert "Error in unavailable callback" in caplog.text
+
+    untrack()
+    untrack_raise()
     cancel()
     unsetup()
