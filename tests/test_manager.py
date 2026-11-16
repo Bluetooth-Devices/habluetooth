@@ -3557,8 +3557,22 @@ async def test_is_operating_degraded_on_non_linux() -> None:
 
 
 @pytest.mark.asyncio
-async def test_is_operating_degraded_after_permission_error() -> None:
+@pytest.mark.parametrize(
+    ("adapters", "expected_level"),
+    [
+        pytest.param(
+            {"hci0": {"address": "00:1A:7D:DA:71:04"}}, logging.WARNING, id="adapter"
+        ),
+        pytest.param({}, logging.DEBUG, id="no_adapter"),
+    ],
+)
+async def test_is_operating_degraded_after_permission_error(
+    caplog: pytest.LogCaptureFixture,
+    adapters: dict[str, Any],
+    expected_level: int,
+) -> None:
     """Test is_operating_degraded after mgmt setup fails with permission error."""
+    caplog.set_level(logging.DEBUG, logger="habluetooth.manager")
     mock_bluetooth_adapters = FakeBluetoothAdapters()
     manager = BluetoothManager(
         mock_bluetooth_adapters,
@@ -3568,6 +3582,12 @@ async def test_is_operating_degraded_after_permission_error() -> None:
     with (
         patch("habluetooth.manager.IS_LINUX", True),
         patch("habluetooth.manager.MGMTBluetoothCtl") as mock_mgmt_class,
+        patch.object(
+            FakeBluetoothAdapters,
+            "adapters",
+            new_callable=PropertyMock,
+            return_value=adapters,
+        ),
     ):
         # Make setup fail with permission error
         mock_mgmt_instance = Mock()
@@ -3582,6 +3602,15 @@ async def test_is_operating_degraded_after_permission_error() -> None:
         # Should be in degraded mode
         assert manager._mgmt_ctl is None
         assert manager.is_operating_degraded() is True
+
+    records = [
+        record
+        for record in caplog.records
+        if "Missing required permissions" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == expected_level
+    assert records[0].exc_info is None
 
 
 @pytest.mark.asyncio
