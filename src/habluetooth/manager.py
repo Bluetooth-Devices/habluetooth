@@ -459,10 +459,12 @@ class BluetoothManager:
         try:
             await self._mgmt_ctl.setup()
         except PermissionError:
-            _LOGGER.exception(
+            # Without a local adapter there is nothing to recover
+            _LOGGER.log(
+                logging.WARNING if self._adapters else logging.DEBUG,
                 "Missing required permissions for Bluetooth management. "
                 "Automatic adapter recovery is unavailable. "
-                "Add NET_ADMIN and NET_RAW capabilities to the container to enable it"
+                "Add NET_ADMIN and NET_RAW capabilities to the container to enable it",
             )
             self._mgmt_ctl = None
         except CONNECTION_ERRORS as ex:
