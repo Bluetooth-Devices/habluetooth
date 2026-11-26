@@ -136,6 +136,13 @@ cdef class BluetoothManager:
     )
 
     @cython.locals(scanner=BaseHaScanner)
+    cdef bint _is_other_scanning_source(
+        self,
+        BluetoothServiceInfoBleak old_info,
+        str source
+    )
+
+    @cython.locals(scanner=BaseHaScanner)
     cdef bint _should_keep_previous_adv(
         self,
         BluetoothServiceInfoBleak old_info,
@@ -177,6 +184,7 @@ cdef class BluetoothManager:
         new_smoothed=double,
         rssi=int,
         new_event_payload=bint,
+        event_repeat=bint,
         event_payloads=dict,
     )
     cdef void _scanner_adv_received(self, BluetoothServiceInfoBleak service_info)

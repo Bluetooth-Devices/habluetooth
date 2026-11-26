@@ -4790,6 +4790,88 @@ async def test_event_driven_late_copy_with_other_keys_keeps_newer_payload(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_event_driven_late_copy_from_stronger_scanner_keeps_newer_payload(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A late copy of an older payload from a stronger scanner keeps newer data."""
+    address = "44:44:33:11:23:54"
+    start = 50.0
+    cancel = get_manager().async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x01", -90, start + 0.1, HCI1_SOURCE_ADDRESS)
+
+    # Only the weak scanner hears the next event
+    _inject_event_payload(address, b"\x02", -90, start + 5, HCI1_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x02"
+
+    # The strong scanner delivers its copy of the first payload late
+    _inject_event_payload(address, b"\x01", -50, start + 6, HCI0_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x02"
+    for connectable in (False, True):
+        service_info = get_manager().async_last_service_info(address, connectable)
+        assert service_info is not None
+        assert service_info.source == HCI1_SOURCE_ADDRESS
+        assert service_info.service_data["fcd2"] == b"\x02"
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_owner_repeat_refreshes_history(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A repeat from the scanner that owns the device still refreshes its time."""
+    address = "44:44:33:11:23:55"
+    start = 50.0
+    cancel = get_manager().async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x02", -90, start + 5, HCI1_SOURCE_ADDRESS)
+
+    _inject_event_payload(address, b"\x02", -90, start + 6, HCI1_SOURCE_ADDRESS)
+    service_info = get_manager().async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == HCI1_SOURCE_ADDRESS
+    assert service_info.time == start + 6
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner_gone", ["stopped", "unregistered"])
+async def test_event_driven_repeat_takes_over_when_owner_is_gone(
+    register_hci0_scanner: None,
+    owner_gone: str,
+) -> None:
+    """A repeat from another scanner wins when the owner no longer scans."""
+    address = "44:44:33:11:23:56"
+    start = 50.0
+    manager = get_manager()
+    weak_source = "AA:BB:CC:DD:EE:22"
+    weak_scanner = FakeScanner(weak_source, "hci2")
+    weak_scanner.connectable = True
+    cancel_scanner = manager.async_register_scanner(weak_scanner, connection_slots=5)
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x02", -90, start + 5, weak_source)
+
+    if owner_gone == "stopped":
+        weak_scanner.scanning = False
+    else:
+        cancel_scanner()
+
+    _inject_event_payload(address, b"\x02", -50, start + 6, HCI0_SOURCE_ADDRESS)
+    service_info = manager.async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == HCI0_SOURCE_ADDRESS
+    cancel()
+    if owner_gone == "stopped":
+        cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_event_driven_registrations_are_counted(
     register_hci0_scanner: None,
     register_hci1_scanner: None,

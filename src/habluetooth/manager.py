@@ -664,6 +664,17 @@ class BluetoothManager:
             )
         )
 
+    def _is_other_scanning_source(
+        self, old_info: BluetoothServiceInfoBleak, source: str
+    ) -> bool:
+        """Return True when ``old_info`` came from another, still-scanning source."""
+        return (
+            old_info.source is not source
+            and old_info.source != source
+            and (scanner := self._sources.get(old_info.source)) is not None
+            and scanner.scanning
+        )
+
     def _prefer_previous_adv_from_different_source(
         self,
         old: BluetoothServiceInfoBleak,
@@ -1269,14 +1280,18 @@ class BluetoothManager:
         #                       connectable scanner
         #
         # A new payload of an event-driven device is its newest data, whichever
-        # scanner heard it, so it bypasses the ownership rules below.
+        # scanner heard it, so it bypasses the ownership rules below. A repeat
+        # may be a late copy of an older payload, so one from another scanner
+        # never replaces the current advertisement, however strong it is.
         new_event_payload = False
+        event_repeat = False
         if (
             self._event_driven
             and (event_payloads := self._event_driven.get(service_info.address))
             is not None
         ):
             new_event_payload = self._is_new_event_payload(event_payloads, service_info)
+            event_repeat = not new_event_payload
             if (
                 new_event_payload
                 and self._debug
@@ -1293,8 +1308,14 @@ class BluetoothManager:
         if (
             old_service_info is not None
             and not new_event_payload
-            and self._should_keep_previous_adv(
-                old_service_info, service_info, smoothed_bucket, new_smoothed, True
+            and (
+                (
+                    event_repeat
+                    and self._is_other_scanning_source(old_service_info, source)
+                )
+                or self._should_keep_previous_adv(
+                    old_service_info, service_info, smoothed_bucket, new_smoothed, True
+                )
             )
         ):
             # If we are rejecting the new advertisement and the device is connectable
@@ -1305,6 +1326,12 @@ class BluetoothManager:
                     # If it's the same as the preferred source, we're done; we know
                     # we prefer the old advertisement from the check above.
                     old_connectable_service_info is old_service_info
+                    or (
+                        event_repeat
+                        and self._is_other_scanning_source(
+                            old_connectable_service_info, source
+                        )
+                    )
                     # Otherwise the old connectable came from a different source;
                     # re-run the predicate against the connectable history entry.
                     or self._should_keep_previous_adv(
@@ -2058,9 +2085,12 @@ class BluetoothManager:
         registered, an advertisement carrying a service or manufacturer data
         value that was not heard from the address within
         EVENT_DRIVEN_REPEAT_SECONDS is recorded as the newest advertisement
-        from any scanner, regardless of signal strength. Repeats keep the
-        normal ownership rules, so a copy of an earlier payload delivered late
-        by another scanner cannot replace newer data.
+        from any scanner, regardless of signal strength. A repeat from another
+        scanner never replaces the current advertisement while that
+        advertisement's scanner is still scanning, however strong the repeat
+        is, so a copy of an earlier payload delivered late cannot replace newer
+        data. A repeat from the current scanner is recorded as usual, which
+        keeps the device's last-seen time fresh.
 
         Values are compared one at a time rather than as a whole payload:
         remote scanners merge each advertisement with their own previous one,
