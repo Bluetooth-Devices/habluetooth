@@ -38,6 +38,8 @@ cdef _dispatch_bleak_callback(
     object advertisement_data
 )
 
+cdef bint _from_source(BluetoothServiceInfoBleak info, str source)
+
 @cython.locals(service_data=dict, manufacturer_data=dict)
 cdef bint _carries_event(
     BluetoothServiceInfoBleak service_info,

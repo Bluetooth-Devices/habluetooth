@@ -135,6 +135,17 @@ def _dispatch_bleak_callback(
         _LOGGER.exception("Error in callback: %s", bleak_callback.callback)
 
 
+def _from_source(info: BluetoothServiceInfoBleak | None, source: str) -> bool:
+    """
+    Return True when ``info`` came from ``source``.
+
+    An event-driven repeat of an older payload from the scanner that owns an
+    entry means the device went back to an earlier value: one scanner doesn't
+    deliver its own older packet after a newer one, so it isn't a late copy.
+    """
+    return info is not None and (info.source is source or info.source == source)
+
+
 def _carries_event(
     service_info: BluetoothServiceInfoBleak, event_items: _EventItems
 ) -> bool:
@@ -1430,7 +1441,11 @@ class BluetoothManager:
                             smoothed_bucket,
                             new_smoothed,
                         )
-                    # An older payload never changes connectable history
+                    elif _from_source(old_connectable_service_info, source):
+                        # The device went back to an earlier value
+                        self._connectable_history[service_info.address] = service_info
+                    # Otherwise an older payload is a late copy, which never
+                    # changes connectable history
                     return
                 if old_connectable_service_info is not None and (
                     # If it's the same as the preferred source, we're done; we know
@@ -1453,9 +1468,14 @@ class BluetoothManager:
             return
 
         # An event-driven repeat with an older payload can win all history (its
-        # owner stopped scanning or the window passed), but it never changes
+        # owner stopped scanning or the window passed). Unless the connectable
+        # entry's own scanner sent it, it is a late copy and doesn't change
         # connectable history.
-        if service_info.connectable and not (event_repeat and latest_event is None):
+        if service_info.connectable and (
+            not event_repeat
+            or latest_event is not None
+            or _from_source(old_connectable_service_info, source)
+        ):
             self._connectable_history[service_info.address] = service_info
 
         self._all_history[service_info.address] = service_info
