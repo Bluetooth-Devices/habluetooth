@@ -32,7 +32,7 @@ from habluetooth import (
     set_manager,
 )
 from habluetooth.central_manager import CentralBluetoothManager
-from habluetooth.const import RESCUE_SCAN_ACCEPT_SECONDS
+from habluetooth.const import EVENT_DRIVEN_REPEAT_SECONDS, RESCUE_SCAN_ACCEPT_SECONDS
 
 from . import (
     HCI0_SOURCE_ADDRESS,
@@ -4670,3 +4670,110 @@ async def test_async_register_advertisement_callback(
     inject_advertisement_with_source(device, adv, "hci0")
     assert len(seen) == 2
     assert address not in manager._advertisement_callbacks
+
+
+def _inject_event_payload(
+    address: str, payload: bytes, rssi: int, time: float, source: str
+) -> None:
+    """Inject one advertisement of an event-driven device."""
+    inject_advertisement_with_time_and_source(
+        generate_ble_device(address, f"event_{source}"),
+        generate_advertisement_data(
+            local_name="event", service_data={"fcd2": payload}, rssi=rssi
+        ),
+        time,
+        source,
+    )
+
+
+def _last_payload(address: str) -> bytes:
+    """Return the payload the manager holds for an address."""
+    service_info = get_manager().async_last_service_info(address, False)
+    assert service_info is not None
+    return service_info.service_data["fcd2"]
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_new_payload_from_weaker_scanner(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A new payload of an event-driven device wins from any scanner."""
+    address = "44:44:33:11:23:50"
+    start = 50.0
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x01", -90, start + 0.1, HCI1_SOURCE_ADDRESS)
+
+    # Not registered: the much weaker scanner cannot take the device over
+    _inject_event_payload(address, b"\x02", -90, start + 5, HCI1_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x01"
+
+    cancel = get_manager().async_register_event_driven(address)
+    _inject_event_payload(address, b"\x03", -90, start + 10, HCI1_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x03"
+    service_info = get_manager().async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == HCI1_SOURCE_ADDRESS
+    # The strong scanner's new payload wins back right away
+    _inject_event_payload(address, b"\x04", -50, start + 15, HCI0_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x04"
+
+    cancel()
+    _inject_event_payload(address, b"\x05", -90, start + 20, HCI1_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x04"
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_late_copy_does_not_replace_newer_payload(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A copy of an earlier payload from another scanner keeps the newer data."""
+    address = "44:44:33:11:23:51"
+    start = 50.0
+    cancel = get_manager().async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x02", -50, start + 1, HCI0_SOURCE_ADDRESS)
+
+    # The weaker scanner delivers its copy of the first payload late
+    _inject_event_payload(address, b"\x01", -90, start + 2, HCI1_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x02"
+
+    # Past the repeat window the same payload counts as a new event
+    _inject_event_payload(
+        address,
+        b"\x01",
+        -90,
+        start + 2 + EVENT_DRIVEN_REPEAT_SECONDS + 1,
+        HCI1_SOURCE_ADDRESS,
+    )
+    assert _last_payload(address) == b"\x01"
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_registrations_are_counted(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """The address stays event-driven until every registration is removed."""
+    address = "44:44:33:11:23:52"
+    start = 50.0
+    manager = get_manager()
+    cancel_first = manager.async_register_event_driven(address)
+    cancel_second = manager.async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x01", -90, start + 0.1, HCI1_SOURCE_ADDRESS)
+
+    cancel_first()
+    _inject_event_payload(address, b"\x02", -90, start + 5, HCI1_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x02"
+
+    cancel_second()
+    assert address not in manager._event_driven
+    _inject_event_payload(address, b"\x03", -50, start + 10, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x04", -90, start + 15, HCI1_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x03"

@@ -15,6 +15,7 @@ cdef double _RSSI_SMOOTHING_FACTOR
 cdef int _ADV_RSSI_SWITCH_DEADBAND
 cdef double _RESCUE_SCAN_RETRY_SECONDS
 cdef double _STALE_ROAM_FACTOR
+cdef double _EVENT_DRIVEN_REPEAT_SECONDS
 cdef frozenset _EMPTY_DEMOTED
 cdef object FILTER_UUIDS
 cdef object AdvertisementData
@@ -58,6 +59,8 @@ cdef class BluetoothManager:
     cdef public dict _connectable_history
     cdef public dict _smoothed_rssi
     cdef public dict _demoted_sources
+    cdef public dict _event_driven
+    cdef public dict _event_driven_registrations
     cdef public dict _rescue_triggered
     cdef public dict _name_cache
     cdef public set _non_connectable_scanners
@@ -173,8 +176,17 @@ cdef class BluetoothManager:
         prev_double=double,
         new_smoothed=double,
         rssi=int,
+        new_event_payload=bint,
+        event_payloads=dict,
     )
     cdef void _scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
+
+    @cython.locals(now=double, cutoff=double)
+    cdef bint _is_new_event_payload(
+        self,
+        dict event_payloads,
+        BluetoothServiceInfoBleak service_info,
+    )
 
     cpdef _async_describe_source(self, BluetoothServiceInfoBleak service_info)
 
