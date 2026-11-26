@@ -135,14 +135,26 @@ def _dispatch_bleak_callback(
 def _same_event_payload(
     first: BluetoothServiceInfoBleak, second: BluetoothServiceInfoBleak
 ) -> bool:
-    """Return True when two advertisements carry the same event payload."""
-    return (
-        first.service_data is second.service_data
-        or first.service_data == second.service_data
-    ) and (
-        first.manufacturer_data is second.manufacturer_data
-        or first.manufacturer_data == second.manufacturer_data
-    )
+    """
+    Return True when no value the two advertisements share differs.
+
+    Remote scanners merge each advertisement with their own previous one, so
+    the same packet can arrive with extra keys from one scanner. Like repeat
+    detection, compare values one at a time and ignore keys only one has.
+    """
+    first_service = first.service_data
+    second_service = second.service_data
+    if first_service is not second_service:
+        for uuid, value in first_service.items():
+            if (other := second_service.get(uuid)) is not None and other != value:
+                return False
+    first_manufacturer = first.manufacturer_data
+    second_manufacturer = second.manufacturer_data
+    if first_manufacturer is not second_manufacturer:
+        for id_, data in first_manufacturer.items():
+            if (other := second_manufacturer.get(id_)) is not None and other != data:
+                return False
+    return True
 
 
 def _zeroed_allocations(source: str) -> HaBluetoothSlotAllocations:

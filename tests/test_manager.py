@@ -5012,6 +5012,105 @@ async def test_event_driven_copy_with_same_connectable_payload_uses_rssi(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_event_driven_late_manufacturer_copy_keeps_newer_payload(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A late older copy is recognised when the event is in manufacturer data."""
+    address = "44:44:33:11:23:5f"
+    start = 50.0
+    manager = get_manager()
+    cancel = manager.async_register_event_driven(address)
+    for rssi, offset, source in (
+        (-50, 0.0, HCI0_SOURCE_ADDRESS),
+        (-90, 0.1, HCI1_SOURCE_ADDRESS),
+    ):
+        _inject_event_payload(
+            address, b"\x00", rssi, start + offset, source, {1: b"\x01"}
+        )
+    _inject_event_payload(
+        address, b"\x00", -90, start + 5, HCI1_SOURCE_ADDRESS, {1: b"\x02"}
+    )
+
+    # The strong scanner delivers its copy of the first event late
+    _inject_event_payload(
+        address, b"\x00", -50, start + 6, HCI0_SOURCE_ADDRESS, {1: b"\x01"}
+    )
+    for connectable in (False, True):
+        service_info = manager.async_last_service_info(address, connectable)
+        assert service_info is not None
+        assert service_info.source == HCI1_SOURCE_ADDRESS
+        assert service_info.manufacturer_data == {1: b"\x02"}
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_latest_copy_with_merged_key_advances_connectable(
+    register_hci0_scanner: None,
+) -> None:
+    """A latest copy carrying an extra merged key still replaces older data."""
+    address = "44:44:33:11:23:5d"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    constant = {0x0BA9: b"\x01\x02"}
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS, constant)
+    _inject_event_payload(
+        address, b"\x02", -90, start + 1, non_connectable_source, connectable=False
+    )
+
+    # The connectable scanner merges its earlier manufacturer data into its copy
+    _inject_event_payload(
+        address, b"\x02", -50, start + 1.1, HCI0_SOURCE_ADDRESS, constant
+    )
+    assert _last_payload(address) == b"\x02"
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.service_data["fcd2"] == b"\x02"
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_latest_copy_with_merged_key_opens_connectable_path(
+    register_hci0_scanner: None,
+) -> None:
+    """A latest copy carrying an extra merged key opens the connectable path."""
+    address = "44:44:33:11:23:5e"
+    start = 50.0
+    manager = get_manager()
+    first_source = "AA:BB:CC:DD:EE:33"
+    second_source = "AA:BB:CC:DD:EE:44"
+    cancel_first = manager.async_register_scanner(FakeScanner(first_source, "hci3"))
+    cancel_second = manager.async_register_scanner(FakeScanner(second_source, "hci4"))
+    constant = {0x0BA9: b"\x01\x02"}
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(
+        address, b"\x01", -90, start, first_source, constant, connectable=False
+    )
+    _inject_event_payload(
+        address, b"\x02", -90, start + 1, second_source, connectable=False
+    )
+
+    _inject_event_payload(
+        address, b"\x02", -50, start + 1.1, HCI0_SOURCE_ADDRESS, constant
+    )
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == HCI0_SOURCE_ADDRESS
+    cancel()
+    cancel_second()
+    cancel_first()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_event_driven_owner_repeat_refreshes_history(
     register_hci0_scanner: None,
     register_hci1_scanner: None,
