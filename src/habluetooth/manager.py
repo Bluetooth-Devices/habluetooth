@@ -176,6 +176,7 @@ class BluetoothManager:
         "_demoted_sources",
         "_disappeared_callbacks",
         "_fallback_intervals",
+        "_filtered_apple_callbacks",
         "_intervals",
         "_loop",
         "_mgmt_ctl",
@@ -216,6 +217,10 @@ class BluetoothManager:
         ] = {}
         self._advertisement_callbacks: dict[
             str, set[Callable[[BluetoothServiceInfoBleak], None]]
+        ] = {}
+
+        self._filtered_apple_callbacks: dict[
+            int, set[Callable[[BluetoothServiceInfoBleak], None]]
         ] = {}
 
         self._bleak_callbacks: set[BleakCallback] = set()
@@ -1132,6 +1137,14 @@ class BluetoothManager:
                 APPLE_DEVICE_ID_START_BYTE,
                 APPLE_FINDMY_START_BYTE,
             }:
+                if self._filtered_apple_callbacks and (
+                    filtered_callbacks := self._filtered_apple_callbacks.get(
+                        apple_cstr[0]
+                    )
+                ):
+                    self._dispatch_advertisement_callbacks(
+                        filtered_callbacks, service_info
+                    )
                 return
 
         # Per-address subscribers see every advertisement, including ones whose
@@ -1452,6 +1465,46 @@ class BluetoothManager:
             callbacks,
             callback,
         )
+
+    def async_register_filtered_apple_callback(
+        self,
+        callback: Callable[[BluetoothServiceInfoBleak], None],
+        message_type: object,
+    ) -> Callable[[], None]:
+        """
+        Subscribe to Apple advertisements discarded by the noise filter.
+
+        Callbacks receive matching filtered advertisements before they are
+        discarded, without adding them to discovery or advertisement history.
+        Manufacturer data may be merged across packets by the scanner.
+        Only advertisements rejected by the existing Apple filter are delivered.
+        """
+        if (
+            not isinstance(message_type, int)
+            or isinstance(message_type, bool)
+            or not 0 <= message_type <= 255
+        ):
+            msg = "Apple message type must be an integer between 0 and 255"
+            raise ValueError(msg)
+
+        callbacks = self._filtered_apple_callbacks.setdefault(message_type, set())
+
+        def subscription(
+            service_info: BluetoothServiceInfoBleak,
+        ) -> None:
+            callback(service_info)
+
+        callbacks.add(subscription)
+
+        def cancel() -> None:
+            callbacks.discard(subscription)
+            if (
+                not callbacks
+                and self._filtered_apple_callbacks.get(message_type) is callbacks
+            ):
+                del self._filtered_apple_callbacks[message_type]
+
+        return cancel
 
     def async_register_advertisement_callback(
         self,
