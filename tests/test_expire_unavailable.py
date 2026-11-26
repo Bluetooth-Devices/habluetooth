@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -295,3 +296,32 @@ async def test_expiry_uses_the_fallback_interval(
     cancel()
     unsetup()
 
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_expiry_reschedules_when_the_manager_raises() -> None:
+    """An error from the manager does not stop the scanner's expiry timer."""
+    manager = get_manager()
+    scanner = _scanner("esp32_a")
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+
+    start = time.monotonic()
+    _advertise(scanner, start)
+    previous_timer = scanner._cancel_track
+
+    with (
+        patch.object(
+            manager, "_scanner_devices_expired", side_effect=RuntimeError("boom")
+        ),
+        patch_bluetooth_time(start + AFTER_EXPIRY),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        scanner._async_expire_devices_schedule_next()
+
+    assert scanner._cancel_track is not None
+    assert scanner._cancel_track is not previous_timer
+    assert not scanner._cancel_track.cancelled()
+
+    cancel()
+    unsetup()
