@@ -4856,8 +4856,39 @@ async def test_event_driven_late_copy_keeps_newer_connectable_payload(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_event_driven_held_older_payload_is_not_only_connectable_path(
+    register_hci0_scanner: None,
+) -> None:
+    """A held older payload isn't stored as the only connectable path."""
+    address = "44:44:33:11:23:5b"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(
+        address, b"\x01", -90, start, non_connectable_source, connectable=False
+    )
+    _inject_event_payload(
+        address, b"\x02", -90, start + 1, non_connectable_source, connectable=False
+    )
+
+    # The strong connectable scanner delivers its copy of the first payload late
+    _inject_event_payload(address, b"\x01", -50, start + 2, HCI0_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x02"
+    assert manager.async_last_service_info(address, True) is None
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_bleak_callback", [True, False])
 async def test_event_driven_held_copy_surfaces_first_connectable_path(
     register_hci0_scanner: None,
+    with_bleak_callback: bool,
 ) -> None:
     """A held copy that opens the first connectable path notifies consumers."""
     address = "44:44:33:11:23:59"
@@ -4868,9 +4899,16 @@ async def test_event_driven_held_copy_surfaces_first_connectable_path(
         FakeScanner(non_connectable_source, "hci3")
     )
     seen: list[BLEDevice] = []
-    cancel_callback = manager.async_register_bleak_callback(
-        lambda device, _adv: seen.append(device), {}
+    cancel_callback = (
+        manager.async_register_bleak_callback(
+            lambda device, _adv: seen.append(device), {}
+        )
+        if with_bleak_callback
+        else lambda: None
     )
+    discovered: list[BluetoothServiceInfoBleak] = []
+    discover_patch = patch.object(manager, "_subclass_discover_info", discovered.append)
+    discover_patch.start()
     cancel = manager.async_register_event_driven(address)
     _inject_event_payload(
         address, b"\x01", -90, start, non_connectable_source, connectable=False
@@ -4887,7 +4925,16 @@ async def test_event_driven_held_copy_surfaces_first_connectable_path(
     connectable_info = manager.async_last_service_info(address, True)
     assert connectable_info is not None
     assert connectable_info.source == HCI0_SOURCE_ADDRESS
-    assert [device.address for device in seen] == [address]
+    # The first sighting was discovered as usual, then the connectable path
+    assert [info.source for info in discovered] == [
+        non_connectable_source,
+        HCI0_SOURCE_ADDRESS,
+    ]
+    assert discovered[-1] is connectable_info
+    assert [device.address for device in seen] == (
+        [address] if with_bleak_callback else []
+    )
+    discover_patch.stop()
     cancel()
     cancel_callback()
     cancel_scanner()
