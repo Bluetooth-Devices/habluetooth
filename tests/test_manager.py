@@ -4839,6 +4839,45 @@ async def test_event_driven_owner_repeat_refreshes_history(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_event_driven_repeat_takes_over_from_silent_owner(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Repeats are held only while the owner's advertisement is recent."""
+    address = "44:44:33:11:23:57"
+    start = 50.0
+    cancel = get_manager().async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x02", -90, start + 5, HCI1_SOURCE_ADDRESS)
+
+    # The owner goes silent while the strong scanner keeps hearing the same
+    # payload often enough that it never counts as new
+    for offset in (6, 9, 12):
+        _inject_event_payload(
+            address, b"\x02", -50, start + offset, HCI0_SOURCE_ADDRESS
+        )
+        service_info = get_manager().async_last_service_info(address, False)
+        assert service_info is not None
+        assert service_info.source == HCI1_SOURCE_ADDRESS
+
+    # Once the owner's advertisement is older than the window, the normal
+    # rules apply and the much stronger scanner takes over
+    _inject_event_payload(
+        address,
+        b"\x02",
+        -50,
+        start + 5 + EVENT_DRIVEN_REPEAT_SECONDS,
+        HCI0_SOURCE_ADDRESS,
+    )
+    service_info = get_manager().async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == HCI0_SOURCE_ADDRESS
+    assert service_info.time == start + 5 + EVENT_DRIVEN_REPEAT_SECONDS
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 @pytest.mark.parametrize("owner_gone", ["stopped", "unregistered"])
 async def test_event_driven_repeat_takes_over_when_owner_is_gone(
     register_hci0_scanner: None,

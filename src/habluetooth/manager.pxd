@@ -142,7 +142,12 @@ cdef class BluetoothManager:
         str source
     )
 
-    @cython.locals(scanner=BaseHaScanner)
+    cdef bint _hold_event_repeat(
+        self,
+        BluetoothServiceInfoBleak old_info,
+        BluetoothServiceInfoBleak new_info
+    )
+
     cdef bint _should_keep_previous_adv(
         self,
         BluetoothServiceInfoBleak old_info,
