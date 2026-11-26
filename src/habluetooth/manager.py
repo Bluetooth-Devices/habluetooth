@@ -1402,6 +1402,9 @@ class BluetoothManager:
             self._event_driven
             and (event_payloads := self._event_driven.get(service_info.address))
             is not None
+            # An advertisement without data (a name or a scan response) says
+            # nothing about an event, so it follows the normal rules
+            and (service_info.service_data or service_info.manufacturer_data)
         ):
             new_items = self._new_event_items(event_payloads, service_info)
             new_event_payload = bool(new_items)
@@ -1413,7 +1416,9 @@ class BluetoothManager:
                 self._event_latest[service_info.address] = new_items
                 self._event_latest_sources[service_info.address] = {source}
             else:
-                # A repeat follows a new payload, which set the latest event
+                # Every value of a repeat was heard recently, from an earlier
+                # advertisement with data, so a latest event exists: the first
+                # advertisement with data after registering is always new
                 latest_event = self._event_latest[service_info.address]
                 event_rank = _event_rank(service_info, latest_event)
                 latest_sources = self._event_latest_sources[service_info.address]

@@ -5237,6 +5237,33 @@ async def test_event_driven_return_to_earlier_value_updates_both_histories(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+async def test_event_driven_advertisement_without_data(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """An advertisement without data follows the normal rules."""
+    address = "44:44:33:11:23:65"
+    start = 50.0
+    manager = get_manager()
+    cancel = manager.async_register_event_driven(address)
+    device = generate_ble_device(address, "event")
+    name_only = generate_advertisement_data(local_name="event", rssi=-50)
+    # The first advertisement after registering carries no data
+    inject_advertisement_with_time_and_source(
+        device, name_only, start, HCI0_SOURCE_ADDRESS
+    )
+    service_info = manager.async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == HCI0_SOURCE_ADDRESS
+
+    # The first event still counts as new, from any scanner
+    _inject_event_payload(address, b"\x01", -90, start + 1, HCI1_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x01"
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_event_driven_first_sighting_merged_key_opens_connectable_path(
     register_hci0_scanner: None,
 ) -> None:
