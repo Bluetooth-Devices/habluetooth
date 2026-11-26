@@ -4801,7 +4801,7 @@ async def test_filtered_apple_callback_error_isolation(
 
 
 @pytest.mark.parametrize("message_type", [-1, 256, 1.5, True])
-def test_filtered_apple_callback_invalid_type(message_type) -> None:
+def test_filtered_apple_callback_invalid_type(message_type: object) -> None:
     """Reject invalid message types."""
     manager = BluetoothManager()
 
