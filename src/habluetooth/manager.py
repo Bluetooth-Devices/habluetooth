@@ -598,6 +598,12 @@ class BluetoothManager:
         that nothing tracks for availability, or that another scanner still
         has, is left to the periodic _async_check_unavailable sweep. Otherwise
         it is checked now instead of waiting up to UNAVAILABLE_TRACK_SECONDS.
+
+        Only _all_history and the non-connectable callbacks are handled here.
+        A connectable entry for the same address stays in _connectable_history
+        until the next sweep, as it did before this path existed, so for up to
+        UNAVAILABLE_TRACK_SECONDS a connectable=True lookup can still return
+        it after a connectable=False lookup has stopped.
         """
         monotonic_now = monotonic_time_coarse()
         unavailable_callbacks = self._unavailable_callbacks
