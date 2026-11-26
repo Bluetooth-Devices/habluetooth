@@ -627,7 +627,7 @@ class BluetoothManager:
 
     def _async_check_address_unavailable(
         self, address: str, monotonic_now: float
-    ) -> bool:
+    ) -> None:
         """Mark a non-connectable device no scanner has as unavailable if overdue."""
         all_history = self._all_history
         tracker = self._advertisement_tracker
@@ -646,7 +646,7 @@ class BluetoothManager:
             advertising_interval = FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS
         time_since_seen = monotonic_now - all_history[address].time
         if time_since_seen <= advertising_interval:
-            return False
+            return
 
         # The non-connectable check is responsible for removing
         # the device from all the interval tracking since it is no longer
@@ -671,7 +671,6 @@ class BluetoothManager:
                     callback(service_info)
                 except Exception:  # pylint: disable=broad-except
                     _LOGGER.exception("Error in unavailable callback")
-        return True
 
     def _address_disappeared(self, address: str) -> None:
         """
