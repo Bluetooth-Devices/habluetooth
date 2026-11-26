@@ -41,6 +41,7 @@ from .const import (
     DEFAULT_ACTIVE_SCAN_INTERVAL,
     DEFAULT_ON_DEMAND_SWEEP_DURATION,
     DURABLY_GONE_STALE_FACTOR,
+    EVENT_DRIVEN_REPEAT_SECONDS,
     FAILED_ADAPTER_MAC,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     MIN_ACTIVE_SCAN_DURATION,
@@ -100,10 +101,16 @@ _RSSI_SMOOTHING_FACTOR = RSSI_SMOOTHING_FACTOR
 _ADV_RSSI_SWITCH_DEADBAND = ADV_RSSI_SWITCH_DEADBAND
 _RESCUE_SCAN_RETRY_SECONDS = RESCUE_SCAN_RETRY_SECONDS
 _STALE_ROAM_FACTOR = STALE_ROAM_FACTOR
+_EVENT_DRIVEN_REPEAT_SECONDS = EVENT_DRIVEN_REPEAT_SECONDS
 
 # Shared empty set used as the default for the reclaim-hysteresis lookup, so the
 # hot path skips a None check and never allocates a throwaway set.
 _EMPTY_DEMOTED: frozenset[str] = frozenset()
+
+# One (service UUID or manufacturer id, data) item of an event-driven
+# advertisement. An alias, so Cython keeps the bare dict type the .pxd declares
+# for the map that holds them.
+_EventItem = tuple[Any, bytes]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -175,6 +182,8 @@ class BluetoothManager:
         "_debug",
         "_demoted_sources",
         "_disappeared_callbacks",
+        "_event_driven",
+        "_event_driven_registrations",
         "_fallback_intervals",
         "_intervals",
         "_loop",
@@ -239,6 +248,12 @@ class BluetoothManager:
         # set is self-bounded by the proxy count. Evicted with the device and
         # per source on unregister.
         self._demoted_sources: dict[str, set[str]] = {}
+        # address -> (service UUID or manufacturer id, data) -> monotonic time
+        # it was last heard, for addresses registered as event-driven. Only
+        # these addresses pay for the bookkeeping.
+        self._event_driven: dict[str, dict[_EventItem, float]] = {}
+        # address -> one token per registration
+        self._event_driven_registrations: dict[str, set[object]] = {}
         # address -> monotonic time a rescue-scan episode started for a
         # device that needs active scans (issue #591). When the stale
         # handoff is denied for such a device, an active window is
@@ -459,10 +474,12 @@ class BluetoothManager:
         try:
             await self._mgmt_ctl.setup()
         except PermissionError:
-            _LOGGER.exception(
+            # Without a local adapter there is nothing to recover
+            _LOGGER.log(
+                logging.WARNING if self._adapters else logging.DEBUG,
                 "Missing required permissions for Bluetooth management. "
                 "Automatic adapter recovery is unavailable. "
-                "Add NET_ADMIN and NET_RAW capabilities to the container to enable it"
+                "Add NET_ADMIN and NET_RAW capabilities to the container to enable it",
             )
             self._mgmt_ctl = None
         except CONNECTION_ERRORS as ex:
@@ -1295,8 +1312,34 @@ class BluetoothManager:
         #                       scanners with the best advertisement from each
         #                       connectable scanner
         #
-        if old_service_info is not None and self._should_keep_previous_adv(
-            old_service_info, service_info, smoothed_bucket, new_smoothed, True
+        # A new payload of an event-driven device is its newest data, whichever
+        # scanner heard it, so it bypasses the ownership rules below.
+        new_event_payload = False
+        if (
+            self._event_driven
+            and (event_payloads := self._event_driven.get(service_info.address))
+            is not None
+        ):
+            new_event_payload = self._is_new_event_payload(event_payloads, service_info)
+            if (
+                new_event_payload
+                and self._debug
+                and old_service_info is not None
+                and old_service_info.source != source
+            ):
+                _LOGGER.debug(
+                    "%s (%s): Switching from %s to %s (new event-driven payload)",
+                    service_info.name,
+                    service_info.address,
+                    self._async_describe_source(old_service_info),
+                    self._async_describe_source(service_info),
+                )
+        if (
+            old_service_info is not None
+            and not new_event_payload
+            and self._should_keep_previous_adv(
+                old_service_info, service_info, smoothed_bucket, new_smoothed, True
+            )
         ):
             # If we are rejecting the new advertisement and the device is connectable
             # but not in the connectable history or the connectable source is the same
@@ -2047,6 +2090,66 @@ class BluetoothManager:
     ) -> None:
         """Override the fallback availability timeout for a MAC address."""
         self._fallback_intervals[address] = interval
+
+    def async_register_event_driven(self, address: str) -> Callable[[], None]:
+        """
+        Register an address whose device only advertises when something happens.
+
+        Such a device never teaches the tracker an advertising interval, so a
+        new advertisement that only another scanner hears is normally rejected
+        until the current scanner has been silent for
+        FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS. While the address is
+        registered, an advertisement carrying a service or manufacturer data
+        value that was not heard from the address within
+        EVENT_DRIVEN_REPEAT_SECONDS is recorded as the newest advertisement
+        from any scanner, regardless of signal strength. Repeats keep the
+        normal ownership rules, so a copy of an earlier payload delivered late
+        by another scanner cannot replace newer data.
+
+        Values are compared one at a time rather than as a whole payload:
+        remote scanners merge each advertisement with their own previous one,
+        so the same packet can arrive with different keys from different
+        scanners.
+
+        Registrations are counted per address; the returned callback removes
+        this one, and calling it again does nothing.
+        """
+        token = object()
+        self._event_driven_registrations.setdefault(address, set()).add(token)
+        self._event_driven.setdefault(address, {})
+        return partial(self._async_unregister_event_driven, address, token)
+
+    def _async_unregister_event_driven(self, address: str, token: object) -> None:
+        """Remove one event-driven registration of an address."""
+        tokens = self._event_driven_registrations.get(address)
+        if tokens is None or token not in tokens:
+            return
+        tokens.remove(token)
+        if not tokens:
+            del self._event_driven_registrations[address]
+            del self._event_driven[address]
+
+    def _is_new_event_payload(
+        self,
+        last_heard: dict[_EventItem, float],
+        service_info: BluetoothServiceInfoBleak,
+    ) -> bool:
+        """Record the data of an event-driven address and return if any is new."""
+        now = service_info.time
+        cutoff = now - _EVENT_DRIVEN_REPEAT_SECONDS
+        new = False
+        for item in service_info.service_data.items():
+            if (heard := last_heard.get(item)) is None or heard < cutoff:
+                new = True
+            last_heard[item] = now
+        for manufacturer_item in service_info.manufacturer_data.items():
+            if (heard := last_heard.get(manufacturer_item)) is None or heard < cutoff:
+                new = True
+            last_heard[manufacturer_item] = now
+        if len(last_heard) > 1:
+            for expired in [old for old, heard in last_heard.items() if heard < cutoff]:
+                del last_heard[expired]
+        return new
 
     def _async_slot_manager_changed(self, event: AllocationChangeEvent) -> None:
         """Handle slot manager changes."""

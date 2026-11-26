@@ -1,5 +1,13 @@
 # Changelog
 
+## v7.1.3 (2026-11-16)
+
+### Bug fixes
+
+
+- Only warn about missing bluetooth management permissions when an adapter exists ([`2ccc43e`](https://github.com/Bluetooth-Devices/habluetooth/commit/2ccc43eaffcb45530e252d4463c3ffd5fd257bf3))
+
+
 ## v7.1.2 (2026-09-22)
 
 ### Bug fixes

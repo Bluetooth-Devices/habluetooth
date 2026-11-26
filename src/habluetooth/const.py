@@ -61,6 +61,11 @@ DURABLY_GONE_STALE_FACTOR: Final = 2.5
 # rule can never fire).
 STALE_ROAM_FACTOR: Final = 1.5
 
+# For an address registered as event-driven, a payload already heard from the
+# address within this window is a repeat (often a copy another scanner
+# delivered late), so it cannot take the device over from its current scanner.
+EVENT_DRIVEN_REPEAT_SECONDS: Final = 10.0
+
 # An owner whose last advertisement was at least this strong is treated as
 # close/stationary: a brief reception gap is almost certainly RF/scan-response
 # jitter rather than the device leaving, so a merely-comparable challenger
