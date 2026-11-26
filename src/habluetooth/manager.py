@@ -209,6 +209,7 @@ class BluetoothManager:
         "_disappeared_callbacks",
         "_event_driven",
         "_event_driven_registrations",
+        "_event_latest",
         "_fallback_intervals",
         "_intervals",
         "_loop",
@@ -279,6 +280,8 @@ class BluetoothManager:
         self._event_driven: dict[str, dict[_EventItem, float]] = {}
         # address -> one token per registration
         self._event_driven_registrations: dict[str, set[object]] = {}
+        # address -> the last advertisement that carried a new payload
+        self._event_latest: dict[str, BluetoothServiceInfoBleak] = {}
         # address -> monotonic time a rescue-scan episode started for a
         # device that needs active scans (issue #591). When the stale
         # handoff is denied for such a device, an active window is
@@ -725,6 +728,7 @@ class BluetoothManager:
         service_info: BluetoothServiceInfoBleak,
         old_connectable: BluetoothServiceInfoBleak | None,
         old_info: BluetoothServiceInfoBleak,
+        latest_event: BluetoothServiceInfoBleak,
         smoothed: dict[_str, float] | None,
         new_rssi: float,
     ) -> None:
@@ -739,7 +743,7 @@ class BluetoothManager:
         connectable history.
         """
         if old_connectable is not None and (
-            _same_event_payload(old_connectable, old_info)
+            _same_event_payload(old_connectable, latest_event)
             and (
                 old_connectable is old_info
                 or self._should_keep_previous_adv(
@@ -1369,7 +1373,8 @@ class BluetoothManager:
         # doesn't replace a recent advertisement, however strong it is.
         new_event_payload = False
         event_repeat = False
-        latest_copy = False
+        # For a repeat, the latest event it copies; None for an older payload
+        latest_event: BluetoothServiceInfoBleak | None = None
         if (
             self._event_driven
             and (event_payloads := self._event_driven.get(service_info.address))
@@ -1377,13 +1382,14 @@ class BluetoothManager:
         ):
             new_event_payload = self._is_new_event_payload(event_payloads, service_info)
             event_repeat = not new_event_payload
-            # A repeat carrying the payload all history holds is a copy of the
-            # latest accepted event, not an older one
-            latest_copy = (
-                event_repeat
-                and old_service_info is not None
-                and _same_event_payload(service_info, old_service_info)
-            )
+            if new_event_payload:
+                # Remembered apart from all history, which an older repeat can
+                # take over once its owner stops scanning
+                self._event_latest[service_info.address] = service_info
+            elif (
+                latest := self._event_latest.get(service_info.address)
+            ) is not None and _same_event_payload(service_info, latest):
+                latest_event = latest
             if (
                 new_event_payload
                 and self._debug
@@ -1415,11 +1421,12 @@ class BluetoothManager:
             # as the new source, we need to add it to the connectable history
             if service_info.connectable:
                 if event_repeat:
-                    if latest_copy:
+                    if latest_event is not None:
                         self._async_connectable_latest_copy(
                             service_info,
                             old_connectable_service_info,
                             old_service_info,
+                            latest_event,
                             smoothed_bucket,
                             new_smoothed,
                         )
@@ -1448,7 +1455,7 @@ class BluetoothManager:
         # An event-driven repeat with an older payload can win all history (its
         # owner stopped scanning or the window passed), but it never changes
         # connectable history.
-        if service_info.connectable and not (event_repeat and not latest_copy):
+        if service_info.connectable and not (event_repeat and latest_event is None):
             self._connectable_history[service_info.address] = service_info
 
         self._all_history[service_info.address] = service_info
@@ -2219,6 +2226,7 @@ class BluetoothManager:
         if not tokens:
             del self._event_driven_registrations[address]
             del self._event_driven[address]
+            self._event_latest.pop(address, None)
 
     def _is_new_event_payload(
         self,

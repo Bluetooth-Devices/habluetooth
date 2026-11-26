@@ -72,6 +72,7 @@ cdef class BluetoothManager:
     cdef public dict _demoted_sources
     cdef public dict _event_driven
     cdef public dict _event_driven_registrations
+    cdef public dict _event_latest
     cdef public dict _rescue_triggered
     cdef public dict _name_cache
     cdef public set _non_connectable_scanners
@@ -165,6 +166,7 @@ cdef class BluetoothManager:
         BluetoothServiceInfoBleak service_info,
         BluetoothServiceInfoBleak old_connectable,
         BluetoothServiceInfoBleak old_info,
+        BluetoothServiceInfoBleak latest_event,
         dict smoothed,
         double new_rssi
     )
@@ -211,7 +213,8 @@ cdef class BluetoothManager:
         rssi=int,
         new_event_payload=bint,
         event_repeat=bint,
-        latest_copy=bint,
+        latest_event=BluetoothServiceInfoBleak,
+        latest=BluetoothServiceInfoBleak,
         event_payloads=dict,
     )
     cdef void _scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
