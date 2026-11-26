@@ -142,18 +142,29 @@ def _same_event_payload(
     the same packet can arrive with extra keys from one scanner. Like repeat
     detection, compare values one at a time and ignore keys only one has.
     """
-    first_service = first.service_data
     second_service = second.service_data
-    if first_service is not second_service:
-        for uuid, value in first_service.items():
-            if (other := second_service.get(uuid)) is not None and other != value:
-                return False
-    first_manufacturer = first.manufacturer_data
+    for uuid, value in first.service_data.items():
+        if (other := second_service.get(uuid)) is not None and other != value:
+            return False
     second_manufacturer = second.manufacturer_data
-    if first_manufacturer is not second_manufacturer:
-        for id_, data in first_manufacturer.items():
-            if (other := second_manufacturer.get(id_)) is not None and other != data:
-                return False
+    for id_, data in first.manufacturer_data.items():
+        if (other := second_manufacturer.get(id_)) is not None and other != data:
+            return False
+    return True
+
+
+def _contains_event_payload(
+    container: BluetoothServiceInfoBleak, payload: BluetoothServiceInfoBleak
+) -> bool:
+    """Return True when ``container`` holds every value of ``payload`` unchanged."""
+    container_service = container.service_data
+    for uuid, value in payload.service_data.items():
+        if container_service.get(uuid) != value:
+            return False
+    container_manufacturer = container.manufacturer_data
+    for id_, data in payload.manufacturer_data.items():
+        if container_manufacturer.get(id_) != data:
+            return False
     return True
 
 
@@ -736,14 +747,14 @@ class BluetoothManager:
         Update connectable history from a held copy of the latest event.
 
         The copy is held from all history, but it carries the newest payload,
-        so it replaces a connectable entry holding an older payload whatever
-        its signal strength. Against an entry with the same payload the normal
-        rules apply. The first connectable path is announced, since later
+        so it replaces a connectable entry that doesn't hold every value of the
+        latest event, whatever its signal strength. Against an entry that does,
+        the normal rules apply. The first connectable path is announced, since later
         identical advertisements skip notification once the device has
         connectable history.
         """
         if old_connectable is not None and (
-            _same_event_payload(old_connectable, latest_event)
+            _contains_event_payload(old_connectable, latest_event)
             and (
                 old_connectable is old_info
                 or self._should_keep_previous_adv(

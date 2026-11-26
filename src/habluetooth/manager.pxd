@@ -38,15 +38,16 @@ cdef _dispatch_bleak_callback(
     object advertisement_data
 )
 
-@cython.locals(
-    first_service=dict,
-    second_service=dict,
-    first_manufacturer=dict,
-    second_manufacturer=dict,
-)
+@cython.locals(second_service=dict, second_manufacturer=dict)
 cdef bint _same_event_payload(
     BluetoothServiceInfoBleak first,
     BluetoothServiceInfoBleak second
+)
+
+@cython.locals(container_service=dict, container_manufacturer=dict)
+cdef bint _contains_event_payload(
+    BluetoothServiceInfoBleak container,
+    BluetoothServiceInfoBleak payload
 )
 
 cdef class BleakCallback:

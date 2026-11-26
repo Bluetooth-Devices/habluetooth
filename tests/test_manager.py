@@ -5001,13 +5001,18 @@ async def test_event_driven_copy_with_same_connectable_payload_uses_rssi(
     cancel_scanner = manager.async_register_scanner(
         FakeScanner(non_connectable_source, "hci3")
     )
+    event = {1: b"\x01"}
     cancel = manager.async_register_event_driven(address)
     _inject_event_payload(
-        address, b"\x01", -90, start, non_connectable_source, connectable=False
+        address, b"\x01", -90, start, non_connectable_source, event, False
     )
-    _inject_event_payload(address, b"\x01", -90, start + 0.1, HCI1_SOURCE_ADDRESS)
+    _inject_event_payload(
+        address, b"\x01", -90, start + 0.1, HCI1_SOURCE_ADDRESS, event
+    )
 
-    _inject_event_payload(address, b"\x01", copy_rssi, start + 0.2, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(
+        address, b"\x01", copy_rssi, start + 0.2, HCI0_SOURCE_ADDRESS, event
+    )
     service_info = manager.async_last_service_info(address, False)
     assert service_info is not None
     assert service_info.source == non_connectable_source
@@ -5151,6 +5156,41 @@ async def test_event_driven_copy_without_owner_merged_key_opens_connectable_path
     connectable_info = manager.async_last_service_info(address, True)
     assert connectable_info is not None
     assert connectable_info.source == HCI0_SOURCE_ADDRESS
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_latest_copy_replaces_entry_missing_event_key(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A connectable entry lacking the latest event's key isn't kept by RSSI."""
+    address = "44:44:33:11:23:61"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    event = {1: b"\x01"}
+    cancel = manager.async_register_event_driven(address)
+    # The strong connectable scanner has only the constant service data
+    _inject_event_payload(address, b"\x00", -50, start, HCI0_SOURCE_ADDRESS)
+    # The event is in manufacturer data, heard only by the non-connectable one
+    _inject_event_payload(
+        address, b"\x00", -90, start + 1, non_connectable_source, event, False
+    )
+
+    # The weaker connectable scanner delivers its copy of the event
+    _inject_event_payload(
+        address, b"\x00", -90, start + 1.1, HCI1_SOURCE_ADDRESS, event
+    )
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == HCI1_SOURCE_ADDRESS
+    assert connectable_info.manufacturer_data == event
     cancel()
     cancel_scanner()
 
