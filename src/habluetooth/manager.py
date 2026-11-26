@@ -107,9 +107,10 @@ _EVENT_DRIVEN_REPEAT_SECONDS = EVENT_DRIVEN_REPEAT_SECONDS
 # hot path skips a None check and never allocates a throwaway set.
 _EMPTY_DEMOTED: frozenset[str] = frozenset()
 
-# The (service data, manufacturer data) of an event-driven advertisement. An
-# alias, so Cython keeps the bare dict type the .pxd declares for it.
-_EventPayload = tuple[frozenset[Any], frozenset[Any]]
+# One (service UUID or manufacturer id, data) item of an event-driven
+# advertisement. An alias, so Cython keeps the bare dict type the .pxd declares
+# for the map that holds them.
+_EventItem = tuple[Any, bytes]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -247,11 +248,12 @@ class BluetoothManager:
         # set is self-bounded by the proxy count. Evicted with the device and
         # per source on unregister.
         self._demoted_sources: dict[str, set[str]] = {}
-        # address -> payload (service data, manufacturer data) -> monotonic time
+        # address -> (service UUID or manufacturer id, data) -> monotonic time
         # it was last heard, for addresses registered as event-driven. Only
-        # these addresses pay for the payload bookkeeping.
-        self._event_driven: dict[str, dict[_EventPayload, float]] = {}
-        self._event_driven_registrations: dict[str, int] = {}
+        # these addresses pay for the bookkeeping.
+        self._event_driven: dict[str, dict[_EventItem, float]] = {}
+        # address -> one token per registration
+        self._event_driven_registrations: dict[str, set[object]] = {}
         # address -> monotonic time a rescue-scan episode started for a
         # device that needs active scans (issue #591). When the stale
         # handoff is denied for such a device, an active window is
@@ -2053,50 +2055,57 @@ class BluetoothManager:
         new advertisement that only another scanner hears is normally rejected
         until the current scanner has been silent for
         FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS. While the address is
-        registered, an advertisement whose service and manufacturer data was
-        not heard from the address within EVENT_DRIVEN_REPEAT_SECONDS is
-        recorded as the newest advertisement from any scanner, regardless of
-        signal strength. Repeats keep the normal ownership rules, so a copy of
-        an earlier payload delivered late by another scanner cannot replace
-        newer data.
+        registered, an advertisement carrying a service or manufacturer data
+        value that was not heard from the address within
+        EVENT_DRIVEN_REPEAT_SECONDS is recorded as the newest advertisement
+        from any scanner, regardless of signal strength. Repeats keep the
+        normal ownership rules, so a copy of an earlier payload delivered late
+        by another scanner cannot replace newer data.
+
+        Values are compared one at a time rather than as a whole payload:
+        remote scanners merge each advertisement with their own previous one,
+        so the same packet can arrive with different keys from different
+        scanners.
 
         Registrations are counted per address; the returned callback removes
-        this one.
+        this one, and calling it again does nothing.
         """
-        registrations = self._event_driven_registrations
-        registrations[address] = registrations.get(address, 0) + 1
+        token = object()
+        self._event_driven_registrations.setdefault(address, set()).add(token)
         self._event_driven.setdefault(address, {})
-        return partial(self._async_unregister_event_driven, address)
+        return partial(self._async_unregister_event_driven, address, token)
 
-    def _async_unregister_event_driven(self, address: str) -> None:
+    def _async_unregister_event_driven(self, address: str, token: object) -> None:
         """Remove one event-driven registration of an address."""
-        registrations = self._event_driven_registrations
-        if (count := registrations[address] - 1) > 0:
-            registrations[address] = count
+        tokens = self._event_driven_registrations.get(address)
+        if tokens is None or token not in tokens:
             return
-        del registrations[address]
-        del self._event_driven[address]
+        tokens.remove(token)
+        if not tokens:
+            del self._event_driven_registrations[address]
+            del self._event_driven[address]
 
     def _is_new_event_payload(
         self,
-        event_payloads: dict[_EventPayload, float],
+        last_heard: dict[_EventItem, float],
         service_info: BluetoothServiceInfoBleak,
     ) -> bool:
-        """Record the payload of an event-driven address and return if it is new."""
-        payload = (
-            frozenset(service_info.service_data.items()),
-            frozenset(service_info.manufacturer_data.items()),
-        )
+        """Record the data of an event-driven address and return if any is new."""
         now = service_info.time
-        last_heard = event_payloads.get(payload)
-        event_payloads[payload] = now
         cutoff = now - _EVENT_DRIVEN_REPEAT_SECONDS
-        if len(event_payloads) > 1:
-            for expired in [
-                old for old, heard in event_payloads.items() if heard < cutoff
-            ]:
-                del event_payloads[expired]
-        return last_heard is None or last_heard < cutoff
+        new = False
+        for item in service_info.service_data.items():
+            if (heard := last_heard.get(item)) is None or heard < cutoff:
+                new = True
+            last_heard[item] = now
+        for manufacturer_item in service_info.manufacturer_data.items():
+            if (heard := last_heard.get(manufacturer_item)) is None or heard < cutoff:
+                new = True
+            last_heard[manufacturer_item] = now
+        if len(last_heard) > 1:
+            for expired in [old for old, heard in last_heard.items() if heard < cutoff]:
+                del last_heard[expired]
+        return new
 
     def _async_slot_manager_changed(self, event: AllocationChangeEvent) -> None:
         """Handle slot manager changes."""

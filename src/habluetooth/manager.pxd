@@ -181,10 +181,10 @@ cdef class BluetoothManager:
     )
     cdef void _scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
 
-    @cython.locals(now=double, cutoff=double)
+    @cython.locals(now=double, cutoff=double, new=bint)
     cdef bint _is_new_event_payload(
         self,
-        dict event_payloads,
+        dict last_heard,
         BluetoothServiceInfoBleak service_info,
     )
 
