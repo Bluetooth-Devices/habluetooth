@@ -38,6 +38,11 @@ cdef _dispatch_bleak_callback(
     object advertisement_data
 )
 
+cdef bint _same_event_payload(
+    BluetoothServiceInfoBleak first,
+    BluetoothServiceInfoBleak second
+)
+
 cdef class BleakCallback:
 
     cdef public object callback
@@ -148,6 +153,12 @@ cdef class BluetoothManager:
         BluetoothServiceInfoBleak new_info
     )
 
+    @cython.locals(bleak_callback=BleakCallback)
+    cdef void _async_add_first_connectable_path(
+        self,
+        BluetoothServiceInfoBleak service_info
+    )
+
     cdef bint _should_keep_previous_adv(
         self,
         BluetoothServiceInfoBleak old_info,
@@ -190,6 +201,7 @@ cdef class BluetoothManager:
         rssi=int,
         new_event_payload=bint,
         event_repeat=bint,
+        latest_copy=bint,
         event_payloads=dict,
     )
     cdef void _scanner_adv_received(self, BluetoothServiceInfoBleak service_info)

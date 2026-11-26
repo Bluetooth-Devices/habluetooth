@@ -132,6 +132,19 @@ def _dispatch_bleak_callback(
         _LOGGER.exception("Error in callback: %s", bleak_callback.callback)
 
 
+def _same_event_payload(
+    first: BluetoothServiceInfoBleak, second: BluetoothServiceInfoBleak
+) -> bool:
+    """Return True when two advertisements carry the same event payload."""
+    return (
+        first.service_data is second.service_data
+        or first.service_data == second.service_data
+    ) and (
+        first.manufacturer_data is second.manufacturer_data
+        or first.manufacturer_data == second.manufacturer_data
+    )
+
+
 def _zeroed_allocations(source: str) -> HaBluetoothSlotAllocations:
     """
     Return an empty allocations snapshot for a source.
@@ -694,6 +707,24 @@ class BluetoothManager:
             new_info.time - old_info.time < _EVENT_DRIVEN_REPEAT_SECONDS
             and self._is_other_scanning_source(old_info, new_info.source)
         )
+
+    def _async_add_first_connectable_path(
+        self, service_info: BluetoothServiceInfoBleak
+    ) -> None:
+        """
+        Record and announce the first connectable path of an event-driven device.
+
+        Later identical advertisements skip notification because the device then
+        has connectable history, so announce this one now.
+        """
+        self._connectable_history[service_info.address] = service_info
+        if self._bleak_callbacks:
+            advertisement_data = service_info._advertisement_internal()
+            for bleak_callback in self._bleak_callbacks:
+                _dispatch_bleak_callback(
+                    bleak_callback, service_info.device, advertisement_data
+                )
+        self._subclass_discover_info(service_info)
 
     def _prefer_previous_adv_from_different_source(
         self,
@@ -1305,6 +1336,7 @@ class BluetoothManager:
         # doesn't replace a recent advertisement, however strong it is.
         new_event_payload = False
         event_repeat = False
+        latest_copy = False
         if (
             self._event_driven
             and (event_payloads := self._event_driven.get(service_info.address))
@@ -1312,6 +1344,13 @@ class BluetoothManager:
         ):
             new_event_payload = self._is_new_event_payload(event_payloads, service_info)
             event_repeat = not new_event_payload
+            # A repeat carrying the payload all history holds is a copy of the
+            # latest accepted event, not an older one
+            latest_copy = (
+                event_repeat
+                and old_service_info is not None
+                and _same_event_payload(service_info, old_service_info)
+            )
             if (
                 new_event_payload
                 and self._debug
@@ -1342,12 +1381,26 @@ class BluetoothManager:
             # but not in the connectable history or the connectable source is the same
             # as the new source, we need to add it to the connectable history
             if service_info.connectable:
-                if old_connectable_service_info is not None and (
-                    # If it's the same as the preferred source, we're done; we know
-                    # we prefer the old advertisement from the check above.
-                    old_connectable_service_info is old_service_info
-                    or (
+                if old_connectable_service_info is None:
+                    if event_repeat:
+                        if latest_copy:
+                            self._async_add_first_connectable_path(service_info)
+                        # An older payload isn't stored as the only connectable path
+                        return
+                elif old_connectable_service_info is old_service_info:
+                    # It's the same as the preferred source, so we're done; we
+                    # know we prefer the old advertisement from the check above.
+                    return
+                elif latest_copy and not _same_event_payload(
+                    old_connectable_service_info, old_service_info
+                ):
+                    # A copy of the latest event replaces older connectable data,
+                    # whatever its signal strength
+                    pass
+                elif (
+                    (
                         event_repeat
+                        and not latest_copy
                         and self._hold_event_repeat(
                             old_connectable_service_info, service_info
                         )
@@ -1368,11 +1421,12 @@ class BluetoothManager:
 
             return
 
-        # A repeat that won all history (its owner stopped scanning or the
-        # window passed) still can't replace a recent connectable entry from
+        # An older payload that won all history (its owner stopped scanning or
+        # the window passed) still can't replace a recent connectable entry from
         # another scanner that is still scanning.
         if service_info.connectable and not (
             event_repeat
+            and not latest_copy
             and old_connectable_service_info is not None
             and self._hold_event_repeat(old_connectable_service_info, service_info)
         ):
