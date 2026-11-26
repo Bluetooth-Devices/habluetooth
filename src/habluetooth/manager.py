@@ -111,6 +111,9 @@ _EMPTY_DEMOTED: frozenset[str] = frozenset()
 # advertisement. An alias, so Cython keeps the bare dict type the .pxd declares
 # for the map that holds them.
 _EventItem = tuple[Any, bytes]
+# The values that made an event-driven advertisement new, keyed by service UUID
+# (a string) or manufacturer id (an integer). An alias for the same reason.
+_EventItems = dict[Any, bytes]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -132,38 +135,22 @@ def _dispatch_bleak_callback(
         _LOGGER.exception("Error in callback: %s", bleak_callback.callback)
 
 
-def _same_event_payload(
-    first: BluetoothServiceInfoBleak, second: BluetoothServiceInfoBleak
+def _carries_event(
+    service_info: BluetoothServiceInfoBleak, event_items: _EventItems
 ) -> bool:
     """
-    Return True when no value the two advertisements share differs.
+    Return True when ``service_info`` carries every value of an event.
 
-    Remote scanners merge each advertisement with their own previous one, so
-    the same packet can arrive with extra keys from one scanner. Like repeat
-    detection, compare values one at a time and ignore keys only one has.
+    ``event_items`` are the values that made the event new. Other keys are
+    ignored, because remote scanners merge each advertisement with their own
+    previous one, so the same packet can arrive with different extra keys.
     """
-    second_service = second.service_data
-    for uuid, value in first.service_data.items():
-        if (other := second_service.get(uuid)) is not None and other != value:
-            return False
-    second_manufacturer = second.manufacturer_data
-    for id_, data in first.manufacturer_data.items():
-        if (other := second_manufacturer.get(id_)) is not None and other != data:
-            return False
-    return True
-
-
-def _contains_event_payload(
-    container: BluetoothServiceInfoBleak, payload: BluetoothServiceInfoBleak
-) -> bool:
-    """Return True when ``container`` holds every value of ``payload`` unchanged."""
-    container_service = container.service_data
-    for uuid, value in payload.service_data.items():
-        if container_service.get(uuid) != value:
-            return False
-    container_manufacturer = container.manufacturer_data
-    for id_, data in payload.manufacturer_data.items():
-        if container_manufacturer.get(id_) != data:
+    service_data = service_info.service_data
+    manufacturer_data = service_info.manufacturer_data
+    for key, value in event_items.items():
+        if (
+            service_data.get(key) if type(key) is str else manufacturer_data.get(key)
+        ) != value:
             return False
     return True
 
@@ -291,8 +278,8 @@ class BluetoothManager:
         self._event_driven: dict[str, dict[_EventItem, float]] = {}
         # address -> one token per registration
         self._event_driven_registrations: dict[str, set[object]] = {}
-        # address -> the last advertisement that carried a new payload
-        self._event_latest: dict[str, BluetoothServiceInfoBleak] = {}
+        # address -> the values that made its latest event new
+        self._event_latest: dict[str, _EventItems] = {}
         # address -> monotonic time a rescue-scan episode started for a
         # device that needs active scans (issue #591). When the stale
         # handoff is denied for such a device, an active window is
@@ -739,22 +726,22 @@ class BluetoothManager:
         service_info: BluetoothServiceInfoBleak,
         old_connectable: BluetoothServiceInfoBleak | None,
         old_info: BluetoothServiceInfoBleak,
-        latest_event: BluetoothServiceInfoBleak,
+        latest_event: _EventItems,
         smoothed: dict[_str, float] | None,
         new_rssi: float,
     ) -> None:
         """
         Update connectable history from a held copy of the latest event.
 
-        The copy is held from all history, but it carries the newest payload,
-        so it replaces a connectable entry that doesn't hold every value of the
-        latest event, whatever its signal strength. Against an entry that does,
-        the normal rules apply. The first connectable path is announced, since later
+        The copy is held from all history, but it carries the latest event's
+        values, so it replaces a connectable entry that doesn't carry them,
+        whatever its signal strength. Against an entry that does, the normal
+        rules apply. The first connectable path is announced, since later
         identical advertisements skip notification once the device has
         connectable history.
         """
         if old_connectable is not None and (
-            _contains_event_payload(old_connectable, latest_event)
+            _carries_event(old_connectable, latest_event)
             and (
                 old_connectable is old_info
                 or self._should_keep_previous_adv(
@@ -1384,22 +1371,24 @@ class BluetoothManager:
         # doesn't replace a recent advertisement, however strong it is.
         new_event_payload = False
         event_repeat = False
-        # For a repeat, the latest event it copies; None for an older payload
-        latest_event: BluetoothServiceInfoBleak | None = None
+        # For a repeat that copies the latest event, that event's values; None
+        # for an older payload
+        latest_event: _EventItems | None = None
         if (
             self._event_driven
             and (event_payloads := self._event_driven.get(service_info.address))
             is not None
         ):
-            new_event_payload = self._is_new_event_payload(event_payloads, service_info)
+            new_items = self._new_event_items(event_payloads, service_info)
+            new_event_payload = bool(new_items)
             event_repeat = not new_event_payload
             if new_event_payload:
                 # Remembered apart from all history, which an older repeat can
                 # take over once its owner stops scanning
-                self._event_latest[service_info.address] = service_info
+                self._event_latest[service_info.address] = new_items
             elif (
                 latest := self._event_latest.get(service_info.address)
-            ) is not None and _same_event_payload(service_info, latest):
+            ) is not None and _carries_event(service_info, latest):
                 latest_event = latest
             if (
                 new_event_payload
@@ -2239,27 +2228,36 @@ class BluetoothManager:
             del self._event_driven[address]
             self._event_latest.pop(address, None)
 
-    def _is_new_event_payload(
+    def _new_event_items(
         self,
         last_heard: dict[_EventItem, float],
         service_info: BluetoothServiceInfoBleak,
-    ) -> bool:
-        """Record the data of an event-driven address and return if any is new."""
+    ) -> _EventItems:
+        """
+        Record the data of an event-driven address and return the new values.
+
+        The result maps each service UUID or manufacturer id whose value was
+        not heard within the repeat window to that value; it is empty for a
+        repeat. UUIDs are strings and manufacturer ids are integers, so one
+        map holds both.
+        """
         now = service_info.time
         cutoff = now - _EVENT_DRIVEN_REPEAT_SECONDS
-        new = False
-        for item in service_info.service_data.items():
+        new_items: _EventItems = {}
+        for uuid, value in service_info.service_data.items():
+            item = (uuid, value)
             if (heard := last_heard.get(item)) is None or heard < cutoff:
-                new = True
+                new_items[uuid] = value
             last_heard[item] = now
-        for manufacturer_item in service_info.manufacturer_data.items():
+        for id_, data in service_info.manufacturer_data.items():
+            manufacturer_item = (id_, data)
             if (heard := last_heard.get(manufacturer_item)) is None or heard < cutoff:
-                new = True
+                new_items[id_] = data
             last_heard[manufacturer_item] = now
         if len(last_heard) > 1:
             for expired in [old for old, heard in last_heard.items() if heard < cutoff]:
                 del last_heard[expired]
-        return new
+        return new_items
 
     def _async_slot_manager_changed(self, event: AllocationChangeEvent) -> None:
         """Handle slot manager changes."""

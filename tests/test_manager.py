@@ -5191,6 +5191,14 @@ async def test_event_driven_latest_copy_replaces_entry_missing_event_key(
     assert connectable_info is not None
     assert connectable_info.source == HCI1_SOURCE_ADDRESS
     assert connectable_info.manufacturer_data == event
+
+    # A constant-only repeat from the strong scanner lacks the event, so it
+    # doesn't replace the complete entry
+    _inject_event_payload(address, b"\x00", -50, start + 1.2, HCI0_SOURCE_ADDRESS)
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == HCI1_SOURCE_ADDRESS
+    assert connectable_info.manufacturer_data == event
     cancel()
     cancel_scanner()
 
