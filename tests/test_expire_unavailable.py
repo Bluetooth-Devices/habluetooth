@@ -11,6 +11,7 @@ from habluetooth import (
     HaBluetoothConnector,
     get_manager,
 )
+from habluetooth.advertisement_tracker import TRACKER_BUFFERING_WOBBLE_SECONDS
 from habluetooth.const import (
     CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
     FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS,
@@ -249,3 +250,48 @@ async def test_sweep_still_fires_connectable_callbacks(
     untrack_raise()
     cancel()
     unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fallback_interval", "unavailable_at_expiry"),
+    [
+        (10.0, True),
+        (float(CONNECTABLE_FALLBACK_MAXIMUM_STALE_ADVERTISEMENT_SECONDS), False),
+    ],
+)
+async def test_expiry_uses_the_fallback_interval(
+    fallback_interval: float, unavailable_at_expiry: bool
+) -> None:
+    """A fallback interval set by an integration applies on the expiry path."""
+    manager = get_manager()
+    scanner = _scanner("esp32_a")
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+    unavailable: list[BluetoothServiceInfoBleak] = []
+    untrack = manager.async_track_unavailable(
+        unavailable.append, ADDRESS, connectable=False
+    )
+
+    start = time.monotonic()
+    _advertise(scanner, start)
+    manager._advertisement_tracker.intervals.pop(ADDRESS, None)
+    manager.async_set_fallback_availability_interval(ADDRESS, fallback_interval)
+
+    _expire(scanner, start + AFTER_EXPIRY)
+    assert len(unavailable) == int(unavailable_at_expiry)
+
+    if not unavailable_at_expiry:
+        # Not yet overdue at expiry: the sweep marks it once it is.
+        overdue = start + fallback_interval + TRACKER_BUFFERING_WOBBLE_SECONDS + 1
+        with patch_bluetooth_time(overdue):
+            manager._async_check_unavailable()
+        assert len(unavailable) == 1
+    assert ADDRESS not in manager._all_history
+    assert ADDRESS not in manager._advertisement_tracker.fallback_intervals
+
+    untrack()
+    cancel()
+    unsetup()
+
