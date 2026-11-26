@@ -662,7 +662,10 @@ class BluetoothManager:
                 disappear_callback(address)
             except Exception:
                 _LOGGER.exception("Error in disappeared callback")
-        self._address_disappeared(address)
+        try:
+            self._address_disappeared(address)
+        except Exception:
+            _LOGGER.exception("Error in _address_disappeared")
 
         service_info = all_history.pop(address)
         if callbacks := self._unavailable_callbacks.get(address):

@@ -325,3 +325,45 @@ async def test_expiry_reschedules_when_the_manager_raises() -> None:
 
     cancel()
     unsetup()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_expiry_survives_a_raising_address_disappeared(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A raising _address_disappeared does not stop the rest of the batch."""
+    manager = get_manager()
+    scanner = _scanner("esp32_a")
+    unsetup = scanner.async_setup()
+    cancel = manager.async_register_scanner(scanner)
+    other = "44:44:33:11:23:46"
+    unavailable: list[BluetoothServiceInfoBleak] = []
+    untracks = [
+        manager.async_track_unavailable(unavailable.append, address, connectable=False)
+        for address in (ADDRESS, other)
+    ]
+
+    start = time.monotonic()
+    _advertise(scanner, start)
+    device = generate_ble_device(other, "sensor", {}, rssi=-60)
+    adv = generate_advertisement_data(local_name="sensor", rssi=-60)
+    with patch_bluetooth_time(start):
+        scanner.inject_advertisement(device, adv, start)
+    for address in (ADDRESS, other):
+        manager._advertisement_tracker.intervals[address] = LEARNED_INTERVAL
+
+    with patch.object(
+        manager, "_address_disappeared", side_effect=RuntimeError("boom")
+    ):
+        _expire(scanner, start + AFTER_EXPIRY)
+
+    assert sorted(info.address for info in unavailable) == [ADDRESS, other]
+    assert ADDRESS not in manager._all_history
+    assert other not in manager._all_history
+    assert caplog.text.count("Error in _address_disappeared") == 2
+
+    for untrack in untracks:
+        untrack()
+    cancel()
+    unsetup()
