@@ -708,16 +708,37 @@ class BluetoothManager:
             and self._is_other_scanning_source(old_info, new_info.source)
         )
 
-    def _async_add_first_connectable_path(
-        self, service_info: BluetoothServiceInfoBleak
+    def _async_connectable_latest_copy(
+        self,
+        service_info: BluetoothServiceInfoBleak,
+        old_connectable: BluetoothServiceInfoBleak | None,
+        old_info: BluetoothServiceInfoBleak,
+        smoothed: dict[_str, float] | None,
+        new_rssi: float,
     ) -> None:
         """
-        Record and announce the first connectable path of an event-driven device.
+        Update connectable history from a held copy of the latest event.
 
-        Later identical advertisements skip notification because the device then
-        has connectable history, so announce this one now.
+        The copy is held from all history, but it carries the newest payload,
+        so it replaces a connectable entry holding an older payload whatever
+        its signal strength. Against an entry with the same payload the normal
+        rules apply. The first connectable path is announced, since later
+        identical advertisements skip notification once the device has
+        connectable history.
         """
+        if old_connectable is not None and (
+            _same_event_payload(old_connectable, old_info)
+            and (
+                old_connectable is old_info
+                or self._should_keep_previous_adv(
+                    old_connectable, service_info, smoothed, new_rssi, False
+                )
+            )
+        ):
+            return
         self._connectable_history[service_info.address] = service_info
+        if old_connectable is not None:
+            return
         if self._bleak_callbacks:
             advertisement_data = service_info._advertisement_internal()
             for bleak_callback in self._bleak_callbacks:
@@ -1381,30 +1402,21 @@ class BluetoothManager:
             # but not in the connectable history or the connectable source is the same
             # as the new source, we need to add it to the connectable history
             if service_info.connectable:
-                if old_connectable_service_info is None:
-                    if event_repeat:
-                        if latest_copy:
-                            self._async_add_first_connectable_path(service_info)
-                        # An older payload isn't stored as the only connectable path
-                        return
-                elif old_connectable_service_info is old_service_info:
-                    # It's the same as the preferred source, so we're done; we
-                    # know we prefer the old advertisement from the check above.
-                    return
-                elif latest_copy and not _same_event_payload(
-                    old_connectable_service_info, old_service_info
-                ):
-                    # A copy of the latest event replaces older connectable data,
-                    # whatever its signal strength
-                    pass
-                elif (
-                    (
-                        event_repeat
-                        and not latest_copy
-                        and self._hold_event_repeat(
-                            old_connectable_service_info, service_info
+                if event_repeat:
+                    if latest_copy:
+                        self._async_connectable_latest_copy(
+                            service_info,
+                            old_connectable_service_info,
+                            old_service_info,
+                            smoothed_bucket,
+                            new_smoothed,
                         )
-                    )
+                    # An older payload never changes connectable history
+                    return
+                if old_connectable_service_info is not None and (
+                    # If it's the same as the preferred source, we're done; we know
+                    # we prefer the old advertisement from the check above.
+                    old_connectable_service_info is old_service_info
                     # Otherwise the old connectable came from a different source;
                     # re-run the predicate against the connectable history entry.
                     or self._should_keep_previous_adv(
@@ -1421,15 +1433,10 @@ class BluetoothManager:
 
             return
 
-        # An older payload that won all history (its owner stopped scanning or
-        # the window passed) still can't replace a recent connectable entry from
-        # another scanner that is still scanning.
-        if service_info.connectable and not (
-            event_repeat
-            and not latest_copy
-            and old_connectable_service_info is not None
-            and self._hold_event_repeat(old_connectable_service_info, service_info)
-        ):
+        # An event-driven repeat with an older payload can win all history (its
+        # owner stopped scanning or the window passed), but it never changes
+        # connectable history.
+        if service_info.connectable and not (event_repeat and not latest_copy):
             self._connectable_history[service_info.address] = service_info
 
         self._all_history[service_info.address] = service_info
@@ -2174,6 +2181,9 @@ class BluetoothManager:
         window the normal ownership rules apply, so a current scanner that has
         gone silent can still be taken over. A repeat from the current scanner
         is recorded as usual, which keeps the device's last-seen time fresh.
+        In the connectable history, a repeat of an older payload is never
+        recorded, and a copy of the latest payload replaces an entry holding
+        an older one.
 
         Values are compared one at a time rather than as a whole payload:
         remote scanners merge each advertisement with their own previous one,

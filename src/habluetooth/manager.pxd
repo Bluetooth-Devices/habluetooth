@@ -154,9 +154,13 @@ cdef class BluetoothManager:
     )
 
     @cython.locals(bleak_callback=BleakCallback)
-    cdef void _async_add_first_connectable_path(
+    cdef void _async_connectable_latest_copy(
         self,
-        BluetoothServiceInfoBleak service_info
+        BluetoothServiceInfoBleak service_info,
+        BluetoothServiceInfoBleak old_connectable,
+        BluetoothServiceInfoBleak old_info,
+        dict smoothed,
+        double new_rssi
     )
 
     cdef bint _should_keep_previous_adv(

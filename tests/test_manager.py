@@ -4975,6 +4975,43 @@ async def test_event_driven_copy_of_latest_event_advances_connectable(
 
 @pytest.mark.usefixtures("enable_bluetooth")
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("copy_rssi", "connectable_source"),
+    [(-50, HCI0_SOURCE_ADDRESS), (-95, HCI1_SOURCE_ADDRESS)],
+)
+async def test_event_driven_copy_with_same_connectable_payload_uses_rssi(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+    copy_rssi: int,
+    connectable_source: str,
+) -> None:
+    """Against a connectable entry with the same payload, the RSSI rules decide."""
+    address = "44:44:33:11:23:5c"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(
+        address, b"\x01", -90, start, non_connectable_source, connectable=False
+    )
+    _inject_event_payload(address, b"\x01", -90, start + 0.1, HCI1_SOURCE_ADDRESS)
+
+    _inject_event_payload(address, b"\x01", copy_rssi, start + 0.2, HCI0_SOURCE_ADDRESS)
+    service_info = manager.async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == non_connectable_source
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == connectable_source
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
 async def test_event_driven_owner_repeat_refreshes_history(
     register_hci0_scanner: None,
     register_hci1_scanner: None,
