@@ -38,13 +38,17 @@ cdef _dispatch_bleak_callback(
     object advertisement_data
 )
 
-cdef bint _from_source(BluetoothServiceInfoBleak info, str source)
+cdef int _EVENT_OLDER
+cdef int _EVENT_PARTIAL
+cdef int _EVENT_COMPLETE
 
-@cython.locals(service_data=dict, manufacturer_data=dict)
-cdef bint _carries_event(
+@cython.locals(service_data=dict, manufacturer_data=dict, complete=bint)
+cdef int _event_rank(
     BluetoothServiceInfoBleak service_info,
     dict event_items
 )
+
+cdef dict _event_items(BluetoothServiceInfoBleak service_info)
 
 cdef class BleakCallback:
 
@@ -70,6 +74,7 @@ cdef class BluetoothManager:
     cdef public dict _event_driven
     cdef public dict _event_driven_registrations
     cdef public dict _event_latest
+    cdef public dict _event_latest_sources
     cdef public dict _rescue_triggered
     cdef public dict _name_cache
     cdef public set _non_connectable_scanners
@@ -157,13 +162,14 @@ cdef class BluetoothManager:
         BluetoothServiceInfoBleak new_info
     )
 
-    @cython.locals(bleak_callback=BleakCallback)
-    cdef void _async_connectable_latest_copy(
+    @cython.locals(bleak_callback=BleakCallback, old_rank=int)
+    cdef void _async_connectable_event_copy(
         self,
         BluetoothServiceInfoBleak service_info,
         BluetoothServiceInfoBleak old_connectable,
         BluetoothServiceInfoBleak old_info,
         dict latest_event,
+        int event_rank,
         dict smoothed,
         double new_rssi
     )
@@ -211,7 +217,8 @@ cdef class BluetoothManager:
         new_event_payload=bint,
         event_repeat=bint,
         latest_event=dict,
-        latest=dict,
+        event_rank=int,
+        latest_sources=set,
         new_items=dict,
         event_payloads=dict,
     )
