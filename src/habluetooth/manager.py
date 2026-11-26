@@ -1368,7 +1368,14 @@ class BluetoothManager:
 
             return
 
-        if service_info.connectable:
+        # A repeat that won all history (its owner stopped scanning or the
+        # window passed) still can't replace a recent connectable entry from
+        # another scanner that is still scanning.
+        if service_info.connectable and not (
+            event_repeat
+            and old_connectable_service_info is not None
+            and self._hold_event_repeat(old_connectable_service_info, service_info)
+        ):
             self._connectable_history[service_info.address] = service_info
 
         self._all_history[service_info.address] = service_info
