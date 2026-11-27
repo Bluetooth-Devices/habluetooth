@@ -4292,11 +4292,12 @@ async def test_async_setup_connection_error_log(
         mock_mgmt_class.return_value.setup = AsyncMock(side_effect=error)
         await manager.async_setup()
 
-    try:
-        assert manager._mgmt_ctl is None
-        assert manager.is_operating_degraded() is True
-    finally:
-        manager.async_stop()
+        # is_operating_degraded reads IS_LINUX, so check it inside the patch
+        try:
+            assert manager._mgmt_ctl is None
+            assert manager.is_operating_degraded() is True
+        finally:
+            manager.async_stop()
 
     records = [
         record
