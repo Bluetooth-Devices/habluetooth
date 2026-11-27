@@ -111,6 +111,9 @@ _EMPTY_DEMOTED: frozenset[str] = frozenset()
 # advertisement. An alias, so Cython keeps the bare dict type the .pxd declares
 # for the map that holds them.
 _EventItem = tuple[Any, bytes]
+# The values that made an event-driven advertisement new, keyed by service UUID
+# (a string) or manufacturer id (an integer). An alias for the same reason.
+_EventItems = dict[Any, bytes]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -130,6 +133,42 @@ def _dispatch_bleak_callback(
         bleak_callback.callback(device, advertisement_data)
     except Exception:  # pylint: disable=broad-except
         _LOGGER.exception("Error in callback: %s", bleak_callback.callback)
+
+
+# How an advertisement relates to the latest event of an event-driven device
+_EVENT_OLDER = 0  # it has a different value for one of the event's keys
+_EVENT_PARTIAL = 1  # it agrees with the event but lacks some of its values
+_EVENT_COMPLETE = 2  # it carries every value of the event
+
+
+def _event_rank(
+    service_info: BluetoothServiceInfoBleak, event_items: _EventItems
+) -> int:
+    """
+    Rank ``service_info`` against the values of the latest event.
+
+    Keys the event doesn't have are ignored, and a missing key never makes an
+    advertisement older, because remote scanners merge each advertisement with
+    their own previous one, so the same packet can arrive with different keys.
+    """
+    service_data = service_info.service_data
+    manufacturer_data = service_info.manufacturer_data
+    complete = True
+    for key, value in event_items.items():
+        if (
+            other := service_data.get(key)
+            if type(key) is str
+            else manufacturer_data.get(key)
+        ) is None:
+            complete = False
+        elif other != value:
+            return _EVENT_OLDER
+    return _EVENT_COMPLETE if complete else _EVENT_PARTIAL
+
+
+def _event_items(service_info: BluetoothServiceInfoBleak) -> _EventItems:
+    """Return all the values of an advertisement, as event values."""
+    return {**service_info.service_data, **service_info.manufacturer_data}
 
 
 def _zeroed_allocations(source: str) -> HaBluetoothSlotAllocations:
@@ -184,6 +223,8 @@ class BluetoothManager:
         "_disappeared_callbacks",
         "_event_driven",
         "_event_driven_registrations",
+        "_event_latest",
+        "_event_latest_sources",
         "_fallback_intervals",
         "_intervals",
         "_loop",
@@ -254,6 +295,10 @@ class BluetoothManager:
         self._event_driven: dict[str, dict[_EventItem, float]] = {}
         # address -> one token per registration
         self._event_driven_registrations: dict[str, set[object]] = {}
+        # address -> the values that made its latest event new
+        self._event_latest: dict[str, _EventItems] = {}
+        # address -> the scanners that delivered its latest event
+        self._event_latest_sources: dict[str, set[str]] = {}
         # address -> monotonic time a rescue-scan episode started for a
         # device that needs active scans (issue #591). When the stale
         # handoff is denied for such a device, an active window is
@@ -655,14 +700,89 @@ class BluetoothManager:
         """
         return (
             smoothed is not None
-            and new_info.source is not old_info.source
-            and new_info.source != old_info.source
-            and (scanner := self._sources.get(old_info.source)) is not None
-            and scanner.scanning
+            and self._is_other_scanning_source(old_info, new_info.source)
             and self._prefer_previous_adv_from_different_source(
                 old_info, new_info, smoothed, new_rssi, record_demotion
             )
         )
+
+    def _is_other_scanning_source(
+        self, old_info: BluetoothServiceInfoBleak, source: str
+    ) -> bool:
+        """
+        Return True when ``old_info`` came from another, still-scanning source.
+
+        The ``is not / !=`` ordering is a PyObject_RichCompare short-circuit
+        that dominates this hot path; keep it intact.
+        """
+        return (
+            old_info.source is not source
+            and old_info.source != source
+            and (scanner := self._sources.get(old_info.source)) is not None
+            and scanner.scanning
+        )
+
+    def _hold_event_repeat(
+        self,
+        old_info: BluetoothServiceInfoBleak,
+        new_info: BluetoothServiceInfoBleak,
+    ) -> bool:
+        """
+        Return True when an event-driven repeat must not replace ``old_info``.
+
+        A repeat can be a late copy of an older payload, so one from another
+        scanner is held while ``old_info`` is recent and its scanner still
+        scans. Past the repeat window the normal ownership rules apply again,
+        so an owner that went silent can still be taken over.
+        """
+        return (
+            new_info.time - old_info.time < _EVENT_DRIVEN_REPEAT_SECONDS
+            and self._is_other_scanning_source(old_info, new_info.source)
+        )
+
+    def _async_connectable_event_copy(
+        self,
+        service_info: BluetoothServiceInfoBleak,
+        old_connectable: BluetoothServiceInfoBleak | None,
+        old_info: BluetoothServiceInfoBleak,
+        latest_event: _EventItems,
+        event_rank: _int,
+        smoothed: dict[_str, float] | None,
+        new_rssi: float,
+    ) -> None:
+        """
+        Update connectable history from a held repeat that isn't older.
+
+        The repeat is held from all history, but it agrees with the latest
+        event. It replaces a connectable entry that ranks lower against the
+        event (older, or missing some of its values), whatever its signal
+        strength, and never one that ranks higher. Between equal ranks the
+        normal rules apply. The first connectable path is announced, since
+        later identical advertisements skip notification once the device has
+        connectable history.
+        """
+        if old_connectable is not None:
+            old_rank = _event_rank(old_connectable, latest_event)
+            if old_rank > event_rank or (
+                old_rank == event_rank
+                and (
+                    old_connectable is old_info
+                    or self._should_keep_previous_adv(
+                        old_connectable, service_info, smoothed, new_rssi, False
+                    )
+                )
+            ):
+                return
+            self._connectable_history[service_info.address] = service_info
+            return
+        self._connectable_history[service_info.address] = service_info
+        if self._bleak_callbacks:
+            advertisement_data = service_info._advertisement_internal()
+            for bleak_callback in self._bleak_callbacks:
+                _dispatch_bleak_callback(
+                    bleak_callback, service_info.device, advertisement_data
+                )
+        self._subclass_discover_info(service_info)
 
     def _prefer_previous_adv_from_different_source(
         self,
@@ -1269,14 +1389,49 @@ class BluetoothManager:
         #                       connectable scanner
         #
         # A new payload of an event-driven device is its newest data, whichever
-        # scanner heard it, so it bypasses the ownership rules below.
+        # scanner heard it, so it bypasses the ownership rules below. A repeat
+        # may be a late copy of an older payload, so one from another scanner
+        # doesn't replace a recent advertisement, however strong it is.
         new_event_payload = False
+        event_repeat = False
+        # For a repeat: the latest event's values, and how the repeat ranks
+        # against them
+        latest_event: _EventItems | None = None
+        event_rank = _EVENT_OLDER
         if (
             self._event_driven
             and (event_payloads := self._event_driven.get(service_info.address))
             is not None
+            # An advertisement without data (a name or a scan response) says
+            # nothing about an event, so it follows the normal rules
+            and (service_info.service_data or service_info.manufacturer_data)
         ):
-            new_event_payload = self._is_new_event_payload(event_payloads, service_info)
+            new_items = self._new_event_items(event_payloads, service_info)
+            new_event_payload = bool(new_items)
+            event_repeat = not new_event_payload
+            if new_event_payload:
+                # Remembered apart from all history, which an older repeat can
+                # take over once its owner stops scanning, with the scanners
+                # that delivered the event
+                self._event_latest[service_info.address] = new_items
+                self._event_latest_sources[service_info.address] = {source}
+            else:
+                # Every value of a repeat was heard recently, from an earlier
+                # advertisement with data, so a latest event exists: the first
+                # advertisement with data after registering is always new
+                latest_event = self._event_latest[service_info.address]
+                event_rank = _event_rank(service_info, latest_event)
+                latest_sources = self._event_latest_sources[service_info.address]
+                if event_rank == _EVENT_COMPLETE:
+                    latest_sources.add(source)
+                elif event_rank == _EVENT_OLDER and source in latest_sources:
+                    # This scanner delivered the latest event, and one scanner
+                    # doesn't deliver its own older packet after a newer one,
+                    # so the device went back to an earlier value
+                    latest_event = _event_items(service_info)
+                    self._event_latest[service_info.address] = latest_event
+                    self._event_latest_sources[service_info.address] = {source}
+                    event_rank = _EVENT_COMPLETE
             if (
                 new_event_payload
                 and self._debug
@@ -1293,14 +1448,34 @@ class BluetoothManager:
         if (
             old_service_info is not None
             and not new_event_payload
-            and self._should_keep_previous_adv(
-                old_service_info, service_info, smoothed_bucket, new_smoothed, True
+            and (
+                (
+                    event_repeat
+                    and self._hold_event_repeat(old_service_info, service_info)
+                )
+                or self._should_keep_previous_adv(
+                    old_service_info, service_info, smoothed_bucket, new_smoothed, True
+                )
             )
         ):
             # If we are rejecting the new advertisement and the device is connectable
             # but not in the connectable history or the connectable source is the same
             # as the new source, we need to add it to the connectable history
             if service_info.connectable:
+                if event_repeat:
+                    # An older payload is a late copy, which never changes
+                    # connectable history
+                    if latest_event is not None and event_rank != _EVENT_OLDER:
+                        self._async_connectable_event_copy(
+                            service_info,
+                            old_connectable_service_info,
+                            old_service_info,
+                            latest_event,
+                            event_rank,
+                            smoothed_bucket,
+                            new_smoothed,
+                        )
+                    return
                 if old_connectable_service_info is not None and (
                     # If it's the same as the preferred source, we're done; we know
                     # we prefer the old advertisement from the check above.
@@ -1321,7 +1496,12 @@ class BluetoothManager:
 
             return
 
-        if service_info.connectable:
+        # An event-driven repeat with an older payload can win all history (its
+        # owner stopped scanning or the window passed), but as a late copy it
+        # doesn't change connectable history.
+        if service_info.connectable and (
+            not event_repeat or event_rank != _EVENT_OLDER
+        ):
             self._connectable_history[service_info.address] = service_info
 
         self._all_history[service_info.address] = service_info
@@ -2058,9 +2238,17 @@ class BluetoothManager:
         registered, an advertisement carrying a service or manufacturer data
         value that was not heard from the address within
         EVENT_DRIVEN_REPEAT_SECONDS is recorded as the newest advertisement
-        from any scanner, regardless of signal strength. Repeats keep the
-        normal ownership rules, so a copy of an earlier payload delivered late
-        by another scanner cannot replace newer data.
+        from any scanner, regardless of signal strength. A repeat from another
+        scanner doesn't replace the current advertisement while that
+        advertisement is younger than EVENT_DRIVEN_REPEAT_SECONDS and its
+        scanner is still scanning, however strong the repeat is, so a copy of
+        an earlier payload delivered late cannot replace newer data. Past that
+        window the normal ownership rules apply, so a current scanner that has
+        gone silent can still be taken over. A repeat from the current scanner
+        is recorded as usual, which keeps the device's last-seen time fresh.
+        In the connectable history, a repeat of an older payload is never
+        recorded, and a copy of the latest payload replaces an entry holding
+        an older one.
 
         Values are compared one at a time rather than as a whole payload:
         remote scanners merge each advertisement with their own previous one,
@@ -2084,28 +2272,39 @@ class BluetoothManager:
         if not tokens:
             del self._event_driven_registrations[address]
             del self._event_driven[address]
+            self._event_latest.pop(address, None)
+            self._event_latest_sources.pop(address, None)
 
-    def _is_new_event_payload(
+    def _new_event_items(
         self,
         last_heard: dict[_EventItem, float],
         service_info: BluetoothServiceInfoBleak,
-    ) -> bool:
-        """Record the data of an event-driven address and return if any is new."""
+    ) -> _EventItems:
+        """
+        Record the data of an event-driven address and return the new values.
+
+        The result maps each service UUID or manufacturer id whose value was
+        not heard within the repeat window to that value; it is empty for a
+        repeat. UUIDs are strings and manufacturer ids are integers, so one
+        map holds both.
+        """
         now = service_info.time
         cutoff = now - _EVENT_DRIVEN_REPEAT_SECONDS
-        new = False
-        for item in service_info.service_data.items():
+        new_items: _EventItems = {}
+        for uuid, value in service_info.service_data.items():
+            item = (uuid, value)
             if (heard := last_heard.get(item)) is None or heard < cutoff:
-                new = True
+                new_items[uuid] = value
             last_heard[item] = now
-        for manufacturer_item in service_info.manufacturer_data.items():
+        for id_, data in service_info.manufacturer_data.items():
+            manufacturer_item = (id_, data)
             if (heard := last_heard.get(manufacturer_item)) is None or heard < cutoff:
-                new = True
+                new_items[id_] = data
             last_heard[manufacturer_item] = now
         if len(last_heard) > 1:
             for expired in [old for old, heard in last_heard.items() if heard < cutoff]:
                 del last_heard[expired]
-        return new
+        return new_items
 
     def _async_slot_manager_changed(self, event: AllocationChangeEvent) -> None:
         """Handle slot manager changes."""

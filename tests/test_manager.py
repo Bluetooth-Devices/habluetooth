@@ -4679,9 +4679,10 @@ def _inject_event_payload(
     time: float,
     source: str,
     manufacturer_data: dict[int, bytes] | None = None,
+    connectable: bool = True,
 ) -> None:
     """Inject one advertisement of an event-driven device."""
-    inject_advertisement_with_time_and_source(
+    inject_advertisement_with_time_and_source_connectable(
         generate_ble_device(address, f"event_{source}"),
         generate_advertisement_data(
             local_name="event",
@@ -4691,6 +4692,7 @@ def _inject_event_payload(
         ),
         time,
         source,
+        connectable,
     )
 
 
@@ -4786,6 +4788,634 @@ async def test_event_driven_late_copy_with_other_keys_keeps_newer_payload(
     _inject_event_payload(address, b"\x03", -90, start + 3, HCI1_SOURCE_ADDRESS)
     assert _last_payload(address) == b"\x03"
     cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_late_copy_from_stronger_scanner_keeps_newer_payload(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A late copy of an older payload from a stronger scanner keeps newer data."""
+    address = "44:44:33:11:23:54"
+    start = 50.0
+    cancel = get_manager().async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x01", -90, start + 0.1, HCI1_SOURCE_ADDRESS)
+
+    # Only the weak scanner hears the next event
+    _inject_event_payload(address, b"\x02", -90, start + 5, HCI1_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x02"
+
+    # The strong scanner delivers its copy of the first payload late
+    _inject_event_payload(address, b"\x01", -50, start + 6, HCI0_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x02"
+    for connectable in (False, True):
+        service_info = get_manager().async_last_service_info(address, connectable)
+        assert service_info is not None
+        assert service_info.source == HCI1_SOURCE_ADDRESS
+        assert service_info.service_data["fcd2"] == b"\x02"
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_late_copy_keeps_newer_connectable_payload(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A late copy accepted into all history still can't replace connectable data."""
+    address = "44:44:33:11:23:58"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    non_connectable = FakeScanner(non_connectable_source, "hci3")
+    cancel_scanner = manager.async_register_scanner(non_connectable)
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x01", -90, start + 0.1, HCI1_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x02", -90, start + 5, HCI1_SOURCE_ADDRESS)
+    _inject_event_payload(
+        address, b"\x03", -90, start + 6, non_connectable_source, connectable=False
+    )
+
+    # The all-history owner stops scanning, so the strong scanner's late copy
+    # of the first payload takes over all history
+    non_connectable.scanning = False
+    _inject_event_payload(address, b"\x01", -50, start + 7, HCI0_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x01"
+
+    # The connectable owner still scans and its payload is recent, so it stays
+    service_info = manager.async_last_service_info(address, True)
+    assert service_info is not None
+    assert service_info.source == HCI1_SOURCE_ADDRESS
+    assert service_info.service_data["fcd2"] == b"\x02"
+
+    # The next copy of that older payload matches all history now, but it is
+    # still not the latest event, so connectable history keeps the newer data
+    _inject_event_payload(address, b"\x01", -50, start + 8, HCI0_SOURCE_ADDRESS)
+    service_info = manager.async_last_service_info(address, True)
+    assert service_info is not None
+    assert service_info.source == HCI1_SOURCE_ADDRESS
+    assert service_info.service_data["fcd2"] == b"\x02"
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_held_older_payload_is_not_only_connectable_path(
+    register_hci0_scanner: None,
+) -> None:
+    """A held older payload isn't stored as the only connectable path."""
+    address = "44:44:33:11:23:5b"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(
+        address, b"\x01", -90, start, non_connectable_source, connectable=False
+    )
+    _inject_event_payload(
+        address, b"\x02", -90, start + 1, non_connectable_source, connectable=False
+    )
+
+    # The strong connectable scanner delivers its copy of the first payload late
+    _inject_event_payload(address, b"\x01", -50, start + 2, HCI0_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x02"
+    assert manager.async_last_service_info(address, True) is None
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_bleak_callback", [True, False])
+async def test_event_driven_held_copy_surfaces_first_connectable_path(
+    register_hci0_scanner: None,
+    with_bleak_callback: bool,
+) -> None:
+    """A held copy that opens the first connectable path notifies consumers."""
+    address = "44:44:33:11:23:59"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    seen: list[BLEDevice] = []
+    cancel_callback = (
+        manager.async_register_bleak_callback(
+            lambda device, _adv: seen.append(device), {}
+        )
+        if with_bleak_callback
+        else lambda: None
+    )
+    discovered: list[BluetoothServiceInfoBleak] = []
+    discover_patch = patch.object(manager, "_subclass_discover_info", discovered.append)
+    discover_patch.start()
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(
+        address, b"\x01", -90, start, non_connectable_source, connectable=False
+    )
+    assert seen == []
+
+    # The strong connectable scanner's copy is held from all history, but it
+    # is the first connectable path, so consumers hear about it
+    _inject_event_payload(address, b"\x01", -50, start + 0.1, HCI0_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x01"
+    service_info = manager.async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == non_connectable_source
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == HCI0_SOURCE_ADDRESS
+    # The first sighting was discovered as usual, then the connectable path
+    assert [info.source for info in discovered] == [
+        non_connectable_source,
+        HCI0_SOURCE_ADDRESS,
+    ]
+    assert discovered[-1] is connectable_info
+    assert [device.address for device in seen] == (
+        [address] if with_bleak_callback else []
+    )
+    discover_patch.stop()
+    cancel()
+    cancel_callback()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("copy_rssi", [-50, -95])
+async def test_event_driven_copy_of_latest_event_advances_connectable(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+    copy_rssi: int,
+) -> None:
+    """A copy of the latest event replaces older connectable data, whatever RSSI."""
+    address = "44:44:33:11:23:5a"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -90, start, HCI1_SOURCE_ADDRESS)
+    _inject_event_payload(
+        address, b"\x02", -90, start + 5, non_connectable_source, connectable=False
+    )
+
+    # Another connectable scanner delivers its copy of the latest event
+    _inject_event_payload(address, b"\x02", copy_rssi, start + 6, HCI0_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x02"
+    service_info = manager.async_last_service_info(address, True)
+    assert service_info is not None
+    assert service_info.source == HCI0_SOURCE_ADDRESS
+    assert service_info.service_data["fcd2"] == b"\x02"
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("copy_rssi", "connectable_source"),
+    [(-50, HCI0_SOURCE_ADDRESS), (-95, HCI1_SOURCE_ADDRESS)],
+)
+async def test_event_driven_copy_with_same_connectable_payload_uses_rssi(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+    copy_rssi: int,
+    connectable_source: str,
+) -> None:
+    """Against a connectable entry with the same payload, the RSSI rules decide."""
+    address = "44:44:33:11:23:5c"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    event = {1: b"\x01"}
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(
+        address, b"\x01", -90, start, non_connectable_source, event, False
+    )
+    _inject_event_payload(
+        address, b"\x01", -90, start + 0.1, HCI1_SOURCE_ADDRESS, event
+    )
+
+    _inject_event_payload(
+        address, b"\x01", copy_rssi, start + 0.2, HCI0_SOURCE_ADDRESS, event
+    )
+    service_info = manager.async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == non_connectable_source
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == connectable_source
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_late_manufacturer_copy_keeps_newer_payload(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A late older copy is recognised when the event is in manufacturer data."""
+    address = "44:44:33:11:23:5f"
+    start = 50.0
+    manager = get_manager()
+    cancel = manager.async_register_event_driven(address)
+    for rssi, offset, source in (
+        (-50, 0.0, HCI0_SOURCE_ADDRESS),
+        (-90, 0.1, HCI1_SOURCE_ADDRESS),
+    ):
+        _inject_event_payload(
+            address, b"\x00", rssi, start + offset, source, {1: b"\x01"}
+        )
+    _inject_event_payload(
+        address, b"\x00", -90, start + 5, HCI1_SOURCE_ADDRESS, {1: b"\x02"}
+    )
+
+    # The strong scanner delivers its copy of the first event late
+    _inject_event_payload(
+        address, b"\x00", -50, start + 6, HCI0_SOURCE_ADDRESS, {1: b"\x01"}
+    )
+    for connectable in (False, True):
+        service_info = manager.async_last_service_info(address, connectable)
+        assert service_info is not None
+        assert service_info.source == HCI1_SOURCE_ADDRESS
+        assert service_info.manufacturer_data == {1: b"\x02"}
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_latest_copy_with_merged_key_advances_connectable(
+    register_hci0_scanner: None,
+) -> None:
+    """A latest copy carrying an extra merged key still replaces older data."""
+    address = "44:44:33:11:23:5d"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    constant = {0x0BA9: b"\x01\x02"}
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS, constant)
+    _inject_event_payload(
+        address, b"\x02", -90, start + 1, non_connectable_source, connectable=False
+    )
+
+    # The connectable scanner merges its earlier manufacturer data into its copy
+    _inject_event_payload(
+        address, b"\x02", -50, start + 1.1, HCI0_SOURCE_ADDRESS, constant
+    )
+    assert _last_payload(address) == b"\x02"
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.service_data["fcd2"] == b"\x02"
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_latest_copy_with_merged_key_opens_connectable_path(
+    register_hci0_scanner: None,
+) -> None:
+    """A latest copy carrying an extra merged key opens the connectable path."""
+    address = "44:44:33:11:23:5e"
+    start = 50.0
+    manager = get_manager()
+    first_source = "AA:BB:CC:DD:EE:33"
+    second_source = "AA:BB:CC:DD:EE:44"
+    cancel_first = manager.async_register_scanner(FakeScanner(first_source, "hci3"))
+    cancel_second = manager.async_register_scanner(FakeScanner(second_source, "hci4"))
+    constant = {0x0BA9: b"\x01\x02"}
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(
+        address, b"\x01", -90, start, first_source, constant, connectable=False
+    )
+    _inject_event_payload(
+        address, b"\x02", -90, start + 1, second_source, connectable=False
+    )
+
+    _inject_event_payload(
+        address, b"\x02", -50, start + 1.1, HCI0_SOURCE_ADDRESS, constant
+    )
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == HCI0_SOURCE_ADDRESS
+    cancel()
+    cancel_second()
+    cancel_first()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_copy_without_owner_merged_key_opens_connectable_path(
+    register_hci0_scanner: None,
+) -> None:
+    """A copy lacking a key the owner merged in still opens the connectable path."""
+    address = "44:44:33:11:23:60"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    constant = {0x0BA9: b"\x01\x02"}
+    cancel = manager.async_register_event_driven(address)
+    for payload, offset in ((b"\x01", 0.0), (b"\x02", 1.0)):
+        _inject_event_payload(
+            address,
+            payload,
+            -90,
+            start + offset,
+            non_connectable_source,
+            constant,
+            connectable=False,
+        )
+
+    # The connectable scanner's copy lacks the owner's merged manufacturer data
+    _inject_event_payload(address, b"\x02", -50, start + 1.1, HCI0_SOURCE_ADDRESS)
+    service_info = manager.async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == non_connectable_source
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == HCI0_SOURCE_ADDRESS
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_latest_copy_replaces_entry_missing_event_key(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A connectable entry lacking the latest event's key isn't kept by RSSI."""
+    address = "44:44:33:11:23:61"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    event = {1: b"\x01"}
+    cancel = manager.async_register_event_driven(address)
+    # The strong connectable scanner has only the constant service data
+    _inject_event_payload(address, b"\x00", -50, start, HCI0_SOURCE_ADDRESS)
+    # The event is in manufacturer data, heard only by the non-connectable one
+    _inject_event_payload(
+        address, b"\x00", -90, start + 1, non_connectable_source, event, False
+    )
+
+    # The weaker connectable scanner delivers its copy of the event
+    _inject_event_payload(
+        address, b"\x00", -90, start + 1.1, HCI1_SOURCE_ADDRESS, event
+    )
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == HCI1_SOURCE_ADDRESS
+    assert connectable_info.manufacturer_data == event
+
+    # A constant-only repeat from the strong scanner lacks the event, so it
+    # doesn't replace the complete entry
+    _inject_event_payload(address, b"\x00", -50, start + 1.2, HCI0_SOURCE_ADDRESS)
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == HCI1_SOURCE_ADDRESS
+    assert connectable_info.manufacturer_data == event
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_return_to_earlier_value_updates_both_histories(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A device going back to an earlier value updates connectable history too."""
+    address = "44:44:33:11:23:62"
+    start = 50.0
+    manager = get_manager()
+    cancel = manager.async_register_event_driven(address)
+    for payload, offset in ((b"\x01", 0.0), (b"\x02", 1.0), (b"\x01", 2.0)):
+        _inject_event_payload(
+            address, payload, -50, start + offset, HCI0_SOURCE_ADDRESS
+        )
+
+    for connectable in (False, True):
+        service_info = manager.async_last_service_info(address, connectable)
+        assert service_info is not None
+        assert service_info.service_data["fcd2"] == b"\x01"
+        assert service_info.time == start + 2
+
+    # Another scanner's late copy of the second value doesn't bring it back
+    _inject_event_payload(address, b"\x02", -90, start + 2.5, HCI1_SOURCE_ADDRESS)
+    for connectable in (False, True):
+        service_info = manager.async_last_service_info(address, connectable)
+        assert service_info is not None
+        assert service_info.source == HCI0_SOURCE_ADDRESS
+        assert service_info.service_data["fcd2"] == b"\x01"
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_advertisement_without_data(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """An advertisement without data follows the normal rules."""
+    address = "44:44:33:11:23:65"
+    start = 50.0
+    manager = get_manager()
+    cancel = manager.async_register_event_driven(address)
+    device = generate_ble_device(address, "event")
+    name_only = generate_advertisement_data(local_name="event", rssi=-50)
+    # The first advertisement after registering carries no data
+    inject_advertisement_with_time_and_source(
+        device, name_only, start, HCI0_SOURCE_ADDRESS
+    )
+    service_info = manager.async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == HCI0_SOURCE_ADDRESS
+
+    # The first event still counts as new, from any scanner
+    _inject_event_payload(address, b"\x01", -90, start + 1, HCI1_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x01"
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_first_sighting_merged_key_opens_connectable_path(
+    register_hci0_scanner: None,
+) -> None:
+    """A merged key in the first sighting doesn't hide the connectable path."""
+    address = "44:44:33:11:23:64"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    cancel = manager.async_register_event_driven(address)
+    # The first sighting carries a manufacturer value the scanner merged in
+    _inject_event_payload(
+        address,
+        b"\x01",
+        -90,
+        start,
+        non_connectable_source,
+        {0x0BA9: b"\x01\x02"},
+        connectable=False,
+    )
+
+    _inject_event_payload(address, b"\x01", -50, start + 0.1, HCI0_SOURCE_ADDRESS)
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == HCI0_SOURCE_ADDRESS
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_connectable_owner_return_to_earlier_value(
+    register_hci1_scanner: None,
+) -> None:
+    """The connectable owner's earlier value updates it while all history is held."""
+    address = "44:44:33:11:23:63"
+    start = 50.0
+    manager = get_manager()
+    non_connectable_source = "AA:BB:CC:DD:EE:33"
+    cancel_scanner = manager.async_register_scanner(
+        FakeScanner(non_connectable_source, "hci3")
+    )
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -90, start, HCI1_SOURCE_ADDRESS)
+    _inject_event_payload(
+        address, b"\x02", -90, start + 1, non_connectable_source, connectable=False
+    )
+    _inject_event_payload(address, b"\x02", -90, start + 1.1, HCI1_SOURCE_ADDRESS)
+
+    # The connectable owner's next packet goes back to the first value
+    _inject_event_payload(address, b"\x01", -90, start + 2, HCI1_SOURCE_ADDRESS)
+    connectable_info = manager.async_last_service_info(address, True)
+    assert connectable_info is not None
+    assert connectable_info.source == HCI1_SOURCE_ADDRESS
+    assert connectable_info.service_data["fcd2"] == b"\x01"
+    cancel()
+    cancel_scanner()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_owner_repeat_refreshes_history(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """A repeat from the scanner that owns the device still refreshes its time."""
+    address = "44:44:33:11:23:55"
+    start = 50.0
+    cancel = get_manager().async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x02", -90, start + 5, HCI1_SOURCE_ADDRESS)
+
+    _inject_event_payload(address, b"\x02", -90, start + 6, HCI1_SOURCE_ADDRESS)
+    service_info = get_manager().async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == HCI1_SOURCE_ADDRESS
+    assert service_info.time == start + 6
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+async def test_event_driven_repeat_takes_over_from_silent_owner(
+    register_hci0_scanner: None,
+    register_hci1_scanner: None,
+) -> None:
+    """Repeats are held only while the owner's advertisement is recent."""
+    address = "44:44:33:11:23:57"
+    start = 50.0
+    cancel = get_manager().async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x02", -90, start + 5, HCI1_SOURCE_ADDRESS)
+
+    # The owner goes silent while the strong scanner keeps hearing the same
+    # payload often enough that it never counts as new
+    for offset in (6, 9, 12):
+        _inject_event_payload(
+            address, b"\x02", -50, start + offset, HCI0_SOURCE_ADDRESS
+        )
+        service_info = get_manager().async_last_service_info(address, False)
+        assert service_info is not None
+        assert service_info.source == HCI1_SOURCE_ADDRESS
+
+    # Once the owner's advertisement is older than the window, the normal
+    # rules apply and the much stronger scanner takes over
+    _inject_event_payload(
+        address,
+        b"\x02",
+        -50,
+        start + 5 + EVENT_DRIVEN_REPEAT_SECONDS,
+        HCI0_SOURCE_ADDRESS,
+    )
+    service_info = get_manager().async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == HCI0_SOURCE_ADDRESS
+    assert service_info.time == start + 5 + EVENT_DRIVEN_REPEAT_SECONDS
+    cancel()
+
+
+@pytest.mark.usefixtures("enable_bluetooth")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner_gone", ["stopped", "unregistered"])
+async def test_event_driven_repeat_takes_over_when_owner_is_gone(
+    register_hci0_scanner: None,
+    owner_gone: str,
+) -> None:
+    """A repeat from another scanner wins when the owner no longer scans."""
+    address = "44:44:33:11:23:56"
+    start = 50.0
+    manager = get_manager()
+    weak_source = "AA:BB:CC:DD:EE:22"
+    weak_scanner = FakeScanner(weak_source, "hci2")
+    weak_scanner.connectable = True
+    cancel_scanner = manager.async_register_scanner(weak_scanner, connection_slots=5)
+    cancel = manager.async_register_event_driven(address)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x02", -90, start + 5, weak_source)
+
+    if owner_gone == "stopped":
+        weak_scanner.scanning = False
+    else:
+        cancel_scanner()
+
+    _inject_event_payload(address, b"\x02", -50, start + 6, HCI0_SOURCE_ADDRESS)
+    service_info = manager.async_last_service_info(address, False)
+    assert service_info is not None
+    assert service_info.source == HCI0_SOURCE_ADDRESS
+    cancel()
+    if owner_gone == "stopped":
+        cancel_scanner()
 
 
 @pytest.mark.usefixtures("enable_bluetooth")

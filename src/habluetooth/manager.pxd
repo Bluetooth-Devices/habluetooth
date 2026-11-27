@@ -38,6 +38,18 @@ cdef _dispatch_bleak_callback(
     object advertisement_data
 )
 
+cdef int _EVENT_OLDER
+cdef int _EVENT_PARTIAL
+cdef int _EVENT_COMPLETE
+
+@cython.locals(service_data=dict, manufacturer_data=dict, complete=bint)
+cdef int _event_rank(
+    BluetoothServiceInfoBleak service_info,
+    dict event_items
+)
+
+cdef dict _event_items(BluetoothServiceInfoBleak service_info)
+
 cdef class BleakCallback:
 
     cdef public object callback
@@ -61,6 +73,8 @@ cdef class BluetoothManager:
     cdef public dict _demoted_sources
     cdef public dict _event_driven
     cdef public dict _event_driven_registrations
+    cdef public dict _event_latest
+    cdef public dict _event_latest_sources
     cdef public dict _rescue_triggered
     cdef public dict _name_cache
     cdef public set _non_connectable_scanners
@@ -136,6 +150,30 @@ cdef class BluetoothManager:
     )
 
     @cython.locals(scanner=BaseHaScanner)
+    cdef bint _is_other_scanning_source(
+        self,
+        BluetoothServiceInfoBleak old_info,
+        str source
+    )
+
+    cdef bint _hold_event_repeat(
+        self,
+        BluetoothServiceInfoBleak old_info,
+        BluetoothServiceInfoBleak new_info
+    )
+
+    @cython.locals(bleak_callback=BleakCallback, old_rank=int)
+    cdef void _async_connectable_event_copy(
+        self,
+        BluetoothServiceInfoBleak service_info,
+        BluetoothServiceInfoBleak old_connectable,
+        BluetoothServiceInfoBleak old_info,
+        dict latest_event,
+        int event_rank,
+        dict smoothed,
+        double new_rssi
+    )
+
     cdef bint _should_keep_previous_adv(
         self,
         BluetoothServiceInfoBleak old_info,
@@ -177,12 +215,17 @@ cdef class BluetoothManager:
         new_smoothed=double,
         rssi=int,
         new_event_payload=bint,
+        event_repeat=bint,
+        latest_event=dict,
+        event_rank=int,
+        latest_sources=set,
+        new_items=dict,
         event_payloads=dict,
     )
     cdef void _scanner_adv_received(self, BluetoothServiceInfoBleak service_info)
 
-    @cython.locals(now=double, cutoff=double, new=bint)
-    cdef bint _is_new_event_payload(
+    @cython.locals(now=double, cutoff=double, new_items=dict)
+    cdef dict _new_event_items(
         self,
         dict last_heard,
         BluetoothServiceInfoBleak service_info,
