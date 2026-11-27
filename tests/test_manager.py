@@ -4806,6 +4806,7 @@ async def test_event_driven_late_copy_from_stronger_scanner_keeps_newer_payload(
     assert _last_payload(address) == b"\x02"
 
     # The strong scanner delivers its copy of the first payload late
+    # (or the device went back to it: A, B, A looks the same and is held too)
     _inject_event_payload(address, b"\x01", -50, start + 6, HCI0_SOURCE_ADDRESS)
     assert _last_payload(address) == b"\x02"
     for connectable in (False, True):
@@ -4860,8 +4861,8 @@ async def test_event_driven_repeat_takes_over_from_silent_owner(
         assert service_info is not None
         assert service_info.source == HCI1_SOURCE_ADDRESS
 
-    # Once the owner's advertisement is older than the window, the normal
-    # rules apply and the much stronger scanner takes over
+    # Once the last new payload is older than the window, the normal rules
+    # apply and the much stronger scanner takes over
     _inject_event_payload(
         address,
         b"\x02",
@@ -4886,15 +4887,17 @@ async def test_event_driven_owner_repeats_do_not_extend_the_hold(
     address = "44:44:33:11:23:58"
     start = 50.0
     cancel = get_manager().async_register_event_driven(address)
-    _inject_event_payload(address, b"", -50, start, HCI0_SOURCE_ADDRESS)
-    _inject_event_payload(address, b"", -90, start + 5, HCI1_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x02", -90, start + 5, HCI1_SOURCE_ADDRESS)
 
     # Both scanners keep hearing the payload, so the owner's advertisement
     # stays recent
     for offset in (8, 11, 14):
-        _inject_event_payload(address, b"", -90, start + offset, HCI1_SOURCE_ADDRESS)
         _inject_event_payload(
-            address, b"", -50, start + offset + 0.5, HCI0_SOURCE_ADDRESS
+            address, b"\x02", -90, start + offset, HCI1_SOURCE_ADDRESS
+        )
+        _inject_event_payload(
+            address, b"\x02", -50, start + offset + 0.5, HCI0_SOURCE_ADDRESS
         )
         service_info = get_manager().async_last_service_info(address, False)
         assert service_info is not None
@@ -4904,7 +4907,7 @@ async def test_event_driven_owner_repeats_do_not_extend_the_hold(
     # takes over although the owner was heard a second ago
     _inject_event_payload(
         address,
-        b"",
+        b"\x02",
         -50,
         start + 5 + EVENT_DRIVEN_REPEAT_SECONDS,
         HCI0_SOURCE_ADDRESS,
@@ -4931,12 +4934,12 @@ async def test_event_driven_connectable_history_keeps_normal_rules(
     start = 50.0
     manager = get_manager()
     cancel = manager.async_register_event_driven(address)
-    _inject_event_payload(address, b"", -50, start, HCI0_SOURCE_ADDRESS)
-    _inject_event_payload(address, b"", -90, start + 1, HCI1_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x01", -50, start, HCI0_SOURCE_ADDRESS)
+    _inject_event_payload(address, b"\x02", -90, start + 1, HCI1_SOURCE_ADDRESS)
     inject_advertisement_with_time_and_source_connectable(
         generate_ble_device(address, "event"),
         generate_advertisement_data(
-            local_name="event", service_data={"fcd2": b""}, rssi=-60
+            local_name="event", service_data={"fcd2": b"\x03"}, rssi=-60
         ),
         start + 2,
         NON_CONNECTABLE_REMOTE_SOURCE_ADDRESS,
@@ -4947,12 +4950,12 @@ async def test_event_driven_connectable_history_keeps_normal_rules(
     assert connectable_info.source == HCI1_SOURCE_ADDRESS
 
     # A late copy of the first payload from the strong connectable scanner
-    _inject_event_payload(address, b"", -50, start + 3, HCI0_SOURCE_ADDRESS)
-    assert _last_payload(address) == b""
+    _inject_event_payload(address, b"\x01", -50, start + 3, HCI0_SOURCE_ADDRESS)
+    assert _last_payload(address) == b"\x03"
     connectable_info = manager.async_last_service_info(address, True)
     assert connectable_info is not None
     assert connectable_info.source == HCI0_SOURCE_ADDRESS
-    assert connectable_info.service_data["fcd2"] == b""
+    assert connectable_info.service_data["fcd2"] == b"\x01"
     cancel()
 
 
