@@ -184,6 +184,7 @@ class BluetoothManager:
         "_disappeared_callbacks",
         "_event_driven",
         "_event_driven_registrations",
+        "_event_driven_times",
         "_fallback_intervals",
         "_intervals",
         "_loop",
@@ -254,6 +255,8 @@ class BluetoothManager:
         self._event_driven: dict[str, dict[_EventItem, float]] = {}
         # address -> one token per registration
         self._event_driven_registrations: dict[str, set[object]] = {}
+        # address -> time its last new payload was recorded
+        self._event_driven_times: dict[str, float] = {}
         # address -> monotonic time a rescue-scan episode started for a
         # device that needs active scans (issue #591). When the stale
         # handoff is denied for such a device, an active window is
@@ -675,24 +678,6 @@ class BluetoothManager:
             and old_info.source != source
             and (scanner := self._sources.get(old_info.source)) is not None
             and scanner.scanning
-        )
-
-    def _hold_event_repeat(
-        self,
-        old_info: BluetoothServiceInfoBleak,
-        new_info: BluetoothServiceInfoBleak,
-    ) -> bool:
-        """
-        Return True when an event-driven repeat must not replace ``old_info``.
-
-        A repeat can be a late copy of an older payload, so one from another
-        scanner is held while ``old_info`` is recent and its scanner still
-        scans. Past the repeat window the normal ownership rules apply again,
-        so an owner that went silent can still be taken over.
-        """
-        return (
-            new_info.time - old_info.time < _EVENT_DRIVEN_REPEAT_SECONDS
-            and self._is_other_scanning_source(old_info, new_info.source)
         )
 
     def _prefer_previous_adv_from_different_source(
@@ -1301,17 +1286,29 @@ class BluetoothManager:
         #
         # A new payload of an event-driven device is its newest data, whichever
         # scanner heard it, so it bypasses the ownership rules below. A repeat
-        # may be a late copy of an older payload, so one from another scanner
-        # doesn't replace a recent advertisement, however strong it is.
+        # may be a late copy of an older payload, so for a while after a new
+        # payload, one from another scanner doesn't replace the current
+        # advertisement, however strong it is.
         new_event_payload = False
-        event_repeat = False
+        hold_event_repeat = False
         if (
             self._event_driven
             and (event_payloads := self._event_driven.get(service_info.address))
             is not None
         ):
             new_event_payload = self._is_new_event_payload(event_payloads, service_info)
-            event_repeat = not new_event_payload
+            if new_event_payload:
+                self._event_driven_times[service_info.address] = service_info.time
+            elif (
+                old_service_info is not None
+                # Measured from the last new payload, not from the current
+                # advertisement, which the owner's own repeats keep fresh
+                and (event_time := self._event_driven_times.get(service_info.address))
+                is not None
+                and service_info.time - event_time < _EVENT_DRIVEN_REPEAT_SECONDS
+                and self._is_other_scanning_source(old_service_info, source)
+            ):
+                hold_event_repeat = True
             if (
                 new_event_payload
                 and self._debug
@@ -1329,10 +1326,7 @@ class BluetoothManager:
             old_service_info is not None
             and not new_event_payload
             and (
-                (
-                    event_repeat
-                    and self._hold_event_repeat(old_service_info, service_info)
-                )
+                hold_event_repeat
                 or self._should_keep_previous_adv(
                     old_service_info, service_info, smoothed_bucket, new_smoothed, True
                 )
@@ -2099,14 +2093,13 @@ class BluetoothManager:
         registered, an advertisement carrying a service or manufacturer data
         value that was not heard from the address within
         EVENT_DRIVEN_REPEAT_SECONDS is recorded as the newest advertisement
-        from any scanner, regardless of signal strength. A repeat from another
-        scanner doesn't replace the current advertisement while that
-        advertisement is younger than EVENT_DRIVEN_REPEAT_SECONDS and its
-        scanner is still scanning, however strong the repeat is, so a copy of
-        an earlier payload delivered late cannot replace newer data. Past that
-        window the normal ownership rules apply, so a current scanner that has
-        gone silent can still be taken over. A repeat from the current scanner
-        is recorded as usual, which keeps the device's last-seen time fresh.
+        from any scanner, regardless of signal strength. For
+        EVENT_DRIVEN_REPEAT_SECONDS after that, a repeat from another scanner
+        doesn't replace the current advertisement while its scanner is still
+        scanning, however strong the repeat is, so a copy of an earlier payload
+        delivered late cannot replace newer data. Past that window the normal
+        ownership rules apply. A repeat from the current scanner is recorded
+        as usual, which keeps the device's last-seen time fresh.
         The connectable history keeps the normal ownership rules.
 
         Values are compared one at a time rather than as a whole payload:
@@ -2131,6 +2124,7 @@ class BluetoothManager:
         if not tokens:
             del self._event_driven_registrations[address]
             del self._event_driven[address]
+            self._event_driven_times.pop(address, None)
 
     def _is_new_event_payload(
         self,
