@@ -1346,12 +1346,6 @@ class BluetoothManager:
                     # If it's the same as the preferred source, we're done; we know
                     # we prefer the old advertisement from the check above.
                     old_connectable_service_info is old_service_info
-                    or (
-                        event_repeat
-                        and self._hold_event_repeat(
-                            old_connectable_service_info, service_info
-                        )
-                    )
                     # Otherwise the old connectable came from a different source;
                     # re-run the predicate against the connectable history entry.
                     or self._should_keep_previous_adv(
@@ -2113,6 +2107,7 @@ class BluetoothManager:
         window the normal ownership rules apply, so a current scanner that has
         gone silent can still be taken over. A repeat from the current scanner
         is recorded as usual, which keeps the device's last-seen time fresh.
+        The connectable history keeps the normal ownership rules.
 
         Values are compared one at a time rather than as a whole payload:
         remote scanners merge each advertisement with their own previous one,
