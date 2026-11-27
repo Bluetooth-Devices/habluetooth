@@ -1711,6 +1711,21 @@ async def test_check_capabilities_send_error(error: BaseException) -> None:
 
 
 @pytest.mark.asyncio
+async def test_check_capabilities_send_permission_error() -> None:
+    """Test a permission error while sending counts as missing capabilities."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_protocol.transport = Mock()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    mock_protocol._write_to_socket = Mock(
+        side_effect=PermissionError(1, "Operation not permitted")
+    )
+    mgmt_ctl.protocol = mock_protocol
+
+    assert await mgmt_ctl._check_capabilities() is False
+
+
+@pytest.mark.asyncio
 async def test_setup_with_failed_capabilities() -> None:
     """Test setup raises PermissionError when capabilities check fails."""
     with (

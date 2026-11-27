@@ -710,11 +710,12 @@ class MGMTBluetoothCtl:
         Check if we have the necessary capabilities to use MGMT.
 
         Returns True if we have capabilities, False if the kernel answered
-        with permission denied.
+        with permission denied or refused sending the command with a
+        permission error.
 
         Raises OSError if the check could not tell, for example when the
-        socket is not connected, sending fails, the command times out or the
-        kernel answers with an unexpected status.
+        socket is not connected, sending fails for another reason, the command
+        times out or the kernel answers with an unexpected status.
         """
         if not self.protocol or not self.protocol.transport:
             msg = "Bluetooth management capability check failed: not connected"
@@ -730,6 +731,14 @@ class MGMTBluetoothCtl:
 
         try:
             status = await self._do_mgmt_op_get_connections(header)
+        except PermissionError as ex:
+            # PermissionError is an OSError subclass; keep it as a permission
+            # failure instead of wrapping it below
+            _LOGGER.debug(
+                "MGMT capability check failed with %s - missing NET_ADMIN/NET_RAW",
+                ex,
+            )
+            return False
         except TimeoutError as ex:
             msg = "Bluetooth management capability check timed out"
             raise OSError(msg) from ex
