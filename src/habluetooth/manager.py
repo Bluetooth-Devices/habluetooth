@@ -667,12 +667,8 @@ class BluetoothManager:
     def _is_other_scanning_source(
         self, old_info: BluetoothServiceInfoBleak, source: str
     ) -> bool:
-        """
-        Return True when ``old_info`` came from another, still-scanning source.
-
-        The ``is not / !=`` ordering is a PyObject_RichCompare short-circuit
-        that dominates this hot path; keep it intact.
-        """
+        """Return if ``old_info`` came from another source that still scans."""
+        # Hot path: ``is not`` short-circuits the ``!=`` compare
         return (
             old_info.source is not source
             and old_info.source != source
@@ -1286,9 +1282,7 @@ class BluetoothManager:
         #
         # A new payload of an event-driven device is its newest data, whichever
         # scanner heard it, so it bypasses the ownership rules below. A repeat
-        # may be a late copy of an older payload, so for a while after a new
-        # payload, one from another scanner doesn't replace the current
-        # advertisement, however strong it is.
+        # from another scanner soon after may be a late copy, so it is held.
         new_event_payload = False
         hold_event_repeat = False
         if (
@@ -1301,8 +1295,7 @@ class BluetoothManager:
                 self._event_driven_times[service_info.address] = service_info.time
             elif (
                 old_service_info is not None
-                # Measured from the last new payload, not from the current
-                # advertisement, which the owner's own repeats keep fresh
+                # From the last new payload; owner repeats don't extend it
                 and (event_time := self._event_driven_times.get(service_info.address))
                 is not None
                 and service_info.time - event_time < _EVENT_DRIVEN_REPEAT_SECONDS
@@ -2095,12 +2088,8 @@ class BluetoothManager:
         EVENT_DRIVEN_REPEAT_SECONDS is recorded as the newest advertisement
         from any scanner, regardless of signal strength. For
         EVENT_DRIVEN_REPEAT_SECONDS after that, a repeat from another scanner
-        doesn't replace the current advertisement while its scanner is still
-        scanning, however strong the repeat is, so a copy of an earlier payload
-        delivered late cannot replace newer data. Past that window the normal
-        ownership rules apply. A repeat from the current scanner is recorded
-        as usual, which keeps the device's last-seen time fresh.
-        The connectable history keeps the normal ownership rules.
+        doesn't replace it, so a late copy of an earlier payload cannot
+        replace newer data. The connectable history keeps the normal rules.
 
         Values are compared one at a time rather than as a whole payload:
         remote scanners merge each advertisement with their own previous one,
