@@ -1,5 +1,13 @@
 # Changelog
 
+## v7.2.1 (2026-11-27)
+
+### Bug fixes
+
+
+- Keep newer event-driven data when another scanner repeats an older payload ([`786bea5`](https://github.com/Bluetooth-Devices/habluetooth/commit/786bea55bb91eb5306733d866420589c0430745a))
+
+
 ## v7.2.0 (2026-11-26)
 
 ### Features
