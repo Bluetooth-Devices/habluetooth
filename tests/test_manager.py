@@ -4816,3 +4816,145 @@ async def test_event_driven_registrations_are_counted(
     _inject_event_payload(address, b"\x03", -50, start + 10, HCI0_SOURCE_ADDRESS)
     _inject_event_payload(address, b"\x04", -90, start + 15, HCI1_SOURCE_ADDRESS)
     assert _last_payload(address) == b"\x03"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_filtered_apple_advertisement_callback(
+    register_hci0_scanner: None,
+) -> None:
+    """Filtered Apple adverts reach only explicit subscribers."""
+    manager = get_manager()
+    address = "44:44:33:11:23:48"
+    device = generate_ble_device(address, "airpods")
+    seen: list[BluetoothServiceInfoBleak] = []
+    regular: list[BluetoothServiceInfoBleak] = []
+
+    adv = generate_advertisement_data(
+        manufacturer_data={76: b"\x07\x19" + bytes(25)},
+        service_uuids=[],
+        service_data={},
+    )
+    unrelated = generate_advertisement_data(
+        manufacturer_data={76: b"\x01\x00"},
+        service_uuids=[],
+        service_data={},
+    )
+
+    cancel_regular = manager.async_register_advertisement_callback(
+        regular.append, address
+    )
+
+    try:
+        # Without opt-in, the packet remains filtered.
+        inject_advertisement_with_source(device, adv, "hci0")
+        assert address not in manager._all_history
+
+        cancel = manager.async_register_filtered_apple_callback(seen.append, 0x07)
+
+        try:
+            inject_advertisement_with_source(device, adv, "hci0")
+            inject_advertisement_with_source(device, adv, "hci0")
+            inject_advertisement_with_source(device, unrelated, "hci0")
+
+            assert len(seen) == 2
+            assert not regular
+            assert address not in manager._all_history
+            assert address not in manager._connectable_history
+        finally:
+            cancel()
+
+        inject_advertisement_with_source(device, adv, "hci0")
+        assert len(seen) == 2
+        assert not manager._filtered_apple_callbacks
+    finally:
+        cancel_regular()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_filtered_apple_callback_lifecycle(
+    register_hci0_scanner: None,
+) -> None:
+    """Independent subscriptions and repeated cancellation are safe."""
+    manager = get_manager()
+    device = generate_ble_device("44:44:33:11:23:49", "airpods")
+    adv = generate_advertisement_data(
+        manufacturer_data={76: b"\x07\x19" + bytes(25)},
+        service_uuids=[],
+        service_data={},
+    )
+    seen: list[BluetoothServiceInfoBleak] = []
+    callback = seen.append
+
+    cancel_first = manager.async_register_filtered_apple_callback(callback, 0x07)
+    cancel_second = manager.async_register_filtered_apple_callback(callback, 0x07)
+
+    try:
+        inject_advertisement_with_source(device, adv, "hci0")
+        assert len(seen) == 2
+
+        cancel_first()
+        cancel_first()
+
+        inject_advertisement_with_source(device, adv, "hci0")
+        assert len(seen) == 3
+
+        cancel_third = manager.async_register_filtered_apple_callback(callback, 0x07)
+
+        try:
+            cancel_first()
+            inject_advertisement_with_source(device, adv, "hci0")
+            assert len(seen) == 5
+        finally:
+            cancel_third()
+    finally:
+        cancel_first()
+        cancel_second()
+
+    assert not manager._filtered_apple_callbacks
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_bluetooth")
+async def test_filtered_apple_callback_error_isolation(
+    register_hci0_scanner: None,
+) -> None:
+    """A failing subscriber does not prevent other callbacks."""
+    manager = get_manager()
+    device = generate_ble_device("44:44:33:11:23:50", "airpods")
+    adv = generate_advertisement_data(
+        manufacturer_data={76: b"\x07\x19" + bytes(25)},
+        service_uuids=[],
+        service_data={},
+    )
+    seen: list[BluetoothServiceInfoBleak] = []
+
+    def failing_callback(_info: BluetoothServiceInfoBleak) -> None:
+        msg = "Intentional subscriber failure"
+        raise ValueError(msg)
+
+    cancel_bad = manager.async_register_filtered_apple_callback(failing_callback, 0x07)
+    cancel_good = manager.async_register_filtered_apple_callback(seen.append, 0x07)
+
+    try:
+        inject_advertisement_with_source(device, adv, "hci0")
+        assert len(seen) == 1
+        assert device.address not in manager._all_history
+    finally:
+        cancel_bad()
+        cancel_good()
+
+
+@pytest.mark.parametrize("message_type", [-1, 256, 1.5, True])
+def test_filtered_apple_callback_invalid_type(message_type: object) -> None:
+    """Reject invalid message types."""
+    manager = BluetoothManager()
+
+    with pytest.raises(ValueError, match="message type"):
+        manager.async_register_filtered_apple_callback(
+            lambda _info: None,
+            message_type,
+        )
+
+    assert not manager._filtered_apple_callbacks

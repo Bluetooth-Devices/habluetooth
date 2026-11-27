@@ -54,6 +54,7 @@ cdef class BluetoothManager:
     cdef public dict _unavailable_callbacks
     cdef public dict _connectable_unavailable_callbacks
     cdef public dict _advertisement_callbacks
+    cdef public dict _filtered_apple_callbacks
     cdef public set _bleak_callbacks
     cdef public dict _all_history
     cdef public dict _connectable_history
