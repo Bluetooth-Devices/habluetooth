@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, Mock, patch
 
@@ -1456,10 +1457,15 @@ async def test_has_mgmt_capabilities_from_status() -> None:
     # Test invalid index (still has permissions)
     assert mgmt_ctl._has_mgmt_capabilities_from_status(0x11) is True
 
-    # Test unknown status (assumes no permissions)
-    assert mgmt_ctl._has_mgmt_capabilities_from_status(0xFF) is False
-    assert mgmt_ctl._has_mgmt_capabilities_from_status(0x01) is False
-    assert mgmt_ctl._has_mgmt_capabilities_from_status(0x0D) is False
+    # Test not powered (still has permissions)
+    assert mgmt_ctl._has_mgmt_capabilities_from_status(0x0F) is True
+
+    # Test unknown status (can't tell, raises a non-permission error)
+    for status in (0xFF, 0x01, 0x0D, 0x10):
+        with pytest.raises(OSError, match="unexpected status") as exc_info:
+            mgmt_ctl._has_mgmt_capabilities_from_status(status)
+        assert not isinstance(exc_info.value, PermissionError)
+        assert f"{status:#04x}" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -1594,9 +1600,10 @@ async def test_check_capabilities_unknown_status() -> None:
 
     mock_protocol.command_response = mock_command_response
 
-    # Test capability check - unknown status assumes no permissions
-    result = await mgmt_ctl._check_capabilities()
-    assert result is False
+    # Test capability check - unknown status raises a non-permission error
+    with pytest.raises(OSError, match="unexpected status 0xff") as exc_info:
+        await mgmt_ctl._check_capabilities()
+    assert not isinstance(exc_info.value, PermissionError)
 
 
 @pytest.mark.asyncio
@@ -1631,8 +1638,9 @@ async def test_check_capabilities_timeout() -> None:
         # Make timeout raise immediately
         mock_timeout.side_effect = TimeoutError("Test timeout")
 
-        result = await mgmt_ctl._check_capabilities()
-        assert result is False
+        with pytest.raises(OSError, match="capability check timed out") as exc_info:
+            await mgmt_ctl._check_capabilities()
+    assert not isinstance(exc_info.value, (PermissionError, TimeoutError))
 
 
 @pytest.mark.asyncio
@@ -1643,8 +1651,9 @@ async def test_check_capabilities_no_protocol() -> None:
     # No protocol set
     mgmt_ctl.protocol = None
 
-    result = await mgmt_ctl._check_capabilities()
-    assert result is False
+    with pytest.raises(OSError, match="not connected") as exc_info:
+        await mgmt_ctl._check_capabilities()
+    assert not isinstance(exc_info.value, PermissionError)
 
 
 @pytest.mark.asyncio
@@ -1657,8 +1666,63 @@ async def test_check_capabilities_no_transport() -> None:
     mock_protocol.transport = None
     mgmt_ctl.protocol = mock_protocol
 
-    result = await mgmt_ctl._check_capabilities()
-    assert result is False
+    with pytest.raises(OSError, match="not connected") as exc_info:
+        await mgmt_ctl._check_capabilities()
+    assert not isinstance(exc_info.value, PermissionError)
+
+
+@pytest.mark.asyncio
+async def test_check_capabilities_not_powered() -> None:
+    """Test _check_capabilities with a powered off adapter (still has permissions)."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_protocol.transport = Mock()
+    mock_protocol.command_response = _stub_command_response(0x0F)
+    mock_protocol._write_to_socket = Mock()
+    mgmt_ctl.protocol = mock_protocol
+
+    assert await mgmt_ctl._check_capabilities() is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(OSError("Bad file descriptor"), id="os_error"),
+        pytest.param(BluetoothSocketError("Bad file descriptor"), id="socket_error"),
+    ],
+)
+async def test_check_capabilities_send_error(error: BaseException) -> None:
+    """Test _check_capabilities when sending the command fails."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_protocol.transport = Mock()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    mock_protocol._write_to_socket = Mock(side_effect=error)
+    mgmt_ctl.protocol = mock_protocol
+
+    with pytest.raises(
+        OSError,
+        match="capability check failed: Bad file descriptor",
+    ) as exc_info:
+        await mgmt_ctl._check_capabilities()
+    assert not isinstance(exc_info.value, PermissionError)
+    assert exc_info.value.__cause__ is error
+
+
+@pytest.mark.asyncio
+async def test_check_capabilities_send_permission_error() -> None:
+    """Test a permission error while sending counts as missing capabilities."""
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_protocol.transport = Mock()
+    mock_protocol.command_response = _stub_command_response(0x00)
+    mock_protocol._write_to_socket = Mock(
+        side_effect=PermissionError(1, "Operation not permitted")
+    )
+    mgmt_ctl.protocol = mock_protocol
+
+    assert await mgmt_ctl._check_capabilities() is False
 
 
 @pytest.mark.asyncio
@@ -1718,6 +1782,143 @@ def _stub_command_response(
         return MockContext()
 
     return _command_response
+
+
+def _setup_ctl_with_stub_protocol(
+    mock_btmgmt: Mock,
+) -> tuple[MGMTBluetoothCtl, Mock, Mock]:
+    """Build a MGMTBluetoothCtl with a connected stub protocol for setup tests."""
+    mock_socket = Mock()
+    mock_btmgmt.open.return_value = mock_socket
+    mgmt_ctl = MGMTBluetoothCtl(timeout=5.0, scanners={})
+    mgmt_ctl.sock = mock_socket
+    mock_protocol = Mock(spec=BluetoothMGMTProtocol)
+    mock_protocol.transport = Mock()
+    mock_protocol._write_to_socket = Mock()
+    mgmt_ctl.protocol = mock_protocol
+    return mgmt_ctl, mock_protocol, mock_socket
+
+
+@pytest.mark.asyncio
+async def test_setup_permission_denied_status() -> None:
+    """Test setup raises PermissionError when the kernel answers 0x14."""
+    with (
+        patch("habluetooth.channels.bluez.btmgmt_socket") as mock_btmgmt,
+        patch.object(MGMTBluetoothCtl, "_establish_connection"),
+    ):
+        mgmt_ctl, mock_protocol, mock_socket = _setup_ctl_with_stub_protocol(
+            mock_btmgmt
+        )
+        mock_transport = mock_protocol.transport
+        mock_protocol.command_response = _stub_command_response(0x14)
+
+        with pytest.raises(
+            PermissionError, match="Missing NET_ADMIN/NET_RAW capabilities"
+        ):
+            await mgmt_ctl.setup()
+
+    assert mgmt_ctl._shutting_down is True
+    assert mgmt_ctl.can_discover is False
+    assert mgmt_ctl._reconnect_task is None
+    mock_transport.close.assert_called_once()
+    mock_btmgmt.close.assert_called_once_with(mock_socket)
+
+
+@pytest.mark.asyncio
+async def test_setup_not_powered_keeps_socket() -> None:
+    """Test setup with a powered off adapter keeps the mgmt socket."""
+    with (
+        patch("habluetooth.channels.bluez.btmgmt_socket") as mock_btmgmt,
+        patch.object(MGMTBluetoothCtl, "_establish_connection"),
+    ):
+        mgmt_ctl, mock_protocol, mock_socket = _setup_ctl_with_stub_protocol(
+            mock_btmgmt
+        )
+        mock_transport = mock_protocol.transport
+        mock_protocol.command_response = _stub_command_response(0x0F)
+
+        await mgmt_ctl.setup()
+
+        try:
+            assert mgmt_ctl.can_discover is True
+            assert mgmt_ctl._shutting_down is False
+            assert mgmt_ctl.sock is mock_socket
+            assert mgmt_ctl.protocol is mock_protocol
+            assert mgmt_ctl._reconnect_task is not None
+            mock_transport.close.assert_not_called()
+            mock_btmgmt.close.assert_not_called()
+        finally:
+            mgmt_ctl.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "timeout", "expected_message"),
+    [
+        pytest.param(
+            0xFF,
+            False,
+            "Bluetooth management capability check failed: unexpected status 0xff",
+            id="unexpected_status",
+        ),
+        pytest.param(
+            0x00,
+            True,
+            "Bluetooth management capability check timed out",
+            id="timeout",
+        ),
+    ],
+)
+async def test_setup_capability_check_failed(
+    status: int,
+    timeout: bool,
+    expected_message: str,
+) -> None:
+    """Test setup cleans up and raises a non-permission error when the check fails."""
+    with (
+        patch("habluetooth.channels.bluez.btmgmt_socket") as mock_btmgmt,
+        patch.object(MGMTBluetoothCtl, "_establish_connection"),
+        patch(
+            "habluetooth.channels.bluez.asyncio_timeout",
+            side_effect=TimeoutError if timeout else asyncio.timeout,
+        ),
+    ):
+        mgmt_ctl, mock_protocol, mock_socket = _setup_ctl_with_stub_protocol(
+            mock_btmgmt
+        )
+        mock_transport = mock_protocol.transport
+        mock_protocol.command_response = _stub_command_response(status)
+
+        with pytest.raises(OSError, match=re.escape(expected_message)) as exc_info:
+            await mgmt_ctl.setup()
+
+    assert not isinstance(exc_info.value, PermissionError)
+    assert str(exc_info.value) == expected_message
+    assert "NET_ADMIN" not in str(exc_info.value)
+    assert mgmt_ctl._shutting_down is True
+    assert mgmt_ctl.can_discover is False
+    assert mgmt_ctl._reconnect_task is None
+    mock_transport.close.assert_called_once()
+    mock_btmgmt.close.assert_called_once_with(mock_socket)
+
+
+@pytest.mark.asyncio
+async def test_setup_capability_check_not_connected() -> None:
+    """Test setup closes the socket when there is no protocol to run the check."""
+    with (
+        patch("habluetooth.channels.bluez.btmgmt_socket") as mock_btmgmt,
+        patch.object(MGMTBluetoothCtl, "_establish_connection"),
+    ):
+        mgmt_ctl, _, mock_socket = _setup_ctl_with_stub_protocol(mock_btmgmt)
+        mgmt_ctl.protocol = None
+
+        with pytest.raises(OSError, match="not connected") as exc_info:
+            await mgmt_ctl.setup()
+
+    assert not isinstance(exc_info.value, PermissionError)
+    assert mgmt_ctl._shutting_down is True
+    assert mgmt_ctl.can_discover is False
+    mock_btmgmt.close.assert_called_once_with(mock_socket)
 
 
 def _mgmt_ctl_with_mock_protocol() -> tuple[MGMTBluetoothCtl, Mock]:

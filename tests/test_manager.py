@@ -4251,6 +4251,70 @@ async def test_async_setup_handles_connection_error() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "adapters",
+    [
+        pytest.param({"hci0": {"address": "00:1A:7D:DA:71:04"}}, id="adapter"),
+        pytest.param({}, id="no_adapter"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("error", "expected_reason"),
+    [
+        pytest.param(
+            OSError("Bluetooth management capability check timed out"),
+            "Bluetooth management capability check timed out",
+            id="with_message",
+        ),
+        pytest.param(TimeoutError(), "TimeoutError", id="without_message"),
+    ],
+)
+async def test_async_setup_connection_error_log(
+    caplog: pytest.LogCaptureFixture,
+    adapters: dict[str, Any],
+    error: Exception,
+    expected_reason: str,
+) -> None:
+    """A non-permission mgmt setup failure is logged at debug without advice."""
+    caplog.set_level(logging.DEBUG, logger="habluetooth.manager")
+    manager = BluetoothManager(FakeBluetoothAdapters(), slot_manager=Mock())
+
+    with (
+        patch("habluetooth.manager.IS_LINUX", True),
+        patch("habluetooth.manager.MGMTBluetoothCtl") as mock_mgmt_class,
+        patch.object(
+            FakeBluetoothAdapters,
+            "adapters",
+            new_callable=PropertyMock,
+            return_value=adapters,
+        ),
+    ):
+        mock_mgmt_class.return_value.setup = AsyncMock(side_effect=error)
+        await manager.async_setup()
+
+        # is_operating_degraded reads IS_LINUX, so check it inside the patch
+        try:
+            assert manager._mgmt_ctl is None
+            assert manager.is_operating_degraded() is True
+        finally:
+            manager.async_stop()
+
+    records = [
+        record
+        for record in caplog.records
+        if "Bluetooth management API is unavailable" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert records[0].getMessage() == (
+        f"Bluetooth management API is unavailable: {expected_reason}. "
+        "Falling back to BlueZ D-Bus"
+    )
+    assert "NET_ADMIN" not in caplog.text
+    assert "Missing required permissions" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_async_stop_without_unavailable_tracking() -> None:
     """async_stop is a no-op for unavailable tracking when none is scheduled."""
     manager = BluetoothManager(FakeBluetoothAdapters(), Mock())

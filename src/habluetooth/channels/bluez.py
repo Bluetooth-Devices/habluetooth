@@ -80,6 +80,11 @@ MGMT_STATUS_SUCCESS = 0x00
 # device-found events are still delivered to every open socket, so we treat it
 # as success for our purposes.
 MGMT_STATUS_BUSY = 0x0A
+# Not Powered, Invalid Index and Permission Denied are used by the capability
+# check, see MGMTBluetoothCtl._has_mgmt_capabilities_from_status.
+MGMT_STATUS_NOT_POWERED = 0x0F
+MGMT_STATUS_INVALID_INDEX = 0x11
+MGMT_STATUS_PERMISSION_DENIED = 0x14
 
 # Pre-compiled struct formats for performance
 COMMAND_HEADER = Struct("<HHH")
@@ -664,43 +669,57 @@ class MGMTBluetoothCtl:
 
     def _has_mgmt_capabilities_from_status(self, status: int) -> bool:
         """
-        Check if a MGMT command status indicates we have capabilities.
+        Check if a MGMT command status shows that we have the capabilities.
 
-        Returns True if we have capabilities, False otherwise.
+        The kernel only answers Success, Not Powered or Invalid Index after
+        its permission check has passed, so those statuses prove that we have
+        the capabilities even if the command itself failed.
 
-        Status codes:
-        - 0x00 = Success (we have permissions)
-        - 0x01 = Unknown Command (might happen if kernel is too old)
-        - 0x0D = Invalid Parameters
-        - 0x10 = Not Powered (for some operations)
-        - 0x11 = Invalid Index (adapter doesn't exist but we have permissions)
-        - 0x14 = Permission Denied (missing NET_ADMIN/NET_RAW)
+        Returns True for statuses that show we have the capabilities:
+        - 0x00 = Success
+        - 0x0F = Not Powered (the adapter is powered off)
+        - 0x11 = Invalid Index (the adapter doesn't exist or isn't usable)
+
+        Returns False for 0x14 = Permission Denied (missing NET_ADMIN/NET_RAW).
+
+        Raises OSError for any other status. Some of them, such as
+        0x01 = Unknown Command, can be returned before the permission check,
+        so they don't tell us whether we have the capabilities.
         """
-        if status == 0x14:  # Permission denied
+        if status == MGMT_STATUS_PERMISSION_DENIED:
             _LOGGER.debug(
                 "MGMT capability check failed with permission denied - "
                 "missing NET_ADMIN/NET_RAW"
             )
             return False
-        if status in (0x00, 0x11):  # Success or Invalid Index
+        if status in (
+            MGMT_STATUS_SUCCESS,
+            MGMT_STATUS_NOT_POWERED,
+            MGMT_STATUS_INVALID_INDEX,
+        ):
             _LOGGER.debug("MGMT capability check passed (status: %#x)", status)
             return True
-        # Unknown status - log it and assume no permissions to be safe
-        _LOGGER.debug(
-            "MGMT capability check returned unexpected status %#x - "
-            "assuming missing permissions",
-            status,
+        msg = (
+            "Bluetooth management capability check failed: "
+            f"unexpected status {status:#04x}"
         )
-        return False
+        raise OSError(msg)
 
     async def _check_capabilities(self) -> bool:
         """
         Check if we have the necessary capabilities to use MGMT.
 
-        Returns True if we have capabilities, False otherwise.
+        Returns True if we have capabilities, False if the kernel answered
+        with permission denied or refused sending the command with a
+        permission error.
+
+        Raises OSError if the check could not tell, for example when the
+        socket is not connected, sending fails for another reason, the command
+        times out or the kernel answers with an unexpected status.
         """
         if not self.protocol or not self.protocol.transport:
-            return False
+            msg = "Bluetooth management capability check failed: not connected"
+            raise OSError(msg)
 
         # Try GET_CONNECTIONS for adapter 0 - this is a read-only command
         # that requires NET_ADMIN privileges but doesn't change any state
@@ -711,16 +730,25 @@ class MGMTBluetoothCtl:
         )
 
         try:
-            return await self._do_mgmt_op_get_connections(header)
-        except (TimeoutError, OSError) as ex:
+            status = await self._do_mgmt_op_get_connections(header)
+        except PermissionError as ex:
+            # PermissionError is an OSError subclass; keep it as a permission
+            # failure instead of wrapping it below
             _LOGGER.debug(
-                "MGMT capability check failed: %s - likely missing NET_ADMIN/NET_RAW",
+                "MGMT capability check failed with %s - missing NET_ADMIN/NET_RAW",
                 ex,
             )
             return False
+        except TimeoutError as ex:
+            msg = "Bluetooth management capability check timed out"
+            raise OSError(msg) from ex
+        except (OSError, BluetoothSocketError) as ex:
+            msg = f"Bluetooth management capability check failed: {ex}"
+            raise OSError(msg) from ex
+        return self._has_mgmt_capabilities_from_status(status)
 
-    async def _do_mgmt_op_get_connections(self, header: bytes) -> bool:
-        """Send a MGMT_OP_GET_CONNECTIONS command and check capabilities."""
+    async def _do_mgmt_op_get_connections(self, header: bytes) -> int:
+        """Send a MGMT_OP_GET_CONNECTIONS command and return the status."""
         if TYPE_CHECKING:
             assert self.protocol is not None
             assert self.protocol.transport is not None
@@ -732,20 +760,28 @@ class MGMTBluetoothCtl:
             # Wait for response with timeout
             async with asyncio_timeout(5.0):
                 status, _ = await response_future
-            return self._has_mgmt_capabilities_from_status(status)
+            return status
+
+    def _close_after_failed_setup(self) -> None:
+        """Close the connection when setup fails, without reconnecting."""
+        # Mark as shutting down to prevent reconnection attempts
+        self._shutting_down = True
+        if self.protocol and self.protocol.transport:
+            self.protocol.transport.close()
+        btmgmt_socket.close(self.sock)
 
     async def setup(self) -> None:
         """Set up management interface."""
         await self._establish_connection()
 
         # Check if we actually have the capabilities to use MGMT
-        if not await self._check_capabilities():
-            # Mark as shutting down to prevent reconnection attempts
-            self._shutting_down = True
-            # Close the connection and raise an error to trigger fallback
-            if self.protocol and self.protocol.transport:
-                self.protocol.transport.close()
-            btmgmt_socket.close(self.sock)
+        try:
+            has_capabilities = await self._check_capabilities()
+        except OSError:
+            self._close_after_failed_setup()
+            raise
+        if not has_capabilities:
+            self._close_after_failed_setup()
             msg = "Missing NET_ADMIN/NET_RAW capabilities for Bluetooth management"
             raise PermissionError(msg)
 
