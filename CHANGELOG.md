@@ -1,5 +1,13 @@
 # Changelog
 
+## v7.2.0 (2026-11-26)
+
+### Features
+
+
+- Take new payloads of event-driven devices from any scanner ([`898e8d2`](https://github.com/Bluetooth-Devices/habluetooth/commit/898e8d20977eaf1303bde9906c95675be2b76c46))
+
+
 ## v7.1.3 (2026-11-16)
 
 ### Bug fixes
