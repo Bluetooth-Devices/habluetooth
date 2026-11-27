@@ -483,7 +483,11 @@ class BluetoothManager:
             )
             self._mgmt_ctl = None
         except CONNECTION_ERRORS as ex:
-            _LOGGER.debug("Cannot start Bluetooth Management API: %s", ex)
+            _LOGGER.debug(
+                "Bluetooth management API is unavailable: %s. "
+                "Falling back to BlueZ D-Bus",
+                str(ex) or type(ex).__name__,
+            )
             self._mgmt_ctl = None
         else:
             self.has_advertising_side_channel = True
