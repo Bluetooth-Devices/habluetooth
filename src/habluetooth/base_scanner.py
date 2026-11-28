@@ -733,6 +733,8 @@ class BaseHaScanner:
         ]
         for address in expired:
             del self._previous_service_info[address]
+        if expired and self._manager:
+            self._manager._scanner_devices_expired(expired)
 
     def _cancel_expire_devices(self) -> None:
         """Cancel the expiration of old devices."""
@@ -752,8 +754,12 @@ class BaseHaScanner:
 
     def _async_expire_devices_schedule_next(self) -> None:
         """Expire old devices and schedule the next expiration."""
-        self._async_expire_devices()
-        self._schedule_expire_devices()
+        try:
+            self._async_expire_devices()
+        finally:
+            # Expiry calls into the manager: reschedule even if that raises,
+            # or this scanner would never expire devices again.
+            self._schedule_expire_devices()
 
     def set_requested_mode(self, mode: BluetoothScanningMode | None) -> None:
         """Set the requested scanning mode and notify the manager."""
